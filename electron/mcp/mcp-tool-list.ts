@@ -386,7 +386,7 @@ const PEER_TOOLS: ToolDef[] = [
   {
     name: 'send_agent_prompt',
     description:
-      'Queue a prompt for automatic delivery to the exact recipient session when its input is ready and user drafts or typing are clear. Reuse requestId only for retries with the same recipient and content.',
+      'Queue a prompt for automatic delivery to the exact recipient session when its input is ready and user drafts or typing are clear. The recipient sees it wrapped as a peer message, not a user instruction; control characters and peer message markers are rejected. Reuse requestId only for retries with the same recipient and content.',
     inputSchema: {
       type: 'object',
       properties: { ...exactSession, prompt: { type: 'string' }, requestId: { type: 'string' } },
