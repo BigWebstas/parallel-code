@@ -541,20 +541,25 @@ export interface TaskOpenQuestion {
  *  masking — knowingly unconverted, since changing when a notification fires is
  *  a product decision, not a mechanical follow-through. */
 export function getTaskOpenQuestion(taskId: string): TaskOpenQuestion | null {
+  return getTaskOpenQuestions(taskId)[0] ?? null;
+}
+
+/** Every unanswered agent, independently of errors, review flags, and other askers. */
+export function getTaskOpenQuestions(taskId: string): TaskOpenQuestion[] {
   const asking = questionAgents(); // reactive read
   const task = store.tasks[taskId];
-  if (!task) return null;
+  if (!task) return [];
 
-  let newest: TaskOpenQuestion | null = null;
+  const questions: TaskOpenQuestion[] = [];
   const runningAgentIds = task.agentIds.filter(
     (id) => store.agents[id]?.status === 'running' || isAgentChat(task, id),
   );
-  for (const agentId of [...runningAgentIds, ...task.shellAgentIds]) {
+  for (const agentId of new Set([...runningAgentIds, ...task.shellAgentIds])) {
     const since = agentQuestionSince(agentId, asking);
     if (since === undefined) continue;
-    if (newest === null || since > newest.since) newest = { agentId, since };
+    questions.push({ agentId, since });
   }
-  return newest;
+  return questions.sort((a, b) => b.since - a.since);
 }
 
 function agentQuestionSince(agentId: string, asking: ReadonlySet<string>): number | undefined {
@@ -1034,6 +1039,12 @@ function hasRunningTaskActivity(taskId: string, predicate: (id: string) => boole
   return hasRunningAgentActivity(taskId, predicate) || hasShellActivity(taskId, predicate);
 }
 
+/** Working agents can coexist with a question or review in another pane. */
+export function isTaskWorking(taskId: string): boolean {
+  const active = activeAgents();
+  return hasRunningAgentActivity(taskId, (id) => isAgentWorking(id, active));
+}
+
 export function getTaskAttentionState(taskId: string): TaskAttentionState {
   const task = store.tasks[taskId];
   if (!task) return 'idle';
@@ -1051,14 +1062,14 @@ export function getTaskAttentionState(taskId: string): TaskAttentionState {
     if (latest.status === 'awaiting_review') return 'review';
   }
 
-  const active = activeAgents(); // reactive read
-  if (hasRunningAgentActivity(taskId, (id) => isAgentWorking(id, active))) return 'active';
+  if (isTaskWorking(taskId)) return 'active';
 
   if (isTaskReady(taskId)) return 'ready';
 
   // A plain terminal producing output is not agent work, so it reports itself
   // separately and ranks below `ready` — otherwise a dev server or watcher
   // masks a task that is actually finished for as long as it keeps printing.
+  const active = activeAgents(); // reactive read
   if (hasShellActivity(taskId, (id) => active.has(id))) return 'shell_busy';
   return 'idle';
 }

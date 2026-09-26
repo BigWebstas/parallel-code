@@ -2,6 +2,8 @@ import './Delegation.css';
 import { createResource, createSignal, Show } from 'solid-js';
 import type { DelegationReview } from '../../electron/shared/delegation-types';
 import { delegationRequest } from '../store/delegation';
+import { clearTaskLandingReview } from '../store/tasks';
+import { isLandedTaskState } from '../store/landing';
 import type { Task } from '../store/types';
 import { Dialog } from './Dialog';
 import { theme } from '../lib/theme';
@@ -10,8 +12,9 @@ import { theme } from '../lib/theme';
 export function DelegationReviewDialog(props: { task: Task; open: boolean; onClose: () => void }) {
   const [error, setError] = createSignal('');
   const [merging, setMerging] = createSignal(false);
+  const landed = () => isLandedTaskState(props.task.landingState);
   const [review, { refetch }] = createResource(
-    () => (props.open ? props.task.id : undefined),
+    () => (props.open && !landed() ? props.task.id : undefined),
     (taskId) => delegationRequest<DelegationReview>({ action: 'review', taskId }),
   );
   async function merge() {
@@ -44,7 +47,26 @@ export function DelegationReviewDialog(props: { task: Task; open: boolean; onClo
     >
       <div class="delegation-surface">
         <h2>Review child result: {props.task.name}</h2>
-        <p>Merging approves this child commit and integration target. The worktree is kept.</p>
+        <Show
+          when={landed()}
+          fallback={
+            <p>Merging approves this child commit and integration target. The worktree is kept.</p>
+          }
+        >
+          <p>This result has already been merged.</p>
+          <p>
+            {props.task.landedMetadata?.summary ??
+              props.task.landingSummary ??
+              'No result summary was recorded.'}
+          </p>
+          <Show when={props.task.landedMetadata}>
+            {(metadata) => (
+              <p>
+                <code>{metadata().landedCommit}</code> → <code>{metadata().targetBranch}</code>
+              </p>
+            )}
+          </Show>
+        </Show>
         <Show when={review.loading}>
           <p>Loading result…</p>
         </Show>
@@ -52,7 +74,7 @@ export function DelegationReviewDialog(props: { task: Task; open: boolean; onClo
           <p role="alert">{String(review.error)}</p>
           <button onClick={() => void refetch()}>Retry</button>
         </Show>
-        <Show when={review()}>
+        <Show when={!landed() && review()}>
           {(value) => (
             <>
               <p>
@@ -84,15 +106,28 @@ export function DelegationReviewDialog(props: { task: Task; open: boolean; onClo
         </Show>
         <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
           <button disabled={merging()} onClick={() => props.onClose()}>
-            Cancel
+            {landed() ? 'Close' : 'Cancel'}
           </button>
-          <button
-            class="btn-primary"
-            disabled={merging() || review.loading || !!review.error || !review()}
-            onClick={() => void merge()}
-          >
-            {merging() ? 'Merging…' : 'Approve and merge this result'}
-          </button>
+          <Show when={props.task.landingState === 'landed_pending_review'}>
+            <button
+              class="btn-primary"
+              onClick={() => {
+                clearTaskLandingReview(props.task.id);
+                props.onClose();
+              }}
+            >
+              Mark reviewed
+            </button>
+          </Show>
+          <Show when={!landed()}>
+            <button
+              class="btn-primary"
+              disabled={merging() || review.loading || !!review.error || !review()}
+              onClick={() => void merge()}
+            >
+              {merging() ? 'Merging…' : 'Approve and merge this result'}
+            </button>
+          </Show>
         </div>
       </div>
     </Dialog>

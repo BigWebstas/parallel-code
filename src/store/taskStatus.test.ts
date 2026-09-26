@@ -102,6 +102,7 @@ import {
   isAgentBracketedPasteEnabled,
   getTaskAttentionState,
   getTaskOpenQuestion,
+  getTaskOpenQuestions,
   getTaskDotStatus,
   taskNeedsAttention,
   markAgentSpawned,
@@ -1337,6 +1338,7 @@ describe('getTaskOpenQuestion', () => {
     const newest = expectDefined(getTaskOpenQuestion('task-1'));
     expect(newest.agentId).toBe('agent-2');
     expect(newest.since).toBe(first + 5_000);
+    expect(getTaskOpenQuestions('task-1')).toEqual([newest, { agentId: 'agent-1', since: first }]);
   });
 
   it('reports a question coming from a task shell', () => {

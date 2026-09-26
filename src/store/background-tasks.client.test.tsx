@@ -6,7 +6,7 @@ import { store, setStore } from './core';
 import { applyAgentHookEvent } from './agentHookStatus';
 import { clearAgentActivity, getTaskAttentionState, markAgentBusy } from './taskStatus';
 import { setActiveTask } from './navigation';
-import { computeNeedsInputTasks } from './sidebar-attention';
+import { computeAttentionEntries } from './sidebar-attention';
 import {
   bringTaskToFront,
   isTaskBackgrounded,
@@ -150,15 +150,15 @@ it('still returns when the task requests review', () => {
   expect(isTaskBackgrounded('one')).toBe(false);
 });
 
-it('hides a deferred question from the input tray until a new notification arrives', () => {
+it('keeps unresolved background questions in the attention tray', () => {
   hook('waiting', 'PermissionRequest');
-  expect(computeNeedsInputTasks().map((entry) => entry.taskId)).toContain('one');
+  expect(computeAttentionEntries().map((entry) => entry.taskId)).toContain('one');
   sendTaskToBack('one');
-  expect(computeNeedsInputTasks()).toEqual([]);
+  expect(computeAttentionEntries().filter((entry) => entry.kind === 'question')).toHaveLength(1);
   vi.advanceTimersByTime(1);
   hook('waiting', 'Notification');
   expect(isTaskBackgrounded('one')).toBe(false);
-  expect(computeNeedsInputTasks().map((entry) => entry.taskId)).toContain('one');
+  expect(computeAttentionEntries().map((entry) => entry.taskId)).toContain('one');
 });
 
 it('notices completion even when the task attention state stays at review', () => {
@@ -186,16 +186,16 @@ it('keeps a coordinator and its children together and returns on child activity'
   expect(store.activeTaskId).toBe('three');
 });
 
-it('defers existing child questions with their coordinator and restores them manually', () => {
+it('keeps background child questions actionable while allowing manual return', () => {
   setStore('tasks', 'two', 'coordinatedBy', 'one');
   hook('waiting', 'PermissionRequest', 'two');
   sendTaskToBack('one');
   expect(isTaskBackgrounded('two')).toBe(true);
-  expect(computeNeedsInputTasks()).toEqual([]);
+  expect(computeAttentionEntries().filter((entry) => entry.kind === 'question')).toHaveLength(1);
   bringTaskToFront('two');
   expect(isTaskBackgrounded('one')).toBe(false);
   expect(store.taskOrder).toEqual(['one', 'two', 'three']);
-  expect(computeNeedsInputTasks().map((entry) => entry.taskId)).toEqual(['two']);
+  expect(computeAttentionEntries().map((entry) => entry.taskId)).toEqual(['two']);
 });
 
 it('returns a chat task when its turn finishes', () => {

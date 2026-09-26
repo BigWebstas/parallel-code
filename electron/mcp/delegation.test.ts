@@ -196,6 +196,26 @@ afterEach(() => {
 });
 
 describe('delegation authority and creation', () => {
+  it('requires available authority for snapshots instead of reporting unknown tasks as unpaused', async () => {
+    mocks.realpath.mockRejectedValueOnce(new Error('Project unavailable'));
+    await expect(
+      service.request({ action: 'register', task: task('parent', { delegationPaused: true }) }),
+    ).rejects.toThrow('Project unavailable');
+    await expect(service.request({ action: 'state', taskId: 'parent' })).rejects.toThrow(
+      'Task unavailable or closing',
+    );
+    await register('parent', { delegationPaused: true });
+    await expect(service.request({ action: 'state', taskId: 'parent' })).resolves.toEqual({
+      attempts: [],
+      messages: [],
+      paused: true,
+    });
+    service.unregister('parent');
+    await expect(service.request({ action: 'state', taskId: 'parent' })).rejects.toThrow(
+      'Task unavailable or closing',
+    );
+  });
+
   it('disables existing sessions and fresh parent capabilities while preserving child completion', async () => {
     await register('parent');
     await register('child', { parentTaskId: 'parent', integrationPolicy: 'review' });
