@@ -515,6 +515,50 @@ async function refineDiffBaseWithCherryPick(
   return base;
 }
 
+/** Read rebases oldest first so repeated rebases retain the inherited baseline. */
+async function findRebases(
+  repoRoot: string,
+  head: string,
+): Promise<{ target: string; previousHead: string }[]> {
+  try {
+    const { stdout: ref } = await exec('git', ['rev-parse', '--symbolic-full-name', head], {
+      cwd: repoRoot,
+    });
+    const branch = ref.trim() || (await getCurrentBranchName(repoRoot));
+    const { stdout } = await exec('git', ['reflog', 'show', '--format=%H%x00%gs', branch], {
+      cwd: repoRoot,
+      maxBuffer: MAX_BUFFER,
+    });
+    const entries = stdout.trimEnd().split('\n');
+    const rebases: { target: string; previousHead: string }[] = [];
+    for (let index = 0; index < entries.length; index++) {
+      const target = entries[index].match(
+        /^[0-9a-f]{40}\0rebase \(finish\): .* onto ([0-9a-f]{40})$/,
+      )?.[1];
+      if (!target) continue;
+      const previousHead = entries[index + 1]?.split('\0', 1)[0];
+      if (previousHead && /^[0-9a-f]{40}$/.test(previousHead)) {
+        // A reset can reuse the branch for different work. Only trust a target
+        // retained by every later branch head, including intermediate resets.
+        if (index > 0) {
+          const newerHeads = entries.slice(0, index).map((entry) => entry.split('\0', 1)[0]);
+          const { stdout: commonBase } = await exec(
+            'git',
+            ['merge-base', '--octopus', target, ...newerHeads],
+            { cwd: repoRoot },
+          );
+          if (commonBase.trim() !== target) continue;
+        }
+        rebases.push({ target, previousHead });
+      }
+    }
+    return rebases.reverse();
+  } catch {
+    // Missing or expired reflogs are not evidence of a changed branch point.
+    return [];
+  }
+}
+
 /**
  * Resolve both sides needed for one-way diffs.
  *
@@ -555,7 +599,52 @@ async function detectDiffBase(
   const picked = await pickMergeBase(repoRoot, branch, headRef);
   if (!picked) return { sha: headRef, ref: headRef };
 
-  const refined = await refineDiffBaseWithCherryPick(repoRoot, picked, headRef);
+  let refined = await refineDiffBaseWithCherryPick(repoRoot, picked, headRef);
+  if (baseBranch) {
+    // A child may rebase away from its parent. Use that recorded target, not
+    // today's main tip: main can subsequently receive the child's own commits.
+    // The explicit parent remains the integration target.
+    for (const rebase of await findRebases(repoRoot, requestedHead)) {
+      if (rebase.target === refined.sha) continue;
+      try {
+        await Promise.all([
+          exec('git', ['merge-base', '--is-ancestor', refined.sha, rebase.target], {
+            cwd: repoRoot,
+          }),
+          exec('git', ['merge-base', '--is-ancestor', rebase.target, headRef], { cwd: repoRoot }),
+        ]);
+        // The target may already contain child work (an interactive rewrite,
+        // or main landing the child before it rebases). Keep the parent scope
+        // if advancing would absorb any earlier child commits or their patches.
+        // Exclude previously accepted upstream history from both counts.
+        const [before, remaining] = await Promise.all([
+          exec(
+            'git',
+            ['rev-list', '--count', rebase.previousHead, `^${picked.ref}`, `^${refined.sha}`],
+            { cwd: repoRoot },
+          ),
+          exec(
+            'git',
+            [
+              'rev-list',
+              '--count',
+              '--cherry-pick',
+              '--right-only',
+              `${rebase.target}...${rebase.previousHead}`,
+              `^${picked.ref}`,
+              `^${refined.sha}`,
+            ],
+            { cwd: repoRoot },
+          ),
+        ]);
+        if (parseInt(before.stdout.trim(), 10) === parseInt(remaining.stdout.trim(), 10)) {
+          refined = { sha: rebase.target, ref: rebase.target };
+        }
+      } catch {
+        // Ignore obsolete rebase records and targets outside the current ancestry.
+      }
+    }
+  }
   diffBaseCache.set(key, { value: refined, expiresAt: Date.now() + DIFF_BASE_TTL });
   return refined;
 }
