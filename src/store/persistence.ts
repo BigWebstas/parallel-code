@@ -338,7 +338,13 @@ function restoredVerificationRun(
   return run;
 }
 
+// The renderer can receive input while startup IPC waits for the login shell.
+// Never serialize its initial empty store over a session we have not restored.
+let stateLoaded = false;
+
 export async function saveState(): Promise<void> {
+  if (!stateLoaded) return;
+
   const persisted: PersistedState = {
     projects: store.projects.map((p) => ({ ...p })),
     lastProjectId: store.lastProjectId,
@@ -600,9 +606,11 @@ interface LegacyPersistedState {
 }
 
 export async function loadState(): Promise<void> {
-  const json = await invoke<string | null>(IPC.LoadAppState).catch(() => null);
+  stateLoaded = false;
+  const json = await invoke<string | null>(IPC.LoadAppState);
   if (!json) {
     await delegationRequest({ action: 'orchestrationSetting', enabled: true });
+    stateLoaded = true;
     return;
   }
 
@@ -1287,4 +1295,5 @@ export async function loadState(): Promise<void> {
       { durationMs: NOTIFICATION_ERROR_MS },
     );
   }
+  stateLoaded = true;
 }

@@ -64,6 +64,7 @@
   "WindowGetSize": "__window_get_size",
   "WindowFocus": "__window_focus",
   "WindowBlur": "__window_blur",
+  "WindowVisibilityChanged": "__window_visibility_changed",
   "WindowResized": "__window_resized",
   "WindowMoved": "__window_moved",
   "WindowCloseRequested": "__window_close_requested",

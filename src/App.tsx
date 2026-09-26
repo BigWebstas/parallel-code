@@ -15,6 +15,7 @@ import { onMount, onCleanup, createEffect, Show, ErrorBoundary, createSignal } f
 import { invoke } from './lib/ipc';
 import { IPC } from '../electron/ipc/channels';
 import { appWindow } from './lib/window';
+import { startWindowVisibilityTracking } from './lib/windowVisibility';
 import { choice } from './lib/dialog';
 import { CLOSE_DIALOG_BUTTONS, resolveCloseChoice } from './lib/close-decision';
 import { resolvePanelCloseTarget } from './store/close-target';
@@ -360,6 +361,7 @@ function App() {
     });
 
     const stopDocumentListeners = initDocumentListeners();
+    const stopWindowVisibilityTracking = startWindowVisibilityTracking();
     void syncWindowFocused();
     void syncWindowMaximized();
 
@@ -786,6 +788,7 @@ function App() {
       stopAgentHookStatusListener();
       stopCanvasAutoOpen();
       stopDocumentListeners();
+      stopWindowVisibilityTracking();
       offPlanContent();
       offStepsContent();
       unlistenFocusChanged?.();

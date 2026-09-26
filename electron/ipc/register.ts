@@ -2222,6 +2222,15 @@ export function registerAllHandlers(win: BrowserWindow): void {
   win.on('blur', () => {
     if (!win.isDestroyed()) win.webContents.send(IPC.WindowBlur);
   });
+  // backgroundThrottling is off (see main.ts), which per Electron's docs also
+  // affects the renderer's Page Visibility API — so forward the real signal.
+  const forwardVisibility = (visible: boolean) => () => {
+    if (!win.isDestroyed()) win.webContents.send(IPC.WindowVisibilityChanged, visible);
+  };
+  win.on('hide', forwardVisibility(false));
+  win.on('minimize', forwardVisibility(false));
+  win.on('show', forwardVisibility(true));
+  win.on('restore', forwardVisibility(true));
   win.on('resize', createThrottledForwarder(win, IPC.WindowResized, 100));
   win.on('move', createThrottledForwarder(win, IPC.WindowMoved, 100));
   // Fallback timer that force-destroys the window if the renderer never

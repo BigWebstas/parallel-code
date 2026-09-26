@@ -93,6 +93,7 @@ const NOT_HANDLED_HERE: readonly string[] = [
   IPC.WindowFocus,
   IPC.WindowMoved,
   IPC.WindowResized,
+  IPC.WindowVisibilityChanged,
 ];
 
 /** Registered only once the coordinator is loaded. */
@@ -167,6 +168,11 @@ describe('registerAllHandlers wiring', () => {
         'focus',
         'move',
         'resize',
+        // register.ts forwards visibility so UI-only polls can pause
+        'hide',
+        'minimize',
+        'restore',
+        'show',
         // pr-checks.ts polls only while the window is visible
         'hide',
         'minimize',

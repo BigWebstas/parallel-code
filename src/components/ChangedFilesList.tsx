@@ -1,5 +1,6 @@
 import { createSignal, createMemo, createEffect, onCleanup, batch, Index, Show } from 'solid-js';
 import { invoke } from '../lib/ipc';
+import { isWindowVisible } from '../lib/windowVisibility';
 import { IPC } from '../../electron/ipc/channels';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
@@ -902,12 +903,12 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
     }
 
     void refresh();
-    // Polling: skip when inactive (off-screen tasks) and when viewing a single
-    // commit (committed data is immutable).
+    // Polling: skip when inactive (off-screen tasks), when viewing a single
+    // commit (committed data is immutable), and while the window is hidden.
     const shouldPoll = singleCommitHash === null && props.isActive;
     const timer = shouldPoll
       ? setInterval(() => {
-          if (!usingBranchFallback) void refresh();
+          if (!usingBranchFallback && isWindowVisible()) void refresh();
         }, 5000)
       : undefined;
     onCleanup(() => {
@@ -987,7 +988,9 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
     }
 
     void refresh();
-    const timer = setInterval(() => void refresh(), 5000);
+    const timer = setInterval(() => {
+      if (isWindowVisible()) void refresh();
+    }, 5000);
     onCleanup(() => {
       cancelled = true;
       clearInterval(timer);

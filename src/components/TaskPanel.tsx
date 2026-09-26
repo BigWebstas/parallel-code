@@ -54,6 +54,7 @@ import { TaskAITerminal } from './TaskAITerminal';
 import { isAgentChat } from '../store/agent-chat';
 import { TaskClosingOverlay } from './TaskClosingOverlay';
 import { invoke } from '../lib/ipc';
+import { isWindowVisible } from '../lib/windowVisibility';
 import { errMessage } from '../lib/log';
 import { IPC } from '../../electron/ipc/channels';
 import type { DocumentSnapshot } from '../documents/types';
@@ -495,7 +496,10 @@ export function TaskPanel(props: TaskPanelProps) {
     }
 
     void fetchCommits();
-    const timer = setInterval(() => void fetchCommits(), 5000);
+    // UI-only: skip ticks while the window is hidden (next tick catches up).
+    const timer = setInterval(() => {
+      if (isWindowVisible()) void fetchCommits();
+    }, 5000);
     onCleanup(() => {
       cancelled = true;
       clearInterval(timer);

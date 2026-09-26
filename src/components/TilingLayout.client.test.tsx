@@ -589,7 +589,10 @@ describe('inline document workspace', () => {
     expect(code.parentElement?.style.visibility).not.toBe('hidden');
     setStore('focusMode', true);
     expect(code.parentElement?.style.visibility).toBe('hidden');
+    // Hidden panes must also skip rendering so xterm pauses their repaints.
+    expect(code.parentElement?.style.getPropertyValue('content-visibility')).toBe('hidden');
     expect(doc.parentElement?.style.visibility).toBe('visible');
+    expect(doc.parentElement?.style.getPropertyValue('content-visibility')).toBe('visible');
     setActiveTask('task');
     expect(code.parentElement?.style.visibility).toBe('visible');
     expect(doc.parentElement?.style.visibility).toBe('hidden');

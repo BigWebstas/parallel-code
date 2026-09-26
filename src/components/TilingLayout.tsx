@@ -682,6 +682,10 @@ export function TilingLayout() {
                     width: '100%',
                     height: '100%',
                     visibility: isActive ? 'visible' : 'hidden',
+                    // visibility alone still counts as intersecting, so xterm
+                    // would keep repainting every hidden streaming pane.
+                    // content-visibility makes it report off-screen and pause.
+                    'content-visibility': isActive ? 'visible' : 'hidden',
                     'pointer-events': isActive ? 'auto' : 'none',
                     overflow: 'visible',
                   };

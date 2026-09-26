@@ -1842,7 +1842,10 @@ export async function getWorktreeStatus(
   }
   let statusOut: string;
   try {
-    ({ stdout: statusOut } = await exec('git', ['status', '--porcelain'], {
+    // Polled every few seconds while agents run git in the same worktree:
+    // skip status's opportunistic index refresh so it never takes index.lock
+    // (agents would see "index.lock: File exists") or rewrites the index.
+    ({ stdout: statusOut } = await exec('git', ['--no-optional-locks', 'status', '--porcelain'], {
       cwd: worktreePath,
       maxBuffer: MAX_BUFFER,
     }));
