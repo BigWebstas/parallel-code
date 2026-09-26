@@ -1906,6 +1906,39 @@ describe('buildDockerCredentialMounts — read-only auth dir', () => {
 });
 
 describe('writeToAgent — interrupt keystrokes', () => {
+  it('reports submitted agent prompts but not drafts, focus, or shell input', async () => {
+    const submitted: string[] = [];
+    const off = onPtyEvent('prompt-submitted', (agentId) => submitted.push(agentId));
+    try {
+      const agent = buildSpawnArgs({
+        agentId: 'agent-submit',
+        command: 'codex',
+        args: [],
+        dockerMode: false,
+      });
+      const shell = buildSpawnArgs({
+        agentId: 'shell-submit',
+        command: '/bin/sh',
+        args: [],
+        dockerMode: false,
+        isShell: true,
+      });
+      await spawnAgent(createMockNotify(), agent);
+      await spawnAgent(createMockNotify(), shell);
+      writeToAgent(agent.agentId, '\x1b[I');
+      writeToAgent(agent.agentId, '\r');
+      writeToAgent(agent.agentId, 'follow-up');
+      writeToAgent(agent.agentId, '\x1b[I');
+      writeToAgent(shell.agentId, 'echo hello');
+      writeToAgent(shell.agentId, '\r');
+      expect(submitted).toEqual([]);
+      writeToAgent(agent.agentId, '\r');
+      expect(submitted).toEqual([agent.agentId]);
+    } finally {
+      off();
+    }
+  });
+
   it('emits an interrupt event for a bare Esc or Ctrl+C on agent sessions only', async () => {
     const interrupted: string[] = [];
     const off = onPtyEvent('interrupt', (agentId) => interrupted.push(agentId));

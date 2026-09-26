@@ -7,6 +7,7 @@ import type { AgentTourPayload } from '../shared/agent-tour.js';
 import type { ReasoningDocument } from '../shared/reasoning.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import { randomUUID } from 'crypto';
+import type { SignalDoneInput, SignalDoneResult } from '../shared/completion-report.js';
 import type {
   ApiTaskSummary,
   ApiTaskDetail,
@@ -145,8 +146,8 @@ export class MCPClient {
     return this.taskOwnerRequest('POST', `/api/tours/${encodeURIComponent(taskId)}`, payload);
   }
 
-  async signalDone(taskId: string): Promise<void> {
-    await this.taskOwnerRequest('POST', `/api/tasks/${encodeURIComponent(taskId)}/done`, {});
+  async signalDone(taskId: string, input: SignalDoneInput): Promise<SignalDoneResult> {
+    return this.taskOwnerRequest('POST', `/api/tasks/${encodeURIComponent(taskId)}/done`, input);
   }
 
   async landSelf(taskId: string, input: LandSelfInput): Promise<ApiLandSelfResult> {

@@ -94,6 +94,8 @@ function structuralSnapshot(): string {
             integrationPolicy: t.integrationPolicy,
             mcpConfigPath: t.mcpConfigPath,
             preambleFileExistedBefore: t.preambleFileExistedBefore,
+            completion: t.completion,
+            reviewRevision: t.reviewRevision,
             signalDoneReceived: t.signalDoneReceived,
             signalDoneAt: t.signalDoneAt,
             signalDoneConsumed: t.signalDoneConsumed,

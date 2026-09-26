@@ -71,7 +71,7 @@ function taskAttentionEntries(taskId: string): AttentionEntry[] {
       : (task.signalDoneAt ?? (awaitingReview ? latest.timestamp : undefined));
     const since = at ? Date.parse(at) : NaN;
     entries.push({
-      key: JSON.stringify([taskId, 'review', at ?? 'legacy']),
+      key: JSON.stringify([taskId, 'review', task.completion?.id ?? at ?? 'legacy']),
       kind: 'review',
       taskId,
       label: landedReview ? 'Review merged result' : 'Review result',

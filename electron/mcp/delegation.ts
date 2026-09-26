@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Coordinator } from './coordinator.js';
 import type { CoordinatedTask } from './types.js';
+import { parseSignalDoneInput } from '../shared/completion-report.js';
 import { getAgentPromptReadiness, stripAnsi } from './prompt-detect.js';
 import { canConfigureCanvasMcp } from './canvas-config.js';
 import { validateBranchName } from './validation.js';
@@ -442,7 +443,10 @@ export class DelegationService {
     if (task.parentTaskId) {
       const coordinator = await this.options.coordinator();
       this.requireCaller(caller);
-      if (name === 'signal_done') return { ok: coordinator.signalDone(task.taskId) };
+      if (name === 'signal_done')
+        return coordinator.signalDone(task.taskId, parseSignalDoneInput(params), () => {
+          this.requireCaller(caller);
+        });
       if (
         name === 'land_self' &&
         task.integrationPolicy !== 'review' &&

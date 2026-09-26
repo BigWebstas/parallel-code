@@ -236,6 +236,29 @@ describe('independent attention reasons', () => {
     expect(computeAttentionEntries()[0].key).not.toBe(key);
   });
 
+  it('uses completion identity even when a new completion has the same timestamp', () => {
+    seedReview();
+    status.questions.clear();
+    const task = mockStore.tasks['task-1'];
+    const legacyKey = computeAttentionEntries()[0].key;
+    const completion = {
+      id: '11111111-1111-4111-8111-111111111111',
+      completedAt: '2026-09-26T10:00:00.000Z',
+      reviewRevision: 1,
+      snapshotState: 'unknown' as const,
+    };
+    task.completion = completion;
+    const firstKey = computeAttentionEntries()[0].key;
+    expect(firstKey).not.toBe(legacyKey);
+    task.completion = {
+      ...completion,
+      id: '22222222-2222-4222-8222-222222222222',
+      reviewRevision: 2,
+    };
+    expect(computeAttentionEntries()[0].key).not.toBe(firstKey);
+    expect(computeAttentionEntries()).toHaveLength(1);
+  });
+
   it('keeps merged results until explicitly reviewed and reports cleanup failures separately', () => {
     seedReview();
     status.questions.clear();

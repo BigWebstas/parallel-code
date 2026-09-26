@@ -4,6 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { handleMCPToolCall, parseArgs, readTokenFile } from './server.js';
 import { MCPClient } from './client.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types.js';
+import { selectTools } from './mcp-tool-list.js';
+import { buildSubTaskPreamble } from './sub-task-preamble.js';
+import { REVIEW_SUB_TASK_MODE_PREAMBLE, SUB_TASK_MODE_PREAMBLE } from './preamble.js';
+import type { CompletionReport } from '../shared/completion-report.js';
 
 function makeClient(): MCPClient {
   return {
@@ -296,6 +302,286 @@ describe('MCP server tool handling', () => {
       content: [{ text: expect.stringContaining('not available to sub-tasks') }],
     });
     expect(client.sendPrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe('structured MCP completion contracts', () => {
+  const report: CompletionReport = {
+    summary: 'Updated completion contracts.',
+    verification: {
+      checks: [{ name: 'Unit tests', command: 'npm run test:unit', result: 'passed' }],
+    },
+    artifacts: [{ path: 'electron/mcp/server.ts', label: 'Tool dispatcher' }],
+    unresolvedIssues: ['Native smoke check unavailable.'],
+  };
+  const completion = {
+    id: 'completion-1',
+    completedAt: '2026-09-26T12:00:00.000Z',
+    reviewRevision: 1,
+    sourceCommit: 'abc123',
+    snapshotState: 'clean',
+    result: report,
+  };
+  const task = {
+    id: 'child',
+    name: 'Child',
+    branchName: 'task/child',
+    status: 'idle',
+    coordinatorTaskId: 'parent',
+    worktreePath: '/tmp/child',
+    projectId: 'project',
+    agentId: 'agent',
+    exitCode: null,
+    integrationPolicy: 'review',
+    reviewRevision: 2,
+    completion,
+    activityEvidence: {
+      agentId: 'agent',
+      source: 'hook',
+      activity: 'turn_finished',
+      event: 'Stop',
+      freshness: 'current',
+    },
+  };
+  const landing = {
+    mainBranch: 'task/parent',
+    linesAdded: 3,
+    linesRemoved: 1,
+    landingState: 'landed_pending_review',
+    landedMetadata: {
+      taskId: 'child',
+      taskName: 'Child',
+      coordinatorTaskId: 'parent',
+      targetBranch: 'task/parent',
+      landedCommit: 'abc123',
+      landedAt: completion.completedAt,
+      landedOrder: 1,
+      verification: report.verification,
+    },
+  };
+  const fixtures = [
+    { name: 'get_task_status', method: 'getTaskStatus', result: task },
+    { name: 'list_tasks', method: 'listTasks', result: [task] },
+    { name: 'list_tasks', method: 'listTasks', result: [] },
+    { name: 'signal_done', method: 'signalDone', result: { ok: true, completion } },
+    {
+      name: 'signal_done',
+      method: 'signalDone',
+      result: {
+        ok: true,
+        completion: {
+          ...completion,
+          result: undefined,
+          sourceCommit: undefined,
+          snapshotState: 'unknown',
+        },
+      },
+    },
+    { name: 'land_self', method: 'landSelf', result: landing },
+    {
+      name: 'wait_for_signal_done',
+      method: 'waitForSignalDone',
+      result: {
+        taskId: 'child',
+        name: 'Child',
+        status: 'idle',
+        signalDoneAt: completion.completedAt,
+        completion,
+        remaining: 1,
+      },
+    },
+    { name: 'wait_for_signal_done', method: 'waitForSignalDone', result: { remaining: 0 } },
+    {
+      name: 'wait_for_signal_done',
+      method: 'waitForSignalDone',
+      result: { remaining: 1, timedOut: true },
+    },
+  ];
+  for (const session of [false, true]) {
+    it.each(fixtures)(
+      `validates $name output for ${session ? 'session' : 'legacy'} dispatch`,
+      async ({ name, method, result }) => {
+        const child = name === 'signal_done' || name === 'land_self';
+        const capabilities = {
+          profile:
+            name === 'signal_done'
+              ? ('child-review' as const)
+              : child
+                ? ('child-automatic' as const)
+                : ('ordinary' as const),
+          canCreate: false,
+          peers: false,
+        };
+        const context = {
+          client: {
+            [method]: vi.fn().mockResolvedValue(result),
+            callSessionTool: vi.fn().mockResolvedValue(result),
+          } as unknown as MCPClient,
+          taskId: child ? 'child' : session ? 'parent' : '',
+          coordinatorId: !child && !session ? 'parent' : '',
+          ...(session && { sessionCapabilities: capabilities }),
+        };
+        const output = await handleMCPToolCall(
+          context,
+          name,
+          child ? { result: report } : { taskId: 'child' },
+        );
+        const tool = selectTools(
+          context.taskId,
+          context.coordinatorId,
+          false,
+          context.sessionCapabilities,
+        ).find((tool) => tool.name === name);
+        const validate = new AjvJsonSchemaValidator().getValidator(
+          tool?.outputSchema as JsonSchemaType,
+        );
+        expect(output).not.toHaveProperty('isError');
+        expect(
+          validate('structuredContent' in output ? output.structuredContent : undefined),
+        ).toMatchObject({ valid: true });
+        expect(output.content).toEqual([
+          {
+            type: 'text',
+            text:
+              name === 'signal_done' && !session
+                ? 'Done signal sent. The coordinator has been notified.'
+                : JSON.stringify(result, null, 2),
+          },
+        ]);
+        if (name === 'list_tasks')
+          expect(output).toHaveProperty('structuredContent', { tasks: result });
+        if (name === 'signal_done') {
+          if (session)
+            expect(context.client.callSessionTool).toHaveBeenCalledWith('signal_done', {
+              result: report,
+            });
+          else expect(context.client.signalDone).toHaveBeenCalledWith('child', { result: report });
+        }
+      },
+    );
+  }
+
+  it.each([false, true])(
+    'rejects malformed reports before %s transport dispatch',
+    async (session) => {
+      const client = {
+        signalDone: vi.fn(),
+        callSessionTool: vi.fn(),
+      } as unknown as MCPClient;
+      const context = {
+        client,
+        taskId: 'child',
+        coordinatorId: '',
+        ...(session && {
+          sessionCapabilities: { profile: 'child-review' as const, canCreate: false, peers: false },
+        }),
+      };
+      for (const input of [
+        { result: { summary: '' } },
+        { result: { summary: 'x', artifacts: [{ path: '../outside' }] } },
+        { result: { summary: 'x'.repeat(4097) } },
+      ]) {
+        const output = await handleMCPToolCall(context, 'signal_done', input);
+        expect(output).toMatchObject({ isError: true });
+        expect(output).not.toHaveProperty('structuredContent');
+      }
+      expect(client.signalDone).not.toHaveBeenCalled();
+      expect(client.callSessionTool).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([false, true])(
+    'treats rejected done results as errors for %s transport',
+    async (session) => {
+      const context = {
+        client: {
+          signalDone: vi.fn().mockResolvedValue({ ok: false }),
+          callSessionTool: vi.fn().mockResolvedValue({ ok: false }),
+        } as unknown as MCPClient,
+        taskId: 'child',
+        coordinatorId: '',
+        ...(session && {
+          sessionCapabilities: { profile: 'child-review' as const, canCreate: false, peers: false },
+        }),
+      };
+      const output = await handleMCPToolCall(context, 'signal_done', {});
+      expect(output).toMatchObject({
+        isError: true,
+        content: [{ text: 'Error: Completion signal was rejected.' }],
+      });
+      expect(output).not.toHaveProperty('structuredContent');
+      if (session) expect(context.client.callSessionTool).toHaveBeenCalledWith('signal_done', {});
+      else expect(context.client.signalDone).toHaveBeenCalledWith('child', {});
+    },
+  );
+
+  it('sends the parsed report with task ownership credentials and returns the capture', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, completion }), { status: 200 }));
+    try {
+      const client = new MCPClient('http://localhost:7777', 'token', undefined, 'done-token');
+      await expect(
+        client.signalDone('child', {
+          result: report,
+        }),
+      ).resolves.toEqual({ ok: true, completion });
+      expect(fetchMock).toHaveBeenCalledWith('http://localhost:7777/api/tasks/child/done', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer token',
+          'Content-Type': 'application/json',
+          'X-Done-Token': 'done-token',
+        },
+        body: JSON.stringify({ result: report }),
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
+  it.each([false, true])(
+    'omits structured data on backend failures for %s transport',
+    async (session) => {
+      for (const { name, method } of fixtures) {
+        const child = name === 'signal_done' || name === 'land_self';
+        const context = {
+          client: {
+            [method]: vi.fn().mockRejectedValue(new Error('Backend unavailable.')),
+            callSessionTool: vi.fn().mockRejectedValue(new Error('Backend unavailable.')),
+          } as unknown as MCPClient,
+          taskId: child ? 'child' : session ? 'parent' : '',
+          coordinatorId: !child && !session ? 'parent' : '',
+          ...(session && {
+            sessionCapabilities: {
+              profile: child ? ('child-automatic' as const) : ('ordinary' as const),
+              canCreate: false,
+              peers: false,
+            },
+          }),
+        };
+        const output = await handleMCPToolCall(context, name, {});
+        expect(output).toMatchObject({
+          isError: true,
+          content: [{ text: 'Error: Backend unavailable.' }],
+        });
+        expect(output).not.toHaveProperty('structuredContent');
+      }
+    },
+  );
+
+  it('asks for truthful concise reports in both runtime guidance generators', () => {
+    for (const guidance of [
+      SUB_TASK_MODE_PREAMBLE,
+      REVIEW_SUB_TASK_MODE_PREAMBLE,
+      buildSubTaskPreamble(),
+      buildSubTaskPreamble('npm test', 'review'),
+    ]) {
+      expect(guidance).toContain('concise');
+      expect(guidance).toContain('checks actually run');
+      expect(guidance).toContain('repository-relative artifact paths');
+      expect(guidance).toContain('unresolved issues');
+    }
   });
 });
 

@@ -84,6 +84,12 @@ import type {
 } from './types.js';
 import { IPC } from '../ipc/channels.js';
 import type { SessionCapabilities } from '../shared/delegation-types.js';
+import {
+  parseCompletionRecord,
+  parseSignalDoneInput,
+  type CompletionRecord,
+  type SignalDoneResult,
+} from '../shared/completion-report.js';
 
 /** Lines a merge changed, sent with MCP_TaskClosed when a task leaves by merging. */
 interface MergedLines {
@@ -338,6 +344,7 @@ export class Coordinator {
           task.exitCode = null;
         }
         if (task.agentId === agentId) {
+          if (!reattached) this.advanceReviewRevision(task);
           this.updateTailFromScrollback(task);
         }
       }
@@ -349,6 +356,13 @@ export class Coordinator {
     onPtyEvent('interrupt', (agentId) => {
       this.hookLiveAgentIds.delete(agentId);
       this.interruptedAt.set(agentId, Date.now());
+    });
+
+    // Hookless native and renderer submissions must also cancel an in-flight
+    // report capture. Focus, draft edits and secondary panes do not advance it.
+    onPtyEvent('prompt-submitted', (agentId) => {
+      const task = this.findTaskByAgentId(agentId);
+      if (task) this.advanceReviewRevision(task);
     });
 
     // Hook events (Claude Code lifecycle hooks) are the authoritative state
@@ -380,6 +394,7 @@ export class Coordinator {
     if (!task) return;
     // A hook fired by a session that already exited must not revive its task.
     if (task.status === 'exited' || task.status === 'error') return;
+    if (evt.event === 'UserPromptSubmit') this.advanceReviewRevision(task);
     if (this.isToolHookOfInterruptedTurn(evt)) return;
     this.hookLiveAgentIds.add(evt.agentId);
     if (evt.state === 'done') {
@@ -1414,6 +1429,11 @@ export class Coordinator {
         agentId: task.agentId,
         coordinatorTaskId: task.coordinatorTaskId,
         integrationPolicy: task.integrationPolicy,
+        completion: task.completion,
+        reviewRevision: task.reviewRevision,
+        signalDoneReceived: task.signalDoneAt !== undefined,
+        signalDoneAt: task.signalDoneAt?.toISOString(),
+        signalDoneConsumed: task.signalDoneConsumed ?? false,
         baseBranch: task.baseBranch,
         mcpConfigPath: subTaskMcpConfigPath,
         prompt: task.initialPrompt,
@@ -1468,6 +1488,8 @@ export class Coordinator {
       coordinatorTaskId: t.coordinatorTaskId,
       integrationPolicy: t.integrationPolicy,
       signalDoneAt: t.signalDoneAt?.toISOString(),
+      completion: t.completion,
+      reviewRevision: t.reviewRevision,
       verification: t.verification,
       landingState: t.landingState,
       landingReason: t.landingReason,
@@ -1495,6 +1517,8 @@ export class Coordinator {
       pendingPrompts: task.pendingPrompts ? [...task.pendingPrompts] : undefined,
       pendingPromptCount: task.pendingPrompts?.length,
       signalDoneAt: task.signalDoneAt?.toISOString(),
+      completion: task.completion,
+      reviewRevision: task.reviewRevision,
       verification: task.verification,
       landingState: task.landingState,
       landingReason: task.landingReason,
@@ -1516,6 +1540,7 @@ export class Coordinator {
     const queueLen = task.pendingPrompts?.length ?? 0;
     if (queueLen >= MAX_PENDING_PROMPTS)
       throw new Error(`Prompt queue full (${MAX_PENDING_PROMPTS} pending)`);
+    this.advanceReviewRevision(task);
     if (task.initialPrompt && !task.assignedPromptDelivered) {
       task.pendingPrompts = [...(task.pendingPrompts ?? []), prompt];
       this.clearInitialPromptTimer(task.id);
@@ -2574,6 +2599,8 @@ export class Coordinator {
     integrationPolicy?: IntegrationPolicy;
     signalDoneAt?: string;
     signalDoneConsumed?: boolean;
+    completion?: CompletionRecord;
+    reviewRevision?: number;
     verification?: SubtaskVerification;
     landingState?: LandingState;
     landingReason?: string;
@@ -2610,9 +2637,20 @@ export class Coordinator {
         safeMcpConfigPath ?? existingTask.mcpConfigPath,
         opts.agentCommand,
       );
+      // A renderer reload may have missed the publication event. Send the live
+      // record back, rather than letting an older saved report replace it.
+      this.notifyRenderer(IPC.MCP_TaskStateSync, {
+        taskId: existingTask.id,
+        completion: existingTask.completion ?? null,
+        reviewRevision: existingTask.reviewRevision ?? 0,
+        signalDoneReceived: existingTask.signalDoneAt !== undefined,
+        signalDoneAt: existingTask.signalDoneAt?.toISOString() ?? null,
+        signalDoneConsumed: existingTask.signalDoneConsumed ?? false,
+      });
       return { mcpLaunchArgs };
     }
 
+    const completion = parseCompletionRecord(opts.completion);
     const task: CoordinatedTask = {
       id: opts.id,
       name: opts.name,
@@ -2631,6 +2669,13 @@ export class Coordinator {
       assignedPromptDelivered: opts.assignedPromptDelivered ?? !opts.initialPrompt,
       signalDoneAt: opts.signalDoneAt ? new Date(opts.signalDoneAt) : undefined,
       signalDoneConsumed: opts.signalDoneConsumed,
+      completion,
+      reviewRevision: Math.max(
+        Number.isSafeInteger(opts.reviewRevision) && (opts.reviewRevision ?? -1) >= 0
+          ? (opts.reviewRevision ?? 0)
+          : 0,
+        completion?.reviewRevision ?? 0,
+      ),
       verification: opts.verification,
       landingState: opts.landingState,
       landingReason: opts.landingReason,
@@ -3062,12 +3107,78 @@ export class Coordinator {
     );
   }
 
-  signalDone(taskId: string): boolean {
+  private advanceReviewRevision(task: CoordinatedTask): number {
+    task.reviewRevision = (task.reviewRevision ?? 0) + 1;
+    this.notifyRenderer(IPC.MCP_TaskStateSync, {
+      taskId: task.id,
+      reviewRevision: task.reviewRevision,
+    });
+    return task.reviewRevision;
+  }
+
+  async signalDone(
+    taskId: string,
+    input: unknown = {},
+    assertCallerCurrent?: () => void,
+  ): Promise<SignalDoneResult> {
+    const { result } = parseSignalDoneInput(input);
     const task = this.tasks.get(taskId);
-    if (!task) return false;
+    if (!task) throw new Error(`Task not found: ${taskId}`);
+    const revision = task.reviewRevision ?? 0;
+    const agentId = task.agentId;
+    const doneToken = task.doneToken;
+    const launchId = getAgentActivityEvidence(agentId)?.launchId;
+    const assertCurrent = () => {
+      assertCallerCurrent?.();
+      if (
+        this.tasks.get(taskId) !== task ||
+        task.agentId !== agentId ||
+        task.doneToken !== doneToken ||
+        (task.reviewRevision ?? 0) !== revision ||
+        getAgentActivityEvidence(agentId)?.launchId !== launchId ||
+        task.automationWriteInFlight ||
+        this.closingTaskIds.has(taskId) ||
+        this.integratingTaskIds.has(taskId)
+      )
+        throw new Error('Completion was superseded by another assignment, session, or completion.');
+    };
+    assertCurrent();
+    let sourceCommit: string | undefined;
+    let snapshotState: CompletionRecord['snapshotState'] = 'unknown';
+    if (result) {
+      const options = { cwd: task.worktreePath, timeout: 10_000, maxBuffer: 1024 * 1024 };
+      const readHead = async () => {
+        const { stdout } = await execAsync('git', ['rev-parse', '--verify', 'HEAD'], options);
+        const sha = stdout.trim();
+        if (!/^(?:[\da-f]{40}|[\da-f]{64})$/i.test(sha))
+          throw new Error('Cannot associate the completion report with a source commit.');
+        return sha;
+      };
+      sourceCommit = await readHead();
+      const { stdout } = await execAsync('git', ['status', '--porcelain', '-z'], options);
+      snapshotState = stdout ? 'dirty' : 'clean';
+      if ((await readHead()) !== sourceCommit)
+        throw new Error(
+          'Source HEAD changed while capturing the completion report; submit it again.',
+        );
+    }
+    assertCurrent();
+    const completedAt = new Date();
+    const completion: CompletionRecord = {
+      id: randomUUID(),
+      completedAt: completedAt.toISOString(),
+      reviewRevision: revision + 1,
+      snapshotState,
+      ...(sourceCommit !== undefined && { sourceCommit }),
+      ...(result !== undefined && { result }),
+    };
+    // No await between the final identity check and publication. A concurrent
+    // capture at the old revision can no longer replace this result.
+    task.reviewRevision = completion.reviewRevision;
+    task.completion = completion;
     task.assignedPromptDelivered = true;
     task.suppressIdleUntil = undefined;
-    task.signalDoneAt = new Date();
+    task.signalDoneAt = completedAt;
     task.signalDoneConsumed = false;
 
     const coordinatorId = task.coordinatorTaskId;
@@ -3086,6 +3197,7 @@ export class Coordinator {
         name: task.name,
         status: task.status,
         signalDoneAt: (task.signalDoneAt ?? new Date()).toISOString(),
+        completion,
         remaining,
       });
       // Tell renderer — coordinator already gets result via MCP return value, no UI notification needed
@@ -3094,6 +3206,8 @@ export class Coordinator {
         signalDoneReceived: true,
         signalDoneAt: (task.signalDoneAt ?? new Date()).toISOString(),
         signalDoneConsumed: true,
+        completion,
+        reviewRevision: task.reviewRevision,
       });
       logWarn('coordinator.signal_wait', 'wait_for_signal_done finish', {
         taskId,
@@ -3101,7 +3215,7 @@ export class Coordinator {
         reason: 'signal',
         activeWaitCount: this.activeSignalWaitCounts.get(coordinatorId) ?? 0,
       });
-      return true;
+      return { ok: true, completion };
     }
 
     // No active waiter — notify via UI so coordinator sees the completion
@@ -3110,6 +3224,8 @@ export class Coordinator {
       signalDoneReceived: true,
       signalDoneAt: (task.signalDoneAt ?? new Date()).toISOString(),
       signalDoneConsumed: false,
+      completion,
+      reviewRevision: task.reviewRevision,
     });
     // Don't queue a review notification if the agent hasn't finished spawning yet —
     // renderer state is inconsistent while status is 'creating'.
@@ -3118,7 +3234,7 @@ export class Coordinator {
       const state: 'idle' | 'exited' = task.status === 'exited' ? 'exited' : 'idle';
       this.maybeQueueReviewNotification(task, state, task.exitCode ?? null, 5_000);
     }
-    return true;
+    return { ok: true, completion };
   }
 
   private queueLandedNotification(task: CoordinatedTask): void {
@@ -3219,6 +3335,7 @@ export class Coordinator {
           name: task.name,
           status: task.status,
           signalDoneAt: task.signalDoneAt.toISOString(),
+          completion: task.completion,
           remaining,
         };
         if (requestId) this.recentlyDelivered.set(coordinatorTaskId, requestId, result);

@@ -1,4 +1,12 @@
 import type {
+  CompletionRecord,
+  SubtaskVerification,
+} from '../../electron/shared/completion-report';
+export type {
+  SubtaskVerification,
+  SubtaskVerificationCheck,
+} from '../../electron/shared/completion-report';
+import type {
   IntegrationPolicy,
   SessionCapabilities,
 } from '../../electron/shared/delegation-types';
@@ -34,17 +42,6 @@ export interface StagedNotification {
   autoFireAt: number;
   userEdited: boolean;
   hiddenCompletionCount?: number;
-}
-
-export interface SubtaskVerificationCheck {
-  name: string;
-  command: string;
-  result: 'passed' | 'blocked' | 'failed';
-  reason?: string;
-}
-
-export interface SubtaskVerification {
-  checks: SubtaskVerificationCheck[];
 }
 
 export type LandingState =
@@ -305,6 +302,8 @@ export interface Task {
   mcpConfigPath?: string;
   mcpLaunchArgs?: string[];
   preambleFileExistedBefore?: boolean;
+  completion?: CompletionRecord;
+  reviewRevision?: number;
   signalDoneReceived?: boolean;
   signalDoneAt?: string;
   signalDoneConsumed?: boolean;
@@ -401,6 +400,8 @@ export interface PersistedTask {
   controlledBy?: 'coordinator' | 'human';
   mcpConfigPath?: string;
   preambleFileExistedBefore?: boolean;
+  completion?: CompletionRecord;
+  reviewRevision?: number;
   signalDoneReceived?: boolean;
   signalDoneAt?: string;
   signalDoneConsumed?: boolean;

@@ -272,7 +272,7 @@ describe('ordinary delegation lifecycle', () => {
   it('preserves visible review notifications while the ordinary agent consumes completion', async () => {
     const child = await create();
     const waiting = coordinator.waitForSignalDone('parent');
-    coordinator.signalDone(child.id);
+    await coordinator.signalDone(child.id);
     await expect(waiting).resolves.toMatchObject({ taskId: child.id });
     expect(mockNotifyRenderer).toHaveBeenCalledWith(
       'mcp_coordinator_notification_staged',
@@ -292,7 +292,7 @@ describe('ordinary delegation lifecycle', () => {
       automaticNotifications: true,
     });
     const child = await create({ coordinatorTaskId: 'updates' });
-    coordinator.signalDone(child.id);
+    await coordinator.signalDone(child.id);
     const staged = mockNotifyRenderer.mock.calls.find(
       ([channel]) => channel === 'mcp_coordinator_notification_staged',
     );
@@ -347,7 +347,7 @@ describe('ordinary delegation lifecycle', () => {
 describe('review-required integration', () => {
   it('rejects all agent-accessible integration methods', async () => {
     const child = await create();
-    coordinator.signalDone(child.id);
+    await coordinator.signalDone(child.id);
     await expect(coordinator.landSelf(child.id, { verification: { checks: [] } })).rejects.toThrow(
       'user review',
     );
@@ -358,7 +358,7 @@ describe('review-required integration', () => {
 
   it('never autocommits a dirty child when the user approves', async () => {
     const child = await create();
-    coordinator.signalDone(child.id);
+    await coordinator.signalDone(child.id);
     gitResults(' M code.ts');
     await expect(
       coordinator.approveAndMergeTask(child.id, {
@@ -375,7 +375,7 @@ describe('review-required integration', () => {
 
   it('passes exact review commits into the locked merge and rejects simultaneous detach', async () => {
     const child = await create();
-    coordinator.signalDone(child.id);
+    await coordinator.signalDone(child.id);
     gitResults();
     const approval = {
       expectedCommit: sha,
@@ -419,7 +419,7 @@ describe('global agent orchestration switch', () => {
     expect(mockKillAgent).not.toHaveBeenCalled();
     expect(mockDeleteBackendTask).not.toHaveBeenCalled();
     expect(coordinator.getTaskStatus(child.id)).not.toBeNull();
-    expect(coordinator.signalDone(child.id)).toBe(true);
+    await expect(coordinator.signalDone(child.id)).resolves.toMatchObject({ ok: true });
   });
 
   it('cancels a pending launch even if orchestration is re-enabled before setup finishes', async () => {
@@ -513,7 +513,7 @@ describe('global agent orchestration switch', () => {
 
   it('preserves review notifications and explicit desktop approval while disabled', async () => {
     const child = await create();
-    coordinator.signalDone(child.id);
+    await coordinator.signalDone(child.id);
     mockNotifyRenderer.mockClear();
     coordinator.setOrchestrationEnabled(false);
     expect(mockNotifyRenderer).not.toHaveBeenCalledWith(

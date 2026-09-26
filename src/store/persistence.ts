@@ -1,3 +1,4 @@
+import { parseCompletionRecord } from '../../electron/shared/completion-report';
 import { delegationRequest, taskAuthorityInput } from './delegation';
 import { restoreCanvasTaskLinks } from '../lib/canvas-task-links';
 import { restoreMindMap } from '../graph/model';
@@ -313,6 +314,8 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     coordinatedBy: task.coordinatedBy,
     controlledBy: task.controlledBy,
     mcpConfigPath: task.mcpConfigPath,
+    completion: task.completion,
+    reviewRevision: task.reviewRevision,
     signalDoneReceived: task.signalDoneReceived,
     signalDoneAt: task.signalDoneAt,
     signalDoneConsumed: task.signalDoneConsumed,
@@ -1037,6 +1040,11 @@ export async function loadState(): Promise<void> {
           mcpStartupStatus:
             pt.coordinatorMode || pt.coordinatedBy ? ('pending' as const) : undefined,
           mcpConfigPath: pt.mcpConfigPath,
+          completion: parseCompletionRecord(pt.completion),
+          reviewRevision:
+            Number.isSafeInteger(pt.reviewRevision) && (pt.reviewRevision ?? -1) >= 0
+              ? pt.reviewRevision
+              : undefined,
           signalDoneReceived: pt.signalDoneReceived,
           signalDoneAt: pt.signalDoneAt,
           signalDoneConsumed: pt.signalDoneConsumed,
@@ -1182,6 +1190,11 @@ export async function loadState(): Promise<void> {
           mcpStartupStatus:
             pt.coordinatorMode || pt.coordinatedBy ? ('pending' as const) : undefined,
           mcpConfigPath: pt.mcpConfigPath,
+          completion: parseCompletionRecord(pt.completion),
+          reviewRevision:
+            Number.isSafeInteger(pt.reviewRevision) && (pt.reviewRevision ?? -1) >= 0
+              ? pt.reviewRevision
+              : undefined,
           signalDoneReceived: pt.signalDoneReceived,
           signalDoneAt: pt.signalDoneAt,
           signalDoneConsumed: pt.signalDoneConsumed,

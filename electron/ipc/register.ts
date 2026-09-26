@@ -1905,6 +1905,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
           coordinatorTaskId: string;
           controlledBy?: 'coordinator' | 'human';
           agentId?: string;
+          completion?: import('../shared/completion-report.js').CompletionRecord;
+          reviewRevision?: number;
           signalDoneAt?: string;
           signalDoneConsumed?: boolean;
           verification?: import('../mcp/types.js').SubtaskVerification;
@@ -1957,6 +1959,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
           agentId: args.agentId ?? crypto.randomUUID(),
           coordinatorTaskId: args.coordinatorTaskId,
           controlledBy: args.controlledBy,
+          completion: args.completion,
+          reviewRevision: args.reviewRevision,
           signalDoneAt: args.signalDoneAt,
           signalDoneConsumed: args.signalDoneConsumed,
           verification: args.verification,

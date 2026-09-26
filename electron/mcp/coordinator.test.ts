@@ -1409,7 +1409,7 @@ describe('Coordinator signal_done', () => {
   it('stages notification with 5s delay without requiring markPromptDelivered', async () => {
     coordinator.registerCoordinator('coord-1', 'proj-1');
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
 
     const stagedCall = mockNotifyRenderer.mock.calls.find(
       (c) => c[0] === 'mcp_coordinator_notification_staged',
@@ -1423,7 +1423,7 @@ describe('Coordinator signal_done', () => {
   it('sends MCP_TaskStateSync to renderer', async () => {
     coordinator.registerCoordinator('coord-1', 'proj-1');
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
 
     expect(mockNotifyRenderer).toHaveBeenCalledWith(
       'mcp_task_state_sync',
@@ -1438,7 +1438,7 @@ describe('Coordinator signal_done', () => {
     coordinator.registerCoordinator('coord-1', 'proj-1');
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
     const before = new Date();
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     const after = new Date();
     const task = coordinator.getTask('task-1');
     expect(task?.signalDoneAt).toBeDefined();
@@ -1446,9 +1446,9 @@ describe('Coordinator signal_done', () => {
     expect(task?.signalDoneAt?.getTime()).toBeLessThanOrEqual(after.getTime());
   });
 
-  it('is a no-op for unknown taskId', () => {
+  it('rejects unknown taskId without a completion notification', async () => {
     coordinator.registerCoordinator('coord-1', 'proj-1');
-    expect(() => coordinator.signalDone('nonexistent-task')).not.toThrow();
+    await expect(coordinator.signalDone('nonexistent-task')).rejects.toThrow('Task not found');
     expect(mockNotifyRenderer).not.toHaveBeenCalledWith(
       'mcp_coordinator_notification_staged',
       expect.anything(),
@@ -2291,7 +2291,7 @@ describe('Coordinator waitForSignalDone', () => {
 
   it('resolves immediately with unconsumed signal if already signalled', async () => {
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await expect(coordinator.waitForSignalDone('coord-1')).resolves.toMatchObject({
       taskId: 'task-1',
       name: 'test',
@@ -2304,7 +2304,7 @@ describe('Coordinator waitForSignalDone', () => {
   it('resolves when signalDone is called, with remaining count', async () => {
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
     const waitPromise = coordinator.waitForSignalDone('coord-1');
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await expect(waitPromise).resolves.toMatchObject({
       taskId: 'task-1',
       name: 'test',
@@ -2331,7 +2331,7 @@ describe('Coordinator waitForSignalDone', () => {
     await coordinator.createTask({ name: 'task-a', prompt: 'do', coordinatorTaskId: 'coord-1' });
     await coordinator.createTask({ name: 'task-b', prompt: 'do', coordinatorTaskId: 'coord-1' });
     const waitPromise = coordinator.waitForSignalDone('coord-1');
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await expect(waitPromise).resolves.toMatchObject({
       taskId: 'task-1',
       name: 'task-a',
@@ -2360,7 +2360,7 @@ describe('Coordinator waitForSignalDone', () => {
       expect.anything(),
     );
 
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await expect(waitPromise).resolves.toMatchObject({ taskId: 'task-1' });
     expect(mockNotifyRenderer).toHaveBeenCalledWith(
       'mcp_coordinator_notification_staged',
@@ -2389,7 +2389,7 @@ describe('Coordinator waitForSignalDone', () => {
       coordinatorTaskId: 'coord-1',
     });
 
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await expect(waitPromise).resolves.toMatchObject({ taskId: 'task-1' });
     expect(mockNotifyRenderer).not.toHaveBeenCalledWith(
       'mcp_coordinator_notification_staged',
@@ -2835,7 +2835,7 @@ describe('Coordinator mergeTask active ownership guard', () => {
 
   it('allows legacy signal_done manual-review tasks even if the agent process is still running', async () => {
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
 
     await expect(coordinator.mergeTask('task-1')).resolves.toEqual({
       mainBranch: 'main',
@@ -2848,7 +2848,7 @@ describe('Coordinator mergeTask active ownership guard', () => {
 
   it('says the task was merged when a merge with cleanup closes it', async () => {
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
 
     await coordinator.mergeTask('task-1', { cleanup: true });
 
@@ -2861,7 +2861,7 @@ describe('Coordinator mergeTask active ownership guard', () => {
   it('runs the verify command before a coordinator-driven merge and escalates on failure', async () => {
     coordinator.registerCoordinator('coord-1', 'proj-1', { verifyCommand: 'npm test' });
     await coordinator.createTask({ name: 'test', prompt: 'do', coordinatorTaskId: 'coord-1' });
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     mockVerifyStart.mockResolvedValueOnce({
       command: 'npm test',
       status: 'timed_out',
@@ -3157,7 +3157,7 @@ describe('Coordinator waiter resolver cleanup on timeout', () => {
     p2.then(() => {
       resolveCalled = true;
     }).catch(() => {});
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await Promise.resolve();
     expect(resolveCalled).toBe(true);
   });
@@ -4015,7 +4015,7 @@ describe('Coordinator waitForSignalDone — notification lifecycle', () => {
     });
 
     // Clean up — reject or resolve the promise
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await waitPromise.catch(() => {});
   });
 
@@ -4038,7 +4038,7 @@ describe('Coordinator waitForSignalDone — notification lifecycle', () => {
     expect(stagedCalls).toHaveLength(0);
 
     // Clean up
-    coordinator.signalDone('task-1');
+    await coordinator.signalDone('task-1');
     await waitPromise.catch(() => {});
   });
 
@@ -4867,7 +4867,7 @@ describe('Coordinator removeCoordinatedTask', () => {
     coordinator.registerCoordinator('coord-1', 'proj-1');
   });
 
-  it('is a no-op for unknown taskId', () => {
+  it('rejects unknown taskId without a completion notification', async () => {
     expect(() => coordinator.removeCoordinatedTask('nonexistent')).not.toThrow();
   });
 

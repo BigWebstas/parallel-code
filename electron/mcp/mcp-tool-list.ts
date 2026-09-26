@@ -5,6 +5,7 @@ import { AGENT_TOUR_LIMITS } from '../shared/agent-tour.js';
 import { TOUR_CARD_LIMITS, TOUR_FORMS, TOUR_TONES } from '../shared/understanding-limits.js';
 import { semanticNodeKinds, reasoningStatuses } from '../shared/graph.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
+import { completionReportSchema, toolOutputSchemas } from './tool-output-schemas.js';
 /** Pure tool-list logic — extracted so it can be unit-tested without starting the MCP server. */
 
 export interface ToolDef {
@@ -15,6 +16,12 @@ export interface ToolDef {
     properties: Record<string, unknown>;
     required?: string[];
     examples?: unknown[];
+  };
+  outputSchema?: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required?: string[];
+    anyOf?: unknown[];
   };
 }
 
@@ -176,6 +183,7 @@ export const TOUR_TOOLS: ToolDef[] = [
 export const SUBTASK_TOOLS: ToolDef[] = [
   {
     name: 'land_self',
+    outputSchema: toolOutputSchemas.land_self,
     description:
       'Land your own completed sub-task through the Parallel Code backend. Call this only after committing your work and running verification successfully. A successful call is terminal; do not call signal_done afterward.',
     inputSchema: {
@@ -211,9 +219,14 @@ export const SUBTASK_TOOLS: ToolDef[] = [
   },
   {
     name: 'signal_done',
+    outputSchema: toolOutputSchemas.signal_done,
     description:
-      'Legacy/manual-review completion signal. Use land_self for normal self-landing; call signal_done only when the coordinator asked to review and land manually.',
-    inputSchema: { type: 'object', properties: {}, required: [] },
+      'Legacy/manual-review completion signal. Use land_self for normal self-landing; call signal_done only when the coordinator asked to review and land manually. Include a concise result with summary, checks actually run, useful repository-relative artifact paths, and unresolved issues.',
+    inputSchema: {
+      type: 'object',
+      properties: { result: completionReportSchema },
+      required: [],
+    },
   },
 ];
 
@@ -241,11 +254,13 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
   },
   {
     name: 'list_tasks',
+    outputSchema: toolOutputSchemas.list_tasks,
     description: 'List all coordinated tasks with their current status.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'get_task_status',
+    outputSchema: toolOutputSchemas.get_task_status,
     description: 'Get detailed status of a specific task including git info and agent state.',
     inputSchema: {
       type: 'object',
@@ -334,6 +349,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
   },
   {
     name: 'wait_for_signal_done',
+    outputSchema: toolOutputSchemas.wait_for_signal_done,
     description:
       'Wait for ANY sub-task to call signal_done. Returns { taskId, name, status, signalDoneAt, remaining } where remaining is the count of tasks still running or signaled-but-not-yet-reviewed. Call this in a loop until remaining === 0 to process all completed sub-tasks before spawning more. IMPORTANT: you MUST review the returned task before calling wait_for_signal_done again.',
     inputSchema: {
@@ -486,7 +502,7 @@ export function selectTools(
               ? {
                   ...tool,
                   description:
-                    'Signal that your committed, verified work is ready for review. Completion does not merge or approve your result.',
+                    'Signal that your committed, verified work is ready for review. Include a concise result with summary, checks actually run, useful repository-relative artifact paths, and unresolved issues. Completion does not merge or approve your result.',
                 }
               : tool,
           );

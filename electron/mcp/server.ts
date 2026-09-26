@@ -22,6 +22,38 @@ import { validateBranchName } from './validation.js';
 import { formatDiffForTool } from './diff-format.js';
 import type { LandSelfInput } from './types.js';
 import type { SessionCapabilities, SessionProfile } from '../shared/delegation-types.js';
+import { parseSignalDoneInput } from '../shared/completion-report.js';
+import { toolOutputSchemas } from './tool-output-schemas.js';
+
+function formatToolResult(name: string, result: unknown, legacyDone = false) {
+  if (name === 'signal_done') {
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      !('ok' in result) ||
+      result.ok !== true ||
+      !('completion' in result) ||
+      !result.completion
+    )
+      throw new Error('Completion signal was rejected.');
+  }
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: legacyDone
+          ? 'Done signal sent. The coordinator has been notified.'
+          : JSON.stringify(result, null, 2),
+      },
+    ],
+    ...(name in toolOutputSchemas
+      ? {
+          structuredContent:
+            name === 'list_tasks' ? { tasks: result } : (result as Record<string, unknown>),
+        }
+      : {}),
+  };
+}
 
 export interface MCPToolHandlerContext {
   client: MCPClient;
@@ -80,7 +112,10 @@ export async function handleMCPToolCall(
     if (sessionCapabilities && !canvasTool) {
       if (params !== undefined && (!params || typeof params !== 'object' || Array.isArray(params)))
         throw new Error('Tool arguments must be an object.');
-      const scopedParams = { ...(params as Record<string, unknown> | undefined) };
+      const scopedParams: Record<string, unknown> =
+        name === 'signal_done'
+          ? { ...parseSignalDoneInput(params) }
+          : { ...(params as Record<string, unknown> | undefined) };
       if (['wait_for_idle', 'wait_for_signal_done', 'wait_for_agent_prompt'].includes(name)) {
         const timeout = scopedParams.timeoutMs;
         if (
@@ -91,7 +126,7 @@ export async function handleMCPToolCall(
         scopedParams.timeoutMs = Math.min(typeof timeout === 'number' ? timeout : 30000, 60000);
       }
       const result = await client.callSessionTool(name, scopedParams);
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return formatToolResult(name, result);
     }
     switch (name) {
       case 'reasoning_read':
@@ -149,14 +184,14 @@ export async function handleMCPToolCall(
 
       case 'list_tasks': {
         const tasks = await client.listTasks();
-        return { content: [{ type: 'text', text: JSON.stringify(tasks, null, 2) }] };
+        return formatToolResult(name, tasks);
       }
 
       case 'get_task_status': {
         const result = await client.getTaskStatus(
           (params as Record<string, unknown>).taskId as string,
         );
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        return formatToolResult(name, result);
       }
 
       case 'send_prompt': {
@@ -242,7 +277,7 @@ export async function handleMCPToolCall(
           coordinatorId,
           (params as Record<string, unknown>).timeoutMs as number | undefined,
         );
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        return formatToolResult(name, result);
       }
 
       case 'review_and_merge_task': {
@@ -274,10 +309,8 @@ export async function handleMCPToolCall(
             isError: true,
           };
         }
-        await client.signalDone(taskId);
-        return {
-          content: [{ type: 'text', text: 'Done signal sent. The coordinator has been notified.' }],
-        };
+        const result = await client.signalDone(taskId, parseSignalDoneInput(params));
+        return formatToolResult(name, result, true);
       }
 
       case 'land_self': {
@@ -293,7 +326,7 @@ export async function handleMCPToolCall(
           };
         }
         const result = await client.landSelf(taskId, params as unknown as LandSelfInput);
-        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        return formatToolResult(name, result);
       }
 
       default:

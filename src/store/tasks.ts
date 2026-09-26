@@ -1,3 +1,4 @@
+import { parseCompletionRecord } from '../../electron/shared/completion-report';
 import {
   registerTaskAuthority,
   delegationRequest,
@@ -1171,6 +1172,11 @@ interface MCPTaskCreatedEvent {
   worktreePath: string;
   agentId: string;
   coordinatorTaskId: string;
+  completion?: unknown;
+  reviewRevision?: number;
+  signalDoneReceived?: boolean;
+  signalDoneAt?: string;
+  signalDoneConsumed?: boolean;
   baseBranch?: string;
   integrationPolicy?: IntegrationPolicy;
   prompt?: string;
@@ -1216,6 +1222,11 @@ export function initMCPListeners(): () => void {
         integrationPolicy: evt.integrationPolicy,
         coordinatedBy: evt.coordinatorTaskId,
         controlledBy: 'coordinator',
+        completion: parseCompletionRecord(evt.completion),
+        reviewRevision: evt.reviewRevision,
+        signalDoneReceived: evt.signalDoneReceived,
+        signalDoneAt: evt.signalDoneAt,
+        signalDoneConsumed: evt.signalDoneConsumed,
         // Coordinated initial assignments are delivered by the backend because
         // background sub-task panels may never mount a PromptInput.
         initialPrompt: evt.prompt,
@@ -1402,6 +1413,8 @@ export function initMCPListeners(): () => void {
         delegationParent?: boolean;
         delegationPaused?: boolean;
         integrationPolicy?: IntegrationPolicy;
+        completion?: unknown;
+        reviewRevision?: number;
         signalDoneReceived?: boolean;
         signalDoneAt?: string;
         signalDoneConsumed?: boolean;
@@ -1428,11 +1441,22 @@ export function initMCPListeners(): () => void {
         if (evt.integrationPolicy !== undefined)
           setStore('tasks', evt.taskId, 'integrationPolicy', evt.integrationPolicy);
         const hasLandingStateUpdate =
+          Object.hasOwn(evt, 'completion') ||
+          evt.reviewRevision !== undefined ||
           evt.verification !== undefined ||
           evt.landingState !== undefined ||
           evt.landingReason !== undefined ||
           evt.landingSummary !== undefined ||
           evt.landedMetadata !== undefined;
+        // A completion is a replacement packet: omitted report fields must not survive.
+        if (Object.hasOwn(evt, 'completion'))
+          setStore(
+            produce((state) => {
+              state.tasks[evt.taskId].completion = parseCompletionRecord(evt.completion);
+            }),
+          );
+        if (Number.isSafeInteger(evt.reviewRevision) && (evt.reviewRevision ?? -1) >= 0)
+          setStore('tasks', evt.taskId, 'reviewRevision', evt.reviewRevision);
         if (evt.signalDoneReceived !== undefined)
           setStore('tasks', evt.taskId, 'signalDoneReceived', evt.signalDoneReceived);
         if (evt.signalDoneAt !== undefined)
@@ -1615,6 +1639,8 @@ export function retryTaskMcpStartup(taskId: string): Promise<void> {
       integrationPolicy: task.integrationPolicy,
       controlledBy: task.controlledBy,
       agentId: task.agentIds[0],
+      completion: task.completion,
+      reviewRevision: task.reviewRevision,
       signalDoneAt: task.signalDoneAt,
       signalDoneConsumed: task.signalDoneConsumed,
       verification: task.verification,

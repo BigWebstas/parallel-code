@@ -3,6 +3,8 @@ import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { AGENT_TOUR_LIMITS } from '../shared/agent-tour.js';
 import { TOUR_CARD_LIMITS, TOUR_TONES } from '../shared/understanding-limits.js';
 import { acceptUpdate, emptyHistory } from '../shared/reasoning-state.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation/types.js';
 import {
   selectTools,
   SUBTASK_TOOLS,
@@ -275,4 +277,62 @@ describe('session capability tool sets', () => {
       'Use land_self',
     );
   });
+});
+
+it('keeps output contracts attached across role filtering and rejects success-shaped omissions', () => {
+  const validator = new AjvJsonSchemaValidator();
+  const roles = [
+    selectTools('', 'coordinator'),
+    selectTools('child', ''),
+    ...(['ordinary', 'child-review', 'child-automatic'] as const).map((profile) =>
+      selectTools('task', '', false, { profile, canCreate: false, peers: false }),
+    ),
+  ];
+  const contractedNames = [
+    'get_task_status',
+    'list_tasks',
+    'signal_done',
+    'land_self',
+    'wait_for_signal_done',
+  ];
+  for (const tools of roles) {
+    for (const tool of tools) {
+      if (!contractedNames.includes(tool.name)) continue;
+      expect(tool.outputSchema).toBeDefined();
+      const validate = validator.getValidator(tool.outputSchema as JsonSchemaType);
+      expect(validate({}).valid).toBe(false);
+      if (tool.name === 'wait_for_signal_done') {
+        expect(validate({ remaining: 2 }).valid).toBe(false);
+        expect(validate({ remaining: -1, timedOut: true }).valid).toBe(false);
+      }
+      if (tool.name === 'signal_done') expect(validate({ ok: false }).valid).toBe(false);
+    }
+  }
+});
+
+it('advertises optional bounded completion reports while keeping empty calls valid', () => {
+  const tool = SUBTASK_TOOLS.find((tool) => tool.name === 'signal_done');
+  const validate = new AjvJsonSchemaValidator().getValidator(tool?.inputSchema as JsonSchemaType);
+  expect(validate({}).valid).toBe(true);
+  expect(
+    validate({
+      result: {
+        summary: 'Completed the task.',
+        verification: { checks: [] },
+        artifacts: [{ path: 'src/main.ts' }],
+        unresolvedIssues: [],
+      },
+    }).valid,
+  ).toBe(true);
+  for (const result of [
+    {},
+    { summary: 'x'.repeat(4097) },
+    {
+      summary: 'x',
+      verification: {
+        checks: Array(21).fill({ name: 'Test', command: 'npm test', result: 'passed' }),
+      },
+    },
+  ])
+    expect(validate({ result }).valid).toBe(false);
 });

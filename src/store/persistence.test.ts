@@ -288,6 +288,88 @@ describe('landing state persistence', () => {
   });
 });
 
+describe('completion report persistence', () => {
+  const completion = {
+    id: '11111111-1111-4111-8111-111111111111',
+    completedAt: '2026-09-26T10:00:00.000Z',
+    reviewRevision: 3,
+    sourceCommit: 'a'.repeat(40),
+    snapshotState: 'dirty',
+    result: {
+      summary: 'Implemented the task',
+      verification: { checks: [{ name: 'Tests', command: 'npm test', result: 'passed' }] },
+      artifacts: [{ path: 'reports/result.txt', label: 'Result' }],
+      unresolvedIssues: ['Native smoke check pending'],
+    },
+  };
+
+  async function restore(value: unknown, reviewRevision: unknown = 3) {
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'hsl(0, 70%, 75%)' }],
+        taskOrder: ['task-1'],
+        collapsedTaskOrder: ['task-2'],
+        tasks: {
+          'task-1': { ...persistedTask(agentDef()), completion: value, reviewRevision },
+          'task-2': {
+            ...persistedTask(agentDef()),
+            id: 'task-2',
+            collapsed: true,
+            completion: value,
+            reviewRevision,
+          },
+        },
+        activeTaskId: 'task-1',
+        sidebarVisible: true,
+      }),
+    );
+    await loadState();
+  }
+
+  it('round-trips completion reports and revisions for active and collapsed tasks', async () => {
+    await restore(completion);
+    expect(store.tasks['task-2'].collapsed).toBe(true);
+    for (const taskId of ['task-1', 'task-2']) {
+      expect(store.tasks[taskId].completion).toEqual(completion);
+      expect(store.tasks[taskId].reviewRevision).toBe(3);
+    }
+    await saveState();
+    const savedCall = [...mockInvoke.mock.calls]
+      .reverse()
+      .find(([channel]) => channel === IPC.SaveAppState);
+    expect(savedCall).toBeDefined();
+    const saved = JSON.parse(savedCall?.[1].json);
+    for (const taskId of ['task-1', 'task-2']) {
+      expect(saved.tasks[taskId].completion).toEqual(completion);
+      expect(saved.tasks[taskId].reviewRevision).toBe(3);
+    }
+  });
+
+  it.each([
+    undefined,
+    null,
+    { ...completion, snapshotState: 'invalid' },
+    { ...completion, result: { summary: 42 } },
+  ])(
+    'drops absent or invalid completion data without restoring a previous report: %j',
+    async (invalid) => {
+      await restore(completion);
+      await restore(invalid, -1);
+      for (const taskId of ['task-1', 'task-2']) {
+        expect(store.tasks[taskId].completion).toBeUndefined();
+        expect(store.tasks[taskId].reviewRevision).toBeUndefined();
+      }
+      await saveState();
+      const savedCall = [...mockInvoke.mock.calls]
+        .reverse()
+        .find(([channel]) => channel === IPC.SaveAppState);
+      const saved = JSON.parse(savedCall?.[1].json);
+      expect(saved.tasks['task-1']).not.toHaveProperty('completion');
+      expect(saved.tasks['task-2']).not.toHaveProperty('completion');
+    },
+  );
+});
+
 describe('coordinator concurrency limit persistence', () => {
   function stateWithTasks(tasks: Record<string, unknown>): string {
     return JSON.stringify({

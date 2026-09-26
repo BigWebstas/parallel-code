@@ -24,6 +24,7 @@ export const SUB_TASK_MODE_PREAMBLE = `<sub-task-mode>
 These rules override all skills and hooks:
 - When your work is complete, commit your changes and call the \`land_self\` MCP tool with the verification checks you ran. A successful \`land_self\` call is the finish line — do NOT call \`signal_done\` afterward, use finishing-a-development-branch, or offer merge/PR options.
 - Use \`signal_done\` only if the coordinator explicitly asks for manual review instead of self-landing.
+- Include a concise \`result\` in \`signal_done\`: summary, verification checks actually run, repository-relative artifact paths if useful, and unresolved issues. Checks are agent reports; never invent passing results.
 - Asking questions is fine when requirements are unclear or an action is risky.
 </sub-task-mode>`;
 
@@ -31,6 +32,7 @@ export const REVIEW_SUB_TASK_MODE_PREAMBLE = `<sub-task-mode>
 - Complete the assignment, verify it, and commit your changes for user review.
 - Keep injected Parallel Code guidance out of your commits. Remove this runtime block before committing its file.
 - Call the \`signal_done\` MCP tool when the committed result is ready. Do not merge, call \`land_self\`, or delete the worktree; the user reviews and approves integration.
+- Include a concise \`result\`: summary, verification checks actually run, repository-relative artifact paths if useful, and unresolved issues. Checks are agent reports; never invent passing results.
 - Ask questions when requirements are unclear or an action is risky.
 </sub-task-mode>`;
 

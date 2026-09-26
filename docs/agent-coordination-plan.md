@@ -1,18 +1,18 @@
 # Agent coordination: actions, status evidence, and result handoffs
 
-Status: Steps A and B implemented. Step A independently reviewed with all findings resolved; Step B locally reviewed and verified as recorded below. Steps C–E remain planned as separate changes. Updated 2026-09-26.
+Status: Steps A and B implemented and verified. Step C is implemented and passes the recorded checks, but a fresh review found two open P2 defects after the initial review reported no actionable findings. Resolve these before accepting C. Steps D–E remain planned as separate changes. Updated 2026-09-26.
 
-Step A extends the sidebar tray with independent questions, reviews, and coordination failures; shares child attention summaries; hydrates delegation state without panel mounts; and opens child reviews without resuming collapsed agents. Already-merged results retain an explicit review acknowledgment. Step B adds launch-bound hook observations shared by MCP and the renderer, ordered snapshot hydration, and activity provenance labels. Native Electron smoke testing has not been performed. Completion reports, captured reviews, and request changes remain separate work.
+Step A extends the sidebar tray with independent questions, reviews, and coordination failures; shares child attention summaries; hydrates delegation state without panel mounts; and opens child reviews without resuming collapsed agents. Already-merged results retain an explicit review acknowledgment. Step B adds launch-bound hook observations shared by MCP and the renderer, ordered snapshot hydration, and activity provenance labels. Step C adds bounded completion reports, persistence and report display, plus schemas and structured results for the five selected MCP tools. Native Electron smoke testing has not been performed. Captured reviews and request changes remain separate work.
 
 ## Remaining work
 
 Implement and validate each step separately; the scope and acceptance gates below are the handoff for future changes.
 
-1. **C — Completion handoffs:** add optional bounded reports to `signal_done`, restore them through existing persistence, and add schemas/structured results for the five selected MCP tools.
-2. **D — Captured reviews:** after C, pin the displayed diff/files to Git objects, label report and verification provenance, and reject approval of superseded assignments through one shared review revision.
-3. **E — Request changes:** after B and D, submit feedback once to a verified, ready primary process with draft protection, revision invalidation, explicit outcomes, and no automatic retry.
+1. **C — Review corrections:** recognize prompt submissions inside coalesced terminal input, and validate session `land_self` input before landing so successful responses satisfy the declared schema. Add regression coverage for both findings recorded below.
+2. **D — Captured reviews:** pin the displayed diff/files to Git objects, include the completion packet and app verification evidence in that snapshot, and reject approval of superseded assignments through the shared review revision.
+3. **E — Request changes:** after D, submit feedback once to a verified, ready primary process with draft protection, revision invalidation, explicit outcomes, and no automatic retry.
 
-B and C can be delivered independently. D depends on C; E depends on both B and D. Start the next milestone with C. No later step is included in the completed milestones or their test results.
+D depends on C; E depends on both B and D. Finish the C review corrections before starting D. No later step is included in the completed milestones or their test results.
 
 ## Decision and scope
 
@@ -207,6 +207,17 @@ Step B has passed `npm run check`, `npm run check:static`, and the full unit/cli
 Step B preserves hook observations across reattachment, rejects late events from replaced/retired launches, invalidates finished activity on prompt submission, and shares matching-tool wait reduction and source timestamps. Renderer snapshot ordering covers newer subscribed events, retired launches, and missed retirements while unsubscribed. Local interrupt/approval inference remains renderer-owned and labeled. Ongoing hook evidence expires from UI activity after 30 minutes and falls back to labeled terminal/process inference; MCP retains the cached hook observation with `freshness: stale`. Session readiness, input readiness, turn completion, and failure are distinct labels, independent of assignment completion. Static dot tooltips use absolute observation times; the existing clock-driven status line uses relative ages.
 
 Two independent Step B implementation reviews found a P2 provenance defect (reducing main observations again against local interrupt state) and a P3 tooltip defect (nonreactive terminal observation timestamps). Both are corrected: accepted main observations replace hook fields directly while preserving local unread/suppression handling, and terminal timestamps are reactive and cleared on replacement/cleanup. Regression tests also cover a newer snapshot replacing an older tool wait. Both reviewers' isolated reproductions now pass, along with 186 focused unit tests and the full client suite (1,123 passed; 6 skipped).
+
+Step C uses one renderer-safe completion contract and parser for both transport paths. It bounds UTF-8 bytes, checks, artifacts, and unresolved issues; artifact paths remain inert repository-relative text. Structured reports capture HEAD before and after the dirty-state read and reject a moving source. Empty legacy calls retain unknown source identity. Publication compares task, launch, caller, and review revision after asynchronous capture; a new publication, queued coordinator assignment, primary prompt submission, or replacement cancels an older capture. Reattachment preserves it. Reports and revisions survive active/collapsed restoration, replace whole renderer packets, replay on hydration, and accompany early task adoption. Attention entries use completion IDs. The current dialog labels agent claims, unknown/dirty commit associations, and historical/stale reports.
+
+Step C does **not** implement the Step D approval gate or frozen review packet. The revision already prevents stale report publication, but D must also enforce assignment supersession at approval and final merge, suppress obsolete completion notifications, bind all displayed artifacts to the captured commits, and keep the report displayed with that review snapshot. E still requires its submission exclusion and delivery tests. The implementation spans the planned MCP, main, persistence, and UI boundaries without new dependencies or a server-framework migration.
+
+Step C passed `npm run check`, `npm run check:static`, the full unit/client suites (5,104 passed; 33 opt-in or otherwise skipped), and all 9 real-PTY coordinator tests. Focused coverage includes schema validation through the installed MCP SDK, malformed legacy JSON, token/session expiry during capture, overlapping publications, changed HEAD, new assignments versus reattachment, early completion adoption, active/collapsed restoration, and actual Solid-store packet replacement. Native Electron smoke testing remains unperformed; no paid real-agent suite was run.
+
+A subsequent fresh review found two P2 defects, independently reproduced and still open:
+
+- **Coalesced terminal submission:** `TerminalView` batches input for 8 ms, but `writeSessionInput` emits `prompt-submitted` only for a separate Enter chunk with an existing draft. A chunk such as `follow-up\r` submits without advancing the revision, allowing an older report to remain current or an in-flight capture to publish after a hookless follow-up. Detect submission within the input stream while preserving bracketed-paste handling.
+- **Session landing output contract:** session `land_self` bypasses the legacy input parser. A check containing only `result: "passed"` can land successfully and be echoed without the `name` and `command` required by the new output schema. The loose session input validation predates C, but its schema-invalid success violates C's contract. Validate before landing side effects and test the actual coordinator result with the SDK validator.
 
 ## External references behind the selected patterns
 

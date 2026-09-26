@@ -502,6 +502,8 @@ function App() {
           integrationPolicy: task.integrationPolicy,
           controlledBy: task.controlledBy,
           agentId: task.agentIds[0],
+          completion: task.completion,
+          reviewRevision: task.reviewRevision,
           signalDoneAt: task.signalDoneAt,
           signalDoneConsumed: task.signalDoneConsumed,
           verification: task.verification,

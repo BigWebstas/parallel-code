@@ -1,5 +1,7 @@
 import type { VerificationRun } from '../ipc/shared-types.js';
 import type { ActivityEvidence } from '../agent-hooks/status.js';
+import type { CompletionRecord, SubtaskVerification } from '../shared/completion-report.js';
+export type { SubtaskVerification, SubtaskVerificationCheck } from '../shared/completion-report.js';
 
 // Shared types for the MCP coordinating-agent system.
 
@@ -27,6 +29,8 @@ export interface CoordinatedTask {
   preambleFileExistedBefore?: boolean; // true if the preamble file existed before injection (even if empty)
   signalDoneAt?: Date; // set when sub-task explicitly calls signal_done
   signalDoneConsumed?: boolean; // true after wait_for_signal_done returns this task's signal
+  completion?: CompletionRecord;
+  reviewRevision?: number;
   verification?: SubtaskVerification;
   /** Result of the app running the project's verify command before landing. */
   verificationRun?: VerificationRun;
@@ -51,6 +55,7 @@ export interface WaitForSignalDoneResult {
   name?: string;
   status?: string;
   signalDoneAt?: string; // ISO timestamp
+  completion?: CompletionRecord;
   remaining: number; // unconsumed signals + still-running tasks for this coordinator
   timedOut?: true; // set when no signal arrived before the timeout
 }
@@ -115,17 +120,6 @@ export interface CoordinatorState {
   writtenMcpParallelCode?: unknown;
 }
 
-export interface SubtaskVerificationCheck {
-  name: string;
-  command: string;
-  result: 'passed' | 'blocked' | 'failed';
-  reason?: string;
-}
-
-export interface SubtaskVerification {
-  checks: SubtaskVerificationCheck[];
-}
-
 export type LandingState =
   | 'landing_escalated'
   | 'landing_failed'
@@ -155,6 +149,7 @@ export interface LandSelfInput {
 // --- API request/response types ---
 
 export interface ApiTaskSummary {
+  reviewRevision?: number;
   /** Diagnostic evidence for the primary agent, independent of assignment completion. */
   activityEvidence?: ActivityEvidence;
   integrationPolicy?: IntegrationPolicy;
@@ -164,6 +159,7 @@ export interface ApiTaskSummary {
   status: string;
   coordinatorTaskId: string;
   signalDoneAt?: string; // ISO timestamp, set when sub-task called signal_done
+  completion?: CompletionRecord;
   verification?: SubtaskVerification;
   landingState?: LandingState;
   landingReason?: string;

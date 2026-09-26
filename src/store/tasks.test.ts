@@ -468,6 +468,40 @@ describe('MCP_TaskCreated IPC handler', () => {
     expect(mockTasks['sub-task-1'].initialPrompt).toBe('do the work');
   });
 
+  it('preserves completion metadata when adopting an existing backend task', () => {
+    const completion = {
+      id: '11111111-1111-4111-8111-111111111111',
+      completedAt: '2026-09-26T10:00:00.000Z',
+      reviewRevision: 4,
+      snapshotState: 'unknown',
+      result: { summary: 'Already completed' },
+    };
+    // A completion sync can arrive while native startup has not adopted the task yet.
+    taskStateSyncHandler({
+      taskId: baseEvent.taskId,
+      completion,
+      signalDoneReceived: true,
+      signalDoneAt: completion.completedAt,
+      signalDoneConsumed: true,
+    });
+    expect(mockTasks[baseEvent.taskId]).toBeUndefined();
+    taskCreatedHandler({
+      ...baseEvent,
+      completion,
+      reviewRevision: 4,
+      signalDoneReceived: true,
+      signalDoneAt: completion.completedAt,
+      signalDoneConsumed: true,
+    });
+    expect(mockTasks['sub-task-1'].completion).toEqual(completion);
+    expect(mockTasks['sub-task-1'].reviewRevision).toBe(4);
+    expect(mockTasks['sub-task-1'].signalDoneReceived).toBe(true);
+    expect(mockTasks['sub-task-1'].signalDoneAt).toBe(completion.completedAt);
+    expect(mockTasks['sub-task-1'].signalDoneConsumed).toBe(true);
+    taskCreatedHandler(baseEvent);
+    expect(mockTasks['sub-task-1'].completion).toEqual(completion);
+  });
+
   it('regression: sub-tasks must not be created without controlledBy defined', () => {
     taskCreatedHandler(baseEvent);
     expect(mockTasks['sub-task-1'].controlledBy).toBeDefined();
@@ -900,6 +934,36 @@ describe('MCP startup status transitions', () => {
     expect(mockTasks['child-a'].mcpStartupStatus).toBe('error');
     expect(mockTasks['child-b'].mcpStartupStatus).toBe('ready');
     expect(mockTasks['child-b'].mcpLaunchArgs).toEqual(['--mcp-config', '/tmp/child-b.json']);
+  });
+
+  it('passes the saved completion and revision when hydrating a coordinated child', async () => {
+    const completion = {
+      id: '11111111-1111-4111-8111-111111111111',
+      completedAt: '2026-09-26T10:00:00.000Z',
+      reviewRevision: 4,
+      snapshotState: 'unknown',
+      result: { summary: 'Already completed' },
+    };
+    mockTasks['coord-1'] = { agentIds: [], shellAgentIds: [], mcpStartupStatus: 'ready' };
+    mockTasks['child-1'] = {
+      id: 'child-1',
+      agentIds: [],
+      shellAgentIds: [],
+      coordinatedBy: 'coord-1',
+      projectId: 'proj-1',
+      gitIsolation: 'worktree',
+      worktreePath: '/repo/.worktrees/child-1',
+      branchName: 'task/child-1',
+      completion,
+      reviewRevision: 4,
+    };
+    mockInvoke.mockResolvedValueOnce({ mcpLaunchArgs: ['--mcp-config', '/tmp/child.json'] });
+    await retryTaskMcpStartup('child-1');
+    expect(mockInvoke).toHaveBeenCalledWith(
+      IPC.MCP_HydrateCoordinatedTask,
+      expect.objectContaining({ id: 'child-1', completion, reviewRevision: 4 }),
+    );
+    expect(mockTasks['child-1'].completion).toEqual(completion);
   });
 
   it('retry of child when coordinator is in error surfaces dependency message', async () => {
@@ -2043,6 +2107,47 @@ describe('MCP_TaskStateSync listener', () => {
 
     taskStateSyncHandler({ taskId: 'task-1', verificationRun: null });
     expect(mockTasks['task-1'].verificationRun).toBeUndefined();
+  });
+
+  it('replaces completion packets and clears omitted optional fields without resurrecting reports', () => {
+    const base = {
+      id: '11111111-1111-4111-8111-111111111111',
+      completedAt: '2026-09-26T10:00:00.000Z',
+      reviewRevision: 1,
+      snapshotState: 'clean',
+    };
+    taskStateSyncHandler({
+      taskId: 'task-1',
+      completion: {
+        ...base,
+        sourceCommit: 'a'.repeat(40),
+        result: { summary: 'Old report', artifacts: [{ path: 'old.txt' }] },
+      },
+      reviewRevision: 1,
+    });
+    expect(mockTasks['task-1'].completion).toHaveProperty('result.summary', 'Old report');
+
+    const next = {
+      ...base,
+      id: '22222222-2222-4222-8222-222222222222',
+      reviewRevision: 2,
+      snapshotState: 'unknown',
+    };
+    taskStateSyncHandler({ taskId: 'task-1', completion: next, reviewRevision: 2 });
+    expect(mockTasks['task-1'].completion).toEqual(next);
+    expect(mockTasks['task-1'].reviewRevision).toBe(2);
+    expect(vi.mocked(saveState)).toHaveBeenCalled();
+
+    taskStateSyncHandler({ taskId: 'task-1', completion: null });
+    expect(mockTasks['task-1'].completion).toBeUndefined();
+    taskStateSyncHandler({ taskId: 'task-1', needsReview: false });
+    expect(mockTasks['task-1'].completion).toBeUndefined();
+  });
+
+  it('drops malformed completion packets rather than retaining an older report', () => {
+    mockTasks['task-1'].completion = { result: { summary: 'Old report' } };
+    taskStateSyncHandler({ taskId: 'task-1', completion: { id: 'invalid' } });
+    expect(mockTasks['task-1'].completion).toBeUndefined();
   });
 
   it('stores automation write lock sync fields', () => {

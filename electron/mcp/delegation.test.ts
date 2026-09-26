@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import type { Coordinator } from './coordinator.js';
 import type { CoordinatedTask } from './types.js';
+import type { CompletionRecord, CompletionReport } from '../shared/completion-report.js';
 import type {
   DelegateAssignment,
   SessionCaller,
@@ -38,6 +39,19 @@ vi.mock('./canvas-config.js', () => ({
 }));
 const { DelegationService } = await import('./delegation.js');
 const head = 'a'.repeat(40);
+const completion: CompletionRecord = {
+  id: 'completion-1',
+  completedAt: '2026-09-26T12:00:00.000Z',
+  reviewRevision: 1,
+  sourceCommit: head,
+  snapshotState: 'clean',
+};
+const completionReport: CompletionReport = {
+  summary: 'Finished the assigned change.',
+  verification: { checks: [{ name: 'tests', command: 'npm test', result: 'passed' }] },
+  artifacts: [{ path: 'src/main.ts', label: 'Updated module' }],
+  unresolvedIssues: ['Native smoke test unavailable.'],
+};
 const worktrees = new Map<string, string>();
 let dirty = '';
 let sessions: SessionCaller[];
@@ -166,7 +180,7 @@ beforeEach(() => {
   mocks.scrollback.mockReturnValue(Buffer.from('\u001b[31mHello peer\u001b[0m').toString('base64'));
   core = {
     setOrchestrationEnabled: vi.fn(),
-    signalDone: vi.fn().mockReturnValue(true),
+    signalDone: vi.fn().mockResolvedValue({ ok: true, completion }),
     createTask: vi.fn().mockResolvedValue(childRecord()),
     listTasks: vi.fn().mockReturnValue([]),
     getTaskStatus: vi.fn(),
@@ -228,7 +242,14 @@ describe('delegation authority and creation', () => {
     expect(service.capabilities('child')).toMatchObject({ canCreate: false, peers: false });
     await expect(service.callTool(parent, 'list_tasks', {})).rejects.toThrow('disabled');
     expect(() => service.create(assignment())).toThrow('disabled');
-    await expect(service.callTool(child, 'signal_done', {})).resolves.toEqual({ ok: true });
+    await expect(
+      service.callTool(child, 'signal_done', { result: completionReport }),
+    ).resolves.toEqual({ ok: true, completion });
+    expect(core.signalDone).toHaveBeenCalledWith(
+      'child',
+      { result: completionReport },
+      expect.any(Function),
+    );
     expect(
       JSON.parse(service.normalizeState('{"mcpOrchestrationEnabled":true}'))
         .mcpOrchestrationEnabled,
@@ -834,6 +855,89 @@ describe('automatic peer delivery', () => {
       }),
     ).rejects.toThrow('control characters');
     expect(service.state('recipient').messages).toHaveLength(1);
+  });
+});
+
+describe('session completion handoffs', () => {
+  async function childCaller() {
+    await register('parent');
+    await register('child', { parentTaskId: 'parent', integrationPolicy: 'review' });
+    return session('child', 'child-launch', true);
+  }
+
+  it('passes a parsed report only to the calling child and returns the capture', async () => {
+    const caller = await childCaller();
+    core.signalDone.mockResolvedValueOnce({
+      ok: true,
+      completion: { ...completion, result: completionReport },
+    });
+    await expect(
+      service.callTool(caller, 'signal_done', { result: completionReport }),
+    ).resolves.toEqual({ ok: true, completion: { ...completion, result: completionReport } });
+    expect(core.signalDone).toHaveBeenCalledExactlyOnceWith(
+      'child',
+      { result: completionReport },
+      expect.any(Function),
+    );
+  });
+
+  it('keeps legacy empty reports valid', async () => {
+    const caller = await childCaller();
+    await expect(service.callTool(caller, 'signal_done', {})).resolves.toEqual({
+      ok: true,
+      completion,
+    });
+    expect(core.signalDone).toHaveBeenCalledExactlyOnceWith('child', {}, expect.any(Function));
+  });
+
+  it.each([
+    { result: { summary: '' } },
+    { result: { summary: 'x', artifacts: [{ path: '../outside' }] } },
+    { result: { summary: 'x', artifacts: [{ path: '/absolute' }] } },
+    {
+      result: {
+        summary: 'x',
+        verification: { checks: [{ name: 'test', command: 'npm test', result: 'unknown' }] },
+      },
+    },
+    { taskId: 'other', result: completionReport },
+  ])('rejects malformed completion arguments before core capture: %j', async (params) => {
+    const caller = await childCaller();
+    await expect(service.callTool(caller, 'signal_done', params)).rejects.toThrow();
+    expect(core.signalDone).not.toHaveBeenCalled();
+  });
+
+  it('denies completion from an expired or forged cross-task caller', async () => {
+    const caller = await childCaller();
+    await register('other', { parentTaskId: 'parent', integrationPolicy: 'review' });
+    session('other', 'other-launch', true);
+    await expect(
+      service.callTool({ ...caller, taskId: 'other' }, 'signal_done', {}),
+    ).rejects.toThrow('Session expired');
+    sessions = sessions.filter((entry) => entry !== caller);
+    await expect(service.callTool(caller, 'signal_done', {})).rejects.toThrow('Session expired');
+    expect(core.signalDone).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the same launch before publishing asynchronous capture', async () => {
+    const caller = await childCaller();
+    const publish = vi.fn();
+    core.signalDone.mockImplementationOnce(
+      async (_taskId, _input, assertCallerCurrent: () => void) => {
+        assertCallerCurrent();
+        await Promise.resolve();
+        sessions = sessions.filter((entry) => entry !== caller);
+        session('child', 'replacement-launch', true);
+        assertCallerCurrent();
+        publish();
+        return { ok: true, completion };
+      },
+    );
+    await expect(
+      service.callTool(caller, 'signal_done', { result: completionReport }),
+    ).rejects.toThrow('Session expired');
+    expect(core.signalDone).toHaveBeenCalledOnce();
+    expect(publish).not.toHaveBeenCalled();
   });
 });
 

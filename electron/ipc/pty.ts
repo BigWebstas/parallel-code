@@ -215,7 +215,7 @@ function sendToChannel(notify: Notify, channelId: string, msg: unknown): void {
 
 // --- PTY event bus for spawn/exit/interrupt notifications ---
 
-type PtyEventType = 'spawn' | 'exit' | 'list-changed' | 'interrupt';
+type PtyEventType = 'spawn' | 'exit' | 'list-changed' | 'interrupt' | 'prompt-submitted';
 type PtyEventListener = (agentId: string, data?: unknown) => void;
 const eventListeners = new Map<PtyEventType, Set<PtyEventListener>>();
 
@@ -902,6 +902,7 @@ function writeSessionInput(session: PtySession, data: string): void {
       data === '\x1b[13;1u')
   ) {
     invalidateAgentActivity(session.agentId, session.launchId);
+    if (!session.isShell) emitPtyEvent('prompt-submitted', session.agentId);
   }
   // History recall/navigation can populate a draft without printable input.
   // Escape/Backspace alone preserve a draft but cannot create one on an empty line.

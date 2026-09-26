@@ -42,6 +42,7 @@ import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import type { Coordinator } from '../mcp/coordinator.js';
 import { validateBranchName } from '../mcp/validation.js';
 import type { ApiTaskDetail, LandSelfInput, SubtaskVerification } from '../mcp/types.js';
+import { parseSignalDoneInput } from '../shared/completion-report.js';
 
 // --- MCP log ring buffer ---
 export interface MCPLogEntry {
@@ -453,6 +454,7 @@ function doneTokenMatches(req: IncomingMessage, expected: string | null | undefi
 function readJsonBody(
   req: IncomingMessage,
   maxBytes = 64 * 1024,
+  rejectMalformed = false,
 ): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -479,7 +481,8 @@ function readJsonBody(
       try {
         resolve(data ? (JSON.parse(data) as Record<string, unknown>) : {});
       } catch {
-        resolve({});
+        if (rejectMalformed) reject(new Error('Invalid JSON request body'));
+        else resolve({});
       }
     });
     req.on('error', reject);
@@ -504,9 +507,10 @@ export function createJsonReply(
 export async function readCoordinatorBody(
   req: IncomingMessage,
   jsonReply: JsonReply,
+  rejectMalformed = false,
 ): Promise<Record<string, unknown>> {
   try {
-    return await readJsonBody(req, 1_000_000);
+    return await readJsonBody(req, 1_000_000, rejectMalformed);
   } catch (err) {
     if (err instanceof Error && err.message === 'Body too large') {
       jsonReply(413, { error: 'Request body too large' });
@@ -758,9 +762,34 @@ function handleSignalDone(ctx: CoordinatorRouteContext, taskId: string): void {
       return ctx.jsonReply(403, { error: 'forbidden' });
     }
   }
-  mcpLog('info', `signal_done id=${taskId}`);
-  ctx.orch.signalDone(taskId);
-  ctx.jsonReply(200, { ok: true });
+  ctx
+    .readBody()
+    .then(async (body) => {
+      let input;
+      try {
+        input = parseSignalDoneInput(body);
+      } catch (err) {
+        return ctx.jsonReply(400, { error: String(err) });
+      }
+      const assertCurrent = () => {
+        if (!ctx.requireTask(taskId)) throw new Error('Completion task is no longer available.');
+        if (ctx.tokenClass === 'subtask' && !ctx.hasMatchingDoneToken(taskId)) {
+          ctx.jsonReply(403, { error: 'forbidden' });
+          throw new Error('Completion task ownership changed.');
+        }
+      };
+      assertCurrent();
+      mcpLog('info', `signal_done id=${taskId}`);
+      const result = await ctx.orch.signalDone(taskId, input, assertCurrent);
+      ctx.jsonReply(200, result);
+    })
+    .catch((err) => {
+      mcpLog('error', `signal_done FAIL: ${String(err)}`);
+      ctx.jsonReply(
+        err instanceof Error && err.message === 'Invalid JSON request body' ? 400 : 409,
+        { error: String(err) },
+      );
+    });
 }
 
 function handleLandSelf(ctx: CoordinatorRouteContext, taskId: string): void {
@@ -1462,7 +1491,7 @@ export function startRemoteServer(opts: {
       if (orch) {
         const jsonReply = createJsonReply(res, SECURITY_HEADERS);
         const readBody = async () => {
-          const body = await readCoordinatorBody(req, jsonReply);
+          const body = await readCoordinatorBody(req, jsonReply, url.pathname.endsWith('/done'));
           if (disabledAgentRoute()) {
             jsonReply(403, { error: 'Agent orchestration is disabled in Settings > MCP.' });
             throw new Error('Agent orchestration disabled while reading the request');
