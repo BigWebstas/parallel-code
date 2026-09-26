@@ -24,6 +24,7 @@ export interface RemoteAgent {
   exitCode: number | null;
   lastLine: string;
   projectName?: string;
+  projectColor?: string;
   agentName?: string;
   /** Richer, renderer-derived task status. Defaults to 'idle' when unknown. */
   attention: RemoteAttentionState;

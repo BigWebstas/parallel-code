@@ -44,7 +44,12 @@ beforeEach(async () => {
     getTaskName: (id) => `Task ${id}`,
     getAgentStatus: () => ({ status: 'running', exitCode: null, lastLine: '' }),
     getCoordinator: () => null,
-    getTaskContext: () => ({ agentName: 'Claude Code', lastLine: 'Done.' }),
+    getTaskContext: () => ({
+      projectName: 'Project',
+      projectColor: '#65d5ff',
+      agentName: 'Claude Code',
+      lastLine: 'Done.',
+    }),
     chats: {
       list: () => (listed ? [{ agentId: 'a1', taskId: 't1', status: listed }] : []),
       find: (agentId) => (listed && agentId === 'a1' ? (chat as unknown as AgentChat) : undefined),
@@ -94,12 +99,15 @@ it('lists a running chat in place of its task terminal and updates when chats ch
     status: 'running',
     exitCode: null,
     attention: 'idle',
+    projectName: 'Project',
+    projectColor: '#65d5ff',
     agentName: 'Claude Code',
     lastLine: 'Done.',
     kind: 'chat',
   });
   expect(list.filter((agent) => agent.taskId === 't1')).toHaveLength(1);
   expect(list.find((agent) => agent.taskId === 't2')?.kind).toBeUndefined();
+  expect(list.find((agent) => agent.taskId === 't2')?.projectColor).toBe('#65d5ff');
 
   // A chat that crashed keeps its transcript on the phone, as on the desktop.
   listed = 'exited';

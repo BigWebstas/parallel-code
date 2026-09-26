@@ -320,7 +320,7 @@ function buildAgentList(
   getTaskAttention: (taskId: string) => RemoteAttentionState,
   getTaskContext?: (
     taskId: string,
-  ) => Pick<RemoteAgent, 'projectName' | 'agentName' | 'lastLine'> | undefined,
+  ) => Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'> | undefined,
 ): RemoteAgent[] {
   const byTask = new Map<string, RemoteAgent>();
   for (const agentId of getActiveAgentIds()) {
@@ -900,7 +900,7 @@ export function startRemoteServer(opts: {
   getTaskAttention?: (taskId: string) => RemoteAttentionState;
   getTaskContext?: (
     taskId: string,
-  ) => Pick<RemoteAgent, 'projectName' | 'agentName' | 'lastLine'> | undefined;
+  ) => Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'> | undefined;
   /** The desktop's built-in chats; without it phones only see terminals. */
   chats?: RemoteChatSource;
 }): Promise<RemoteServer> {

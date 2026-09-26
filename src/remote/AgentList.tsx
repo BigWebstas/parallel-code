@@ -3,6 +3,7 @@ import { agents, status, canControl } from './ws';
 import { agentStatusDisplay } from './attention';
 import { ConnectionBanner } from './ConnectionBanner';
 import { readLocal, writeLocal } from './storage';
+import { ProjectSwatch } from '../components/ProjectSwatch';
 import type { RemoteAgent } from '../../electron/remote/protocol';
 
 interface AgentListProps {
@@ -173,6 +174,9 @@ export function AgentList(props: AgentListProps) {
                           </div>
                           <div class="agent-card-meta">
                             <p class="muted">
+                              <Show when={agent.projectColor}>
+                                {(color) => <ProjectSwatch color={color()} size={10} />}
+                              </Show>
                               {[agent.projectName, agent.agentName].filter(Boolean).join(' · ') ||
                                 'Agent task'}
                             </p>

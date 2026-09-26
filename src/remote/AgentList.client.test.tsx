@@ -36,11 +36,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it('keeps a focused task card mounted when live preview text changes', () => {
+it('keeps a focused task card mounted when live preview text and project color change', () => {
   const agent: RemoteAgent = {
     agentId: 'a1',
     taskId: 't1',
     taskName: 'Test task',
+    projectName: 'Project',
+    projectColor: '#ff0000',
     status: 'running',
     attention: 'active',
     exitCode: null,
@@ -55,11 +57,16 @@ it('keeps a focused task card mounted when live preview text changes', () => {
   );
   const card = host.querySelector<HTMLButtonElement>('.agent-card');
   if (!card) throw new Error('Missing task card');
+  const swatch = () => card.querySelector<HTMLElement>('.project-swatch');
+  expect(swatch()?.style.background).toBe('#ff0000');
   card.focus();
-  publish([{ ...agent, lastLine: 'Running tests' }]);
+  publish([{ ...agent, lastLine: 'Running tests', projectColor: '#0000ff' }]);
   expect(host.querySelector('.agent-card')).toBe(card);
   expect(document.activeElement).toBe(card);
   expect(card.textContent).toContain('Running tests');
+  expect(swatch()?.style.background).toBe('#0000ff');
+  publish([{ ...agent, projectColor: undefined }]);
+  expect(swatch()).toBeNull();
 });
 
 it('combines search with status filters and restores them when returning from a task', () => {
