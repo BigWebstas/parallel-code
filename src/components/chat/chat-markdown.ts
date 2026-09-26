@@ -50,10 +50,12 @@ const chatRenderer: RendererObject = {
     // other scheme as its alt text; only inline data, which fetches nothing, stays.
     if (/^data:/i.test(token.href)) return false;
     const alt = this.parser.parseInline(token.tokens, this.parser.textRenderer);
+    // Marked escapes markup while preserving entities already present in the alt text.
+    const label = this.text({ type: 'text', raw: alt, text: alt });
     const href = /^https?:/i.test(token.href) ? webHref(token.href) : null;
-    if (href === null) return escapeHtml(alt);
+    if (href === null) return label;
     const title = token.title ? ` title="${escapeAttr(token.title)}"` : '';
-    return `<a href="${escapeAttr(href)}"${title}>${escapeHtml(alt || token.href)}</a>`;
+    return `<a href="${escapeAttr(href)}"${title}>${label || escapeHtml(token.href)}</a>`;
   },
 };
 

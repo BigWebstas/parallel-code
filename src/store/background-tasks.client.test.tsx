@@ -197,6 +197,23 @@ it.each([
   expect(isTaskBackgrounded('one')).toBe(false);
 });
 
+it('returns when terminal activity finishes after an unchanged hook expiry', () => {
+  hook('working', 'UserPromptSubmit');
+  sendTaskToBack('one');
+  vi.advanceTimersByTime(AGENT_HOOK_STALE_MS - 1_000);
+  markAgentBusy('one-agent');
+  vi.advanceTimersByTime(1_000);
+  expect(getAgentHookStatus('one-agent')).toBeNull();
+  expect(getTaskAttentionState('one')).toBe('active');
+  expect(isTaskBackgrounded('one')).toBe(true);
+
+  vi.advanceTimersByTime(15_000);
+  expect(getTaskAttentionState('one')).toBe('idle');
+  expect(isTaskBackgrounded('one')).toBe(false);
+  expect(store.taskOrder).toEqual(['one', 'two', 'three']);
+  expect(store.activeTaskId).toBe('two');
+});
+
 it('notices completion even when the task attention state stays at review', () => {
   setStore('tasks', 'one', 'needsReview', true);
   hook('working', 'UserPromptSubmit');

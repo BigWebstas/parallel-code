@@ -50,13 +50,25 @@ describe('chat markdown', () => {
     expect(html).toContain('a b');
   });
 
+  it.each(['https://example.com/chart.png', 'file:///tmp/chart.png'])(
+    'preserves image description entities while escaping markup for %s',
+    (href) => {
+      const container = document.createElement('div');
+      container.innerHTML = renderChatMarkdown(
+        `![A &amp; B & C &#60; D &#x1F642; <span>label</span>](${href})`,
+      );
+      expect(container.textContent?.trim()).toBe('A & B & C < D 🙂 <span>label</span>');
+      expect(container.querySelector('img, span')).toBeNull();
+    },
+  );
+
   it('still shows an inline data image', () => {
     const html = renderChatMarkdown('![dot](data:image/png;base64,iVBORw0KGgo=)');
     expect(html).toContain('<img src="data:image/png;base64,iVBORw0KGgo=" alt="dot"');
   });
 
   it('keeps web images as links once code blocks are highlighted', async () => {
-    const source = '![x](https://attacker.example/p.png)\n\n```ts\nconst a = 1;\n```';
+    const source = '![A &amp; B](https://attacker.example/p.png)\n\n```ts\nconst a = 1;\n```';
     const html = createRoot(() =>
       createChatMarkdown(
         () => source,
@@ -66,6 +78,9 @@ describe('chat markdown', () => {
     await vi.waitFor(() => expect(html()).toContain('shiki-block'));
     expect(html()).not.toContain('<img');
     expect(hrefs(html())).toEqual(['https://attacker.example/p.png']);
+    const container = document.createElement('div');
+    container.innerHTML = html();
+    expect(container.querySelector('a')?.textContent).toBe('A & B');
   });
 
   it('renders an unclosed code fence mid-stream without swallowing earlier text', () => {

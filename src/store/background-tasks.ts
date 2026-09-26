@@ -98,11 +98,11 @@ function activityChange(
   for (const [agentId, now] of current.agents) {
     const then = baseline.agents.get(agentId);
     if (!then || now.process !== then.process) return 'new';
-    if (now.activity === then.activity) continue;
     const expired =
       !now.hooked && then.claimAt !== undefined && Date.now() - then.claimAt >= AGENT_HOOK_STALE_MS;
-    if (!expired) return 'new';
-    change = 'expired';
+    // Rebaseline hook expiry even when both sources still report the agent busy.
+    if (expired) change = 'expired';
+    else if (now.activity !== then.activity) return 'new';
   }
   return change;
 }
