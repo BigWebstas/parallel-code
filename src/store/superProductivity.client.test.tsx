@@ -8,10 +8,13 @@ import { produce } from 'solid-js/store';
 import { IPC } from '../../electron/ipc/channels';
 import { store, setStore } from './core';
 import type { Task } from './types';
+import { SP_MAX_TITLE_LENGTH, toSpTitle } from '../../electron/shared/super-productivity';
 import {
   armSpCompletion,
+  disarmSpCompletion,
   fireSpCompletion,
   onTaskRenamed,
+  TITLE_REFRESH_MIN_MS,
   refreshSpConnection,
   spBanner,
   spConnection,
@@ -398,13 +401,15 @@ describe('Super Productivity sync', () => {
     await settle();
     setWindowFocused(true);
     await settle();
-    expect(store.tasks.a.name).toBe(long);
+    // Capped here like every title sent there.
+    expect(store.tasks.a.name).toBe(toSpTitle(long));
+    expect(store.tasks.a.name).toHaveLength(SP_MAX_TITLE_LENGTH);
     const renames = () =>
       mockInvoke.mock.calls.filter(([channel]) => channel === IPC.SuperProductivityRenameTask);
     expect(renames()).toHaveLength(0);
     // And the next refresh leaves it alone too.
     setWindowFocused(false);
-    await settle();
+    await settle(TITLE_REFRESH_MIN_MS);
     setWindowFocused(true);
     await settle();
     expect(renames()).toHaveLength(0);
@@ -542,6 +547,52 @@ describe('Super Productivity sync', () => {
     fireSpCompletion('a');
     await settle();
     expect(sp.tasks.get('sp-a')?.isDone).toBe(true);
+  });
+
+  it('does not complete a disarmed task when it is removed later', async () => {
+    addTask('a', { superProductivity: { taskId: 'sp-a', syncedTitle: 'Task a' } });
+    spTask('sp-a');
+    armSpCompletion('a', { kind: 'closed' });
+    disarmSpCompletion('a');
+    fireSpCompletion('a');
+    await settle();
+    expect(sp.tasks.get('sp-a')?.isDone).toBe(false);
+  });
+
+  it('refreshes linked titles at most once per interval and never twice at a time', async () => {
+    addTask('a', { superProductivity: { taskId: 'sp-a', syncedTitle: 'Task a' } });
+    spTask('sp-a', { title: 'Task a' });
+    let release: () => void = () => undefined;
+    const real = mockInvoke.getMockImplementation();
+    mockInvoke.mockImplementation(async (channel: string, args?: Record<string, unknown>) => {
+      if (channel === IPC.SuperProductivityGetTasks) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return real?.(channel, args);
+    });
+    const refreshes = () =>
+      mockInvoke.mock.calls.filter(([channel]) => channel === IPC.SuperProductivityGetTasks);
+    const refocus = async (ms = 0) => {
+      setWindowFocused(false);
+      await settle(ms);
+      setWindowFocused(true);
+      await settle();
+    };
+
+    await refocus();
+    expect(refreshes()).toHaveLength(1);
+    release();
+    await settle();
+    await refocus(); // too soon after the last one
+    expect(refreshes()).toHaveLength(1);
+    await refocus(TITLE_REFRESH_MIN_MS);
+    expect(refreshes()).toHaveLength(2);
+    await refocus(TITLE_REFRESH_MIN_MS); // the last one is still in flight
+    expect(refreshes()).toHaveLength(2);
+    release();
+    await settle();
   });
 
   it('does not complete anything for a removal nobody armed', async () => {
