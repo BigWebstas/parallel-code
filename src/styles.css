@@ -580,7 +580,7 @@ html[data-look='noir'] {
   color-scheme: dark;
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-display: var(--font-ui);
-  --bg: #101014;
+  --bg: #0c0c10;
   --bg-elevated: #1c1c24;
   --bg-input: #202029;
   --bg-hover: #2a2935;
@@ -595,14 +595,15 @@ html[data-look='noir'] {
   --accent: #b7a5f5;
   --accent-hover: #cbbcfb;
   --accent-text: #191421;
-  --link: #cbbcfb;
+  /* Links get their own hue so they never read as focus or selection. */
+  --link: #9cc8ea;
   --success: #98c9ae;
   --error: #f08f8a;
   --warning: #dfba83;
   --review: #8fbddd;
   --info: #c4c3d0;
-  --diff-add-bg: rgba(152, 201, 174, 0.1);
-  --diff-remove-bg: rgba(240, 143, 138, 0.1);
+  --diff-add-bg: rgba(152, 201, 174, 0.15);
+  --diff-remove-bg: rgba(240, 143, 138, 0.15);
   --search-match: #dfc18e;
   --search-match-active: #efa66f;
   --island-bg: #15151b;
@@ -662,8 +663,10 @@ html[data-look='noir'] .task-item[aria-current='true'] {
   box-shadow: inset 2px 0 var(--accent);
 }
 
+/* The column surface is only a shade above the frame, so the border carries
+   the boundary between parallel tasks. */
 html[data-look='noir'] .task-column {
-  border: 1px solid var(--border-subtle) !important;
+  border: 1px solid var(--border) !important;
   border-radius: var(--radius-lg) !important;
   box-shadow: none;
 }
@@ -701,6 +704,13 @@ html[data-look='noir'] .task-action-group + .task-action-group {
   }
 }
 
+/* Fade instead of popping in when the pointer crosses a title bar. */
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  html[data-look='noir'] .task-lifecycle-actions {
+    transition: opacity 0.12s ease;
+  }
+}
+
 html[data-look='noir'] .task-branch-info-bar {
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -722,9 +732,21 @@ html[data-look='noir'] .prompt-textarea {
   box-shadow: none !important;
 }
 
-html[data-look='noir'] .prompt-textarea:focus {
+/* One quiet focus halo for every text field, replacing the default glow. */
+html[data-look='noir'] :is(.prompt-textarea, .input-field, .project-select):focus {
   border-color: var(--border-focus) !important;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent) !important;
+}
+
+html[data-look='noir'] .task-notes-body textarea {
+  padding: 12px 14px !important;
+  font-size: 13px !important;
+  line-height: 1.65;
+}
+
+html[data-look='noir'] .file-row {
+  padding-top: 5px !important;
+  padding-bottom: 5px !important;
 }
 
 html[data-look='noir'] textarea::placeholder {
@@ -1541,17 +1563,19 @@ html[data-look='islands-dark']
   box-shadow: none;
 }
 
-/* Islands and Obsidian: hairline between adjacent sub-panels (notes ↔ changed-files,
+/* Islands, Obsidian and Noir: hairline between adjacent sub-panels (notes ↔ changed-files,
    shell ↔ agent terminal, etc). Drawn inside the existing 6px resize-handle
    so we don't change layout. Hidden during hover/drag — the handle's accent
    color takes over. */
 html[data-look^='islands-'] .resize-handle,
-html[data-look^='obsidian'] .task-column .resize-handle {
+html[data-look^='obsidian'] .task-column .resize-handle,
+html[data-look='noir'] .task-column .resize-handle {
   position: relative;
 }
 
 html[data-look^='islands-'] .resize-handle-v::before,
-html[data-look^='obsidian'] .task-column .resize-handle-v::before {
+html[data-look^='obsidian'] .task-column .resize-handle-v::before,
+html[data-look='noir'] .task-column .resize-handle-v::before {
   content: '';
   position: absolute;
   top: 50%;
@@ -1564,7 +1588,8 @@ html[data-look^='obsidian'] .task-column .resize-handle-v::before {
 }
 
 html[data-look^='islands-'] .resize-handle-h::before,
-html[data-look^='obsidian'] .task-column .resize-handle-h::before {
+html[data-look^='obsidian'] .task-column .resize-handle-h::before,
+html[data-look='noir'] .task-column .resize-handle-h::before {
   content: '';
   position: absolute;
   left: 50%;

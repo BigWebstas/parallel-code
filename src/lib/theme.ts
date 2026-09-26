@@ -128,6 +128,31 @@ const ISLANDS_DARK_TERMINAL_THEME = {
   brightWhite: '#eef0f4',
 } as const;
 
+// Noir's cool, violet-tinted neutrals and semantic colors carried into ANSI.
+// Magenta leans pink so agent output never reads as the lilac focus accent.
+const NOIR_TERMINAL_THEME = {
+  foreground: '#e8e8ef',
+  cursor: '#b7a5f5',
+  cursorAccent: '#15151b',
+  selectionBackground: '#393247',
+  black: '#3b3a48',
+  red: '#f08f8a',
+  green: '#98c9ae',
+  yellow: '#dfba83',
+  blue: '#8fbddd',
+  magenta: '#e3a3d6',
+  cyan: '#8ccfd0',
+  white: '#c4c3d0',
+  brightBlack: '#90909e',
+  brightRed: '#f5a8a4',
+  brightGreen: '#addcc1',
+  brightYellow: '#ead0a5',
+  brightBlue: '#a9cdea',
+  brightMagenta: '#eebde5',
+  brightCyan: '#a6dcdc',
+  brightWhite: '#f2f2f7',
+} as const;
+
 /**
  * Returns an xterm-compatible theme object for the given preset.
  * For light-background presets we override xterm's defaults (white text,
@@ -142,15 +167,7 @@ export function getTerminalTheme(preset: LookPreset) {
     return { background, ...OBSIDIAN_TERMINAL_THEME };
   }
   if (preset === 'noir') {
-    return {
-      background,
-      ...OBSIDIAN_TERMINAL_THEME,
-      foreground: '#e8e8ef',
-      cursor: '#b7a5f5',
-      cursorAccent: '#15151b',
-      selectionBackground: '#393247',
-      brightBlack: '#90909e',
-    };
+    return { background, ...NOIR_TERMINAL_THEME };
   }
   if (preset === 'islands-dark') {
     return { background, ...ISLANDS_DARK_TERMINAL_THEME };

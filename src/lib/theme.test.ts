@@ -53,11 +53,33 @@ describe('getTerminalTheme', () => {
     const noir = getTerminalTheme('noir');
     expect(noir).toMatchObject({ background: '#15151b', cursor: '#b7a5f5' });
     if (!('brightBlack' in noir)) throw new Error('Noir terminal palette is missing');
-    for (const color of [noir.foreground, noir.brightBlack, noir.cursor]) {
+    // `black` is omitted: TUIs use it as a fill, not as text on the background.
+    const textColors = [
+      'foreground',
+      'cursor',
+      'red',
+      'green',
+      'yellow',
+      'blue',
+      'magenta',
+      'cyan',
+      'white',
+      'brightBlack',
+      'brightRed',
+      'brightGreen',
+      'brightYellow',
+      'brightBlue',
+      'brightMagenta',
+      'brightCyan',
+      'brightWhite',
+    ] as const;
+    for (const name of textColors) {
       const contrast =
-        (colord(color).luminance() + 0.05) / (colord(noir.background).luminance() + 0.05);
-      expect(contrast).toBeGreaterThanOrEqual(4.5);
+        (colord(noir[name]).luminance() + 0.05) / (colord(noir.background).luminance() + 0.05);
+      expect(contrast, name).toBeGreaterThanOrEqual(4.5);
     }
+    // Magenta output must not be mistaken for the lilac focus accent.
+    expect(colord(noir.magenta).hue() - colord(noir.cursor).hue()).toBeGreaterThan(40);
   });
 
   it('uses the Islands Dark ANSI palette on its CSS-derived background only', () => {
