@@ -124,6 +124,7 @@
   "NotificationClicked": "notification_clicked",
   "NotificationFailed": "notification_failed",
   "AgentHookEvent": "agent_hook_event",
+  "AgentHookSnapshot": "agent_hook_snapshot",
   "StartPrChecksWatcher": "start_pr_checks_watcher",
   "StopPrChecksWatcher": "stop_pr_checks_watcher",
   "DetectPrForBranch": "detect_pr_for_branch",

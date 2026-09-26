@@ -45,6 +45,7 @@ export function FocusModeTaskIndicators() {
                 <Show when={item.isTask}>
                   <StatusDot
                     status={getTaskDotStatus(item.id)}
+                    taskId={item.id}
                     size="sm"
                     attention={getTaskAttentionState(item.id)}
                   />

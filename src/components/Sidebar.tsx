@@ -1107,6 +1107,7 @@ function CoordinatorFolder(props: TaskEntryProps) {
               <CoordinatorIcon />
               <StatusDot
                 status={getTaskDotStatus(props.taskId)}
+                taskId={props.taskId}
                 size="sm"
                 attention={getTaskAttentionState(props.taskId)}
               />
@@ -1230,6 +1231,7 @@ function CollapsedTaskEntry(props: {
               </Show>
               <StatusDot
                 status={getTaskDotStatus(props.taskId)}
+                taskId={props.taskId}
                 size="sm"
                 attention={getTaskAttentionState(props.taskId)}
               />
@@ -1331,6 +1333,7 @@ function TaskRow(props: TaskRowProps) {
             <div class="task-item-head">
               <StatusDot
                 status={getTaskDotStatus(props.taskId)}
+                taskId={props.taskId}
                 size="sm"
                 attention={getTaskAttentionState(props.taskId)}
               />

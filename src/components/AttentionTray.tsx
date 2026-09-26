@@ -62,6 +62,7 @@ function AttentionRow(props: { entry: AttentionEntry; nowMs: number; onOpen: () 
           <div class="task-item-head">
             <StatusDot
               status={getTaskDotStatus(t().id)}
+              taskId={t().id}
               size="sm"
               attention={getTaskAttentionState(t().id)}
             />

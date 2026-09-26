@@ -8,6 +8,12 @@ import {
 import { handleMCPToolCall } from './server.js';
 import type { MCPClient } from './client.js';
 import {
+  getAgentActivitySnapshot,
+  observeAgentHook,
+  registerAgentLaunch,
+  retireAgentLaunch,
+} from '../agent-hooks/observations.js';
+import {
   setupCoordinatorHarness,
   mockExecFile,
   mockReadFileSync,
@@ -6237,6 +6243,60 @@ describe('Coordinator hook-driven task state', () => {
     expect(mockOnAgentHookEvent).toHaveBeenCalledTimes(1);
   });
 
+  it('exposes the shared primary-agent observation without completing the assignment', async () => {
+    const task = await coordinator.createTask({ name: 'a', coordinatorTaskId: 'coord-1' });
+    const launchId = 'evidence-launch';
+    registerAgentLaunch(task.agentId, task.id, launchId);
+    try {
+      observeAgentHook(
+        hookEvent(task.agentId, {
+          taskId: task.id,
+          launchId,
+          state: 'done',
+          event: 'SessionStart',
+        }),
+      );
+      expect(coordinator.getTaskStatus(task.id)?.activityEvidence?.activity).toBe('ready');
+      observeAgentHook(
+        hookEvent(task.agentId, {
+          taskId: task.id,
+          launchId,
+          state: 'done',
+          event: 'Stop',
+        }),
+      );
+      const observation = getAgentActivitySnapshot().observations.find(
+        (entry) => entry.agentId === task.agentId,
+      );
+      const evidence = coordinator.getTaskStatus(task.id)?.activityEvidence;
+      expect(evidence).toMatchObject({
+        agentId: task.agentId,
+        launchId,
+        source: 'hook',
+        activity: 'turn_finished',
+        event: 'Stop',
+        observedAt: observation?.at,
+        freshness: 'current',
+      });
+      expect(coordinator.listTasks()[0]?.activityEvidence).toEqual(evidence);
+      expect(coordinator.getTaskStatus(task.id)).toMatchObject({ status: 'running' });
+      expect(coordinator.getTaskStatus(task.id)?.signalDoneAt).toBeUndefined();
+    } finally {
+      retireAgentLaunch(task.agentId, launchId);
+    }
+  });
+
+  it('reports unknown evidence when no primary launch has been observed', async () => {
+    const task = await coordinator.createTask({ name: 'a', coordinatorTaskId: 'coord-1' });
+    expect(coordinator.getTaskStatus(task.id)?.activityEvidence).toEqual({
+      agentId: task.agentId,
+      source: 'process',
+      activity: 'unknown',
+      event: 'NoObservation',
+      freshness: 'unknown',
+    });
+  });
+
   it('marks a running task idle on a hook Stop event', async () => {
     const task = await coordinator.createTask({ name: 'a', coordinatorTaskId: 'coord-1' });
     expect(task.status).toBe('running');
@@ -6364,6 +6424,14 @@ describe('Coordinator hook-driven task state', () => {
     expect(task.status).toBe('running');
     emitWorkThenIdle(getOutputCb());
     expect(task.status).toBe('idle');
+  });
+
+  it('preserves hook ownership when the renderer reattaches to the same process', async () => {
+    const task = await coordinator.createTask({ name: 'a', coordinatorTaskId: 'coord-1' });
+    getHookEventHandler()(hookEvent(task.agentId, { event: 'UserPromptSubmit' }));
+    getSpawnHandler()(task.agentId, { reattached: true });
+    emitWorkThenIdle(getOutputCb());
+    expect(task.status).toBe('running');
   });
 
   it('resolves waitForIdle waiters on a hook Stop event', async () => {

@@ -238,7 +238,9 @@ export function SubTaskStrip(props: SubTaskStripProps) {
                 >
                   <Show
                     when={taskTone(task)}
-                    fallback={<StatusDot status={getTaskDotStatus(task.id)} size="sm" />}
+                    fallback={
+                      <StatusDot status={getTaskDotStatus(task.id)} taskId={task.id} size="sm" />
+                    }
                   >
                     {(tone) => (
                       <span style={{ color: tone().color, display: 'inline-flex' }}>

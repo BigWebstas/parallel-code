@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { IPC } from './channels.js';
+import { getAgentActivitySnapshot } from '../agent-hooks/observations.js';
 import {
   startAgentChat,
   getAgentChat,
@@ -440,6 +441,7 @@ function createThrottledForwarder(
  */
 export function registerAllHandlers(win: BrowserWindow): void {
   const notify = windowNotifier(win);
+  ipcMain.handle(IPC.AgentHookSnapshot, () => getAgentActivitySnapshot());
   ipcMain.handle(IPC.AgentChat, async (_event, args: Record<string, unknown>) => {
     assertString(args.agentId, 'agentId');
     assertString(args.action, 'action');
