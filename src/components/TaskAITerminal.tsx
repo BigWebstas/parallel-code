@@ -758,6 +758,8 @@ function AgentTerminalPane(props: {
               position: 'absolute',
               inset: '0',
               visibility: props.visible ? 'visible' : 'hidden',
+              // Pauses xterm rendering for hidden tabs; see TilingLayout.
+              'content-visibility': props.visible ? 'visible' : 'hidden',
               'pointer-events': props.visible ? 'auto' : 'none',
             }
           : {
