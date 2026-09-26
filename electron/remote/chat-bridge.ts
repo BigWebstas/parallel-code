@@ -28,40 +28,68 @@ function phoneFrame(state: AgentChatState): AgentChatState {
 /**
  * One socket's chat subscriptions. Frames are throttled per chat; the latest
  * state always goes out, because providers mutate one state object in place.
+ * While `isCongested` reports a backed-up socket, frames wait for the next tick:
+ * each one is the whole conversation, so skipping the ones in between loses nothing.
  */
 export function createChatSubscriptions(
   source: RemoteChatSource,
   sendMessage: (message: ServerMessage) => void,
+  isCongested: () => boolean = () => false,
 ) {
-  const subscriptions = new Map<string, () => void>();
+  // The chat each subscription observes; none while the agent has no chat.
+  const subscriptions = new Map<string, { chat?: AgentChat; stop: () => void }>();
 
-  function subscribe(agentId: string): void {
-    if (subscriptions.has(agentId)) return;
-    const chat = source.find(agentId);
-    if (!chat) return;
-    const send = () => sendMessage({ type: 'chat-state', agentId, state: phoneFrame(chat.state) });
+  function observe(agentId: string, chat: AgentChat | undefined) {
+    if (!chat) return { stop: () => {} };
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const stopObserving = chat.observe(() => {
+    const schedule = () => {
       timer ??= setTimeout(() => {
         timer = undefined;
-        send();
+        flush();
       }, CHAT_FRAME_INTERVAL_MS);
-    });
-    subscriptions.set(agentId, () => {
-      stopObserving();
-      clearTimeout(timer);
-    });
-    send();
+    };
+    const flush = () => {
+      if (isCongested()) schedule();
+      else sendMessage({ type: 'chat-state', agentId, state: phoneFrame(chat.state) });
+    };
+    const stopObserving = chat.observe(schedule);
+    flush();
+    return {
+      chat,
+      stop: () => {
+        stopObserving();
+        clearTimeout(timer);
+      },
+    };
+  }
+
+  /** Reconnecting puts a new chat under the same agent id; follow it, not the ended one. */
+  function refresh(agentId: string): void {
+    const bound = subscriptions.get(agentId);
+    const chat = source.find(agentId);
+    if (!bound || bound.chat === chat) return;
+    bound.stop();
+    subscriptions.set(agentId, observe(agentId, chat));
+  }
+
+  function subscribe(agentId: string): void {
+    if (subscriptions.has(agentId)) return refresh(agentId);
+    const chat = source.find(agentId);
+    if (chat) subscriptions.set(agentId, observe(agentId, chat));
   }
 
   function unsubscribe(agentId: string): void {
-    subscriptions.get(agentId)?.();
+    subscriptions.get(agentId)?.stop();
     subscriptions.delete(agentId);
   }
 
   return {
     subscribe,
     unsubscribe,
+    /** Call when the chat list changes. */
+    rebind(): void {
+      for (const agentId of [...subscriptions.keys()]) refresh(agentId);
+    },
     dispose(): void {
       for (const agentId of [...subscriptions.keys()]) unsubscribe(agentId);
     },

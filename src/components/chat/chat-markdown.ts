@@ -44,7 +44,31 @@ const chatRenderer: RendererObject = {
     const href = `${FILE_LINK_PREFIX}${encodeURIComponent(token.href)}`;
     return `<a href="${escapeAttr(href)}"${title}>${this.parser.parseInline(token.tokens)}</a>`;
   },
+  image(token: Tokens.Image) {
+    // An image loads as soon as it renders, so a remote one would send whatever its
+    // URL carries without a click. A web image shows as a link to it instead, any
+    // other scheme as its alt text; only inline data, which fetches nothing, stays.
+    if (/^data:/i.test(token.href)) return false;
+    const alt = this.parser.parseInline(token.tokens, this.parser.textRenderer);
+    // Marked escapes markup while preserving entities already present in the alt text.
+    const label = this.text({ type: 'text', raw: alt, text: alt });
+    const href = /^https?:/i.test(token.href) ? webHref(token.href) : null;
+    if (href === null) return label;
+    const title = token.title ? ` title="${escapeAttr(token.title)}"` : '';
+    return `<a href="${escapeAttr(href)}"${title}>${label || escapeHtml(token.href)}</a>`;
+  },
 };
+
+/** The href marked itself writes for a link, or null where marked writes no link. */
+function webHref(href: string): string | null {
+  try {
+    return encodeURI(href).replace(/%25/g, '%');
+  } catch (error) {
+    // A lone surrogate cannot be encoded; marked shows such a link as its text.
+    if (error instanceof URIError) return null;
+    throw error;
+  }
+}
 
 function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

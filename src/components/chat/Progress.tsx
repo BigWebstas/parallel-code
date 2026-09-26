@@ -39,8 +39,9 @@ export function Progress(props: { state: AgentChatState }) {
         </details>
       </Show>
       <Show when={working() || props.state.interrupted}>
-        <div class="chat-progress" role="status">
-          <span>
+        <div class="chat-progress">
+          {/* The clock stays outside the live region, or it is re-announced every second. */}
+          <span role="status">
             {props.state.requests.length
               ? 'Waiting for your input'
               : working()

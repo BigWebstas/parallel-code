@@ -80,6 +80,8 @@ export class ClaudeChat implements AgentChat {
   private launchDiagnostics: string[] = [];
   private connecting = true;
   private contextRequest = 0;
+  /** The mode passed at launch; Claude's first report of it changes nothing. */
+  private launchedMode?: string;
   /** Resolves when the SDK's message stream ends — the only end-of-process
    *  signal available to `release`. */
   private reading?: Promise<void>;
@@ -140,6 +142,10 @@ export class ClaudeChat implements AgentChat {
         ? undefined
         : await settingsDefaultMode(this.opts.cwd);
     if (this.isClosed()) throw new Error('Claude chat stopped while connecting.');
+    const permissionMode = this.opts.skipPermissions
+      ? ('bypassPermissions' as const)
+      : (this.opts.permissionMode ?? launchPermissionMode(settingsMode) ?? 'auto');
+    this.launchedMode = permissionMode;
     this.query = sdk.query({
       prompt: this.prompts(),
       options: {
@@ -157,9 +163,7 @@ export class ClaudeChat implements AgentChat {
             : {}),
         },
         executable: 'node',
-        permissionMode: this.opts.skipPermissions
-          ? ('bypassPermissions' as const)
-          : (this.opts.permissionMode ?? launchPermissionMode(settingsMode) ?? 'auto'),
+        permissionMode,
         ...(this.opts.skipPermissions ? { allowDangerouslySkipPermissions: true } : {}),
         canUseTool: this.canUseTool,
         // Diagnostics can include private tool arguments once a session is running.
@@ -570,8 +574,11 @@ export class ClaudeChat implements AgentChat {
     if (message.type === 'system' && (message.subtype === 'init' || message.subtype === 'status')) {
       if (message.subtype === 'init') this.state.model = string(message.model) || this.state.model;
       // What the CLI resolved, which is not always what the settings asked for.
-      this.state.permissionMode = string(message.permissionMode) || this.state.permissionMode;
-      if (this.state.permissionMode !== 'default') this.state.permissionNote = undefined;
+      const reported = string(message.permissionMode);
+      // Claude reports the launch mode on init; only a different mode means someone
+      // changed it, which makes the note on how the launch mode was chosen stale.
+      if (reported && reported !== this.launchedMode) this.state.permissionNote = undefined;
+      this.state.permissionMode = reported || this.state.permissionMode;
     } else if (message.type === 'stream_event') {
       this.acceptSend();
       const event = record(message.event);

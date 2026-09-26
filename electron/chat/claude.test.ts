@@ -407,6 +407,20 @@ describe('Claude chat adapter', () => {
     expect(h.chat.state.permissionNote).toBeUndefined();
   });
 
+  it('keeps the bypassPermissions note when Claude reports the mode it launched in', async () => {
+    const root = settingsRoot({ user: '{"permissions":{"defaultMode":"bypassPermissions"}}' });
+    const h = harness([], undefined, { cwd: root });
+    await h.chat.start();
+    await h.emit({ type: 'system', subtype: 'init', permissionMode: 'auto' });
+    await h.emit({ type: 'system', subtype: 'status', status: null, permissionMode: 'auto' });
+    expect(h.chat.state.permissionMode).toBe('auto');
+    expect(h.chat.state.permissionNote).toContain('bypassPermissions');
+    // A mode change reported from the CLI side makes the note stale.
+    await h.emit({ type: 'system', subtype: 'status', status: null, permissionMode: 'plan' });
+    expect(h.chat.state.permissionMode).toBe('plan');
+    expect(h.chat.state.permissionNote).toBeUndefined();
+  });
+
   it('refuses a mode change that the task has already opted out of', async () => {
     const h = harness([], undefined, { skipPermissions: true });
     await h.chat.start();

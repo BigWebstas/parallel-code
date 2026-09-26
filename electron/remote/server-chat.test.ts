@@ -138,6 +138,16 @@ it('ignores chats it does not know and stops observing when the phone disconnect
   await vi.waitFor(() => expect(stopObserving).toHaveBeenCalledOnce());
 });
 
+it('stops observing a chat that leaves the list while the phone watches it', async () => {
+  const { ws, messages } = await open(srv.mobileToken);
+  ws.send(JSON.stringify({ type: 'chat-subscribe', agentId: 'a1' }));
+  await vi.waitFor(() => expect(messages.some((m) => m.type === 'chat-state')).toBe(true));
+  listed = undefined;
+  notifyChange();
+  expect(stopObserving).toHaveBeenCalledOnce();
+  ws.close();
+});
+
 describe('QR-code token', () => {
   it('can read a chat but not act on it', async () => {
     const { ws, messages } = await open(srv.mobileToken);

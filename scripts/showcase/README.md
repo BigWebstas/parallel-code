@@ -80,9 +80,11 @@ To reproduce this, write the launcher and control script again, and keep them be
 
 `npm run showcase:capture` builds the app and runs every scene in `scenes/`. Each scene drives the real app with Playwright and records it sharply to `.tmp/showcase/<scene>.mp4` (1920 × 1080, 30 fps). The cursor, captions, camera moves and cuts come from [`video-kit/`](video-kit/README.md), so a UI change means running the scene again, not recording it by hand.
 
+Scripted recordings run on Linux only: the harness starts Linux's Electron binary with `--ozone-platform=headless`, and refuses to launch on other platforms.
+
 `electron-app.ts` launches the built app with a throwaway home directory, a fictional `weather-app` repository and a seeded state whose "Demo agent" runs `scripts/fake-agent.mjs`. It passes only a short allowlist of environment variables (locale, `PATH` and proxy settings), so API keys and variables such as `CLAUDE_CONFIG_DIR` cannot lead the app back to real projects, sessions or tokens, and no paid agent runs. `recordScene` finalizes the video even when a scene fails. The app renders offscreen (`--ozone-platform=headless`), so no window opens and no GPU is needed; xterm then uses its DOM renderer, which stays sharp under camera zooms.
 
-Real agents cannot start in a showcase run by default. Stubs named `claude`, `codex`, `gemini`, `opencode`, `copilot` and `agy` come first on `PATH` and exit with a message, even where a login survives the fake home (macOS keeps Claude Code's in the Keychain).
+Real agents cannot start in a showcase run by default. Stubs named `claude`, `codex`, `gemini`, `opencode`, `copilot` and `agy` come first on `PATH` and exit with a message, even where a login survives the fake home (a CLI may keep it in the system keyring rather than a file). The app rebuilds its `PATH` from a login shell at startup, so the seeded `.zshrc`, `.bash_profile` and `.profile` put the stubs back in front after the system login files.
 
 A scene that needs a real agent opts in with `launchShowcaseApp({ realAgents: ['claude'] })` (or `'codex'`). The stub then runs `pinned-agent.mjs`, which holds the agent to the provider's cheapest model:
 
@@ -91,7 +93,7 @@ A scene that needs a real agent opts in with `launchShowcaseApp({ realAgents: ['
 
 Every other agent stays blocked. The pinning cannot stop a model typed into a running session by full ID (such as `/model claude-opus-…`), and it does not cover Docker-isolated tasks, whose agent runs inside the container. Change the models in `PINNED_MODELS`, not in scenes.
 
-The app runs headless, so nobody can log in inside it. Opting in to `claude` therefore copies one file, your `~/.claude/.credentials.json`, into the throwaway home, and marks onboarding done and the demo repository trusted. The copy is deleted with the home. The launch refuses a login that expires within 30 minutes: a token refresh during the run would rotate it in the copy and could sign out your real login. The Claude wrapper also turns off fast mode, your claude.ai connectors, auto-update and telemetry, and spinner tips. Codex has no login handling yet; add it the same way before using `realAgents: ['codex']`.
+The app runs headless, so nobody can log in inside it. Opting in to `claude` therefore copies one file, your `~/.claude/.credentials.json`, into the throwaway home, and marks onboarding done and the demo repository trusted. The copy is deleted with the home, or when the test process exits without closing the app; only a killed process leaves it behind. The launch refuses a login that expires within 30 minutes: a token refresh during the run would rotate it in the copy and could sign out your real login. The Claude wrapper also turns off fast mode, your claude.ai connectors, auto-update and telemetry, and spinner tips. Codex has no login handling yet; add it the same way before using `realAgents: ['codex']`.
 
 `scenes/real-agent.spec.ts` checks all of this with one Haiku prompt, billed to your Claude plan. It is skipped unless you ask for it:
 
@@ -114,7 +116,7 @@ More options shape the seeded workspace:
 - `planner: true` adds a fourth task, "Plan weather app v2" (a Claude chat), whose mind map (`canvases.ts`) links its nodes to the other three tasks.
 - `focus: '<slug>'` opens that task in focus mode; `shell: true` gives it a shell terminal. The seeded rc files keep the shell prompt short.
 
-The demo repository always lives at `$TMPDIR/pc-demo`, so paths in the UI stay short. A run deletes a leftover `pc-demo` only when it holds the `.parallel-code-showcase` marker, and refuses otherwise.
+The demo repository always lives at `$TMPDIR/pc-demo`, so paths in the UI stay short. A run deletes a leftover `pc-demo` only when it holds the `.parallel-code-showcase` marker and the process id in that marker is no longer running; otherwise it refuses. The demo repository's Git commands ignore your global and system Git config and commit as `Demo <demo@example.com>`.
 
 To add a scene, copy `scenes/first-task.spec.ts`. Wait for the UI with `expect()` assertions; use fixed holds only for pacing. To run one scene: `npx playwright test --config scripts/showcase/playwright.config.ts first-task`.
 

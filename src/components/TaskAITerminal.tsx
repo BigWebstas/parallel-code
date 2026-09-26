@@ -23,7 +23,7 @@ import {
 } from '../store/store';
 import { markDirty } from '../lib/terminalFitManager';
 import { isAgentAskingQuestion, isAgentSettled } from '../store/taskStatus';
-import { warn as logWarn } from '../lib/log';
+import { errMessage, warn as logWarn } from '../lib/log';
 import { InfoBar } from './InfoBar';
 import { PromptHistory } from './PromptHistory';
 import { TerminalView } from './TerminalView';
@@ -1001,7 +1001,7 @@ function MarkdownViewerDialog(props: {
         copiedTimer = setTimeout(() => setCopied(false), 1500);
       })
       .catch((err: unknown) => {
-        logWarn('clipboard', 'Could not copy Markdown', { err });
+        logWarn('clipboard', 'Could not copy Markdown', { err: errMessage(err) });
       });
   }
 

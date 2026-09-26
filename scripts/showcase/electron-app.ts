@@ -44,8 +44,8 @@ const PASSED_ENV = [
 ];
 
 // The agent CLIs the app offers (electron/ipc/agents.ts). A fake HOME hides
-// their logins on Linux, but not everywhere: macOS keeps Claude Code's in the
-// Keychain. Stubs first on PATH make sure no showcase starts a real, paid agent.
+// logins kept in files, but not one a CLI keeps in a system keyring. Stubs
+// first on PATH make sure no showcase starts a real, paid agent.
 const REAL_AGENT_COMMANDS = ['claude', 'codex', 'gemini', 'opencode', 'copilot', 'agy'];
 
 /** Agents a scene may opt in to; pinned-agent.mjs holds them to their cheapest model. */
@@ -114,12 +114,25 @@ const blockRealAgents = (dir: string, realAgents: RealAgent[]): string => {
  * Task shells start the user's login shell with the throwaway home. Without an
  * rc file zsh opens its new-user wizard, and a default prompt shows the host
  * name; both would end up in screenshots.
+ *
+ * At startup the app also replaces its PATH with the one `$SHELL -ilc` reports
+ * (fixEnv in electron/main.ts), and system login files such as /etc/profile
+ * may rebuild PATH. The files that shell reads after them put the agent stubs
+ * back in front.
  */
-const seedShellPrompt = (home: string): void => {
+const seedShellRc = (home: string, blockedAgentsBin: string): void => {
   fs.mkdirSync(home, { recursive: true });
+  const stubsFirst = `export PATH=${shellQuote(blockedAgentsBin)}:"$PATH"\n`;
   // PROMPT_EOL_MARK: no inverse `%` when the shell starts after partial output.
-  fs.writeFileSync(path.join(home, '.zshrc'), "PROMPT='%F{cyan}%1~%f $ '\nPROMPT_EOL_MARK=''\n");
+  fs.writeFileSync(
+    path.join(home, '.zshrc'),
+    `PROMPT='%F{cyan}%1~%f $ '\nPROMPT_EOL_MARK=''\n${stubsFirst}`,
+  );
   fs.writeFileSync(path.join(home, '.bashrc'), "PS1='\\[\\e[36m\\]\\W\\[\\e[0m\\] $ '\n");
+  // Login bash reads the first of these; sh and dash read .profile.
+  for (const file of ['.bash_profile', '.profile']) {
+    fs.writeFileSync(path.join(home, file), stubsFirst);
+  }
 };
 
 // A refresh during the run would rotate the token in the copy, which can sign
@@ -146,6 +159,9 @@ const seedClaudeLogin = (home: string, repo: string): void => {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);
   fs.chmodSync(target, 0o600);
+  // close() deletes it with the home; this covers a run that exits without it.
+  // A killed process (SIGKILL, unhandled SIGINT) still leaves it behind.
+  process.once('exit', () => fs.rmSync(target, { force: true }));
   const settings = {
     hasCompletedOnboarding: true,
     projects: { [repo]: { hasTrustDialogAccepted: true } },
@@ -181,20 +197,39 @@ const startApp = async (page: Page, app: ElectronApplication): Promise<void> => 
 };
 
 // A fixed, short path: the app shows worktree paths, and a random temp name
-// would end up in every screenshot. The marker proves a leftover is ours.
+// would end up in every screenshot. The marker proves a leftover is ours, and
+// holds the pid of the run that owns it.
 const DEMO_DIR = path.join(os.tmpdir(), 'pc-demo');
 const DEMO_MARKER = '.parallel-code-showcase';
 
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists but belongs to another user.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+};
+
 const createDemoDir = (): string => {
+  const marker = path.join(DEMO_DIR, DEMO_MARKER);
   if (fs.existsSync(DEMO_DIR)) {
-    if (!fs.existsSync(path.join(DEMO_DIR, DEMO_MARKER))) {
+    if (!fs.existsSync(marker)) {
       throw new Error(`${DEMO_DIR} exists and is not a showcase run's; move it away first`);
+    }
+    const owner = Number(fs.readFileSync(marker, 'utf8'));
+    if (Number.isInteger(owner) && owner > 0 && isAlive(owner)) {
+      throw new Error(
+        `${DEMO_DIR} belongs to a showcase run that is still running (pid ${owner}); ` +
+          'wait for it, or delete the directory if that process is not a showcase run',
+      );
     }
     // Left behind by a run that crashed before cleaning up.
     fs.rmSync(DEMO_DIR, { recursive: true, force: true });
   }
   fs.mkdirSync(DEMO_DIR);
-  fs.writeFileSync(path.join(DEMO_DIR, DEMO_MARKER), '');
+  fs.writeFileSync(marker, String(process.pid));
   return DEMO_DIR;
 };
 
@@ -207,6 +242,10 @@ const createDemoDir = (): string => {
 export const launchShowcaseApp = async (
   options: DemoWorkspaceOptions & { realAgents?: RealAgent[] } = {},
 ): Promise<ShowcaseApp> => {
+  // The Electron binary path and --ozone-platform=headless below are Linux's.
+  if (process.platform !== 'linux') {
+    throw new Error(`Showcase runs need Linux; this is ${process.platform}`);
+  }
   // The seeded chat tasks resume sessions that chats.ts made up. With a real
   // Claude, the app would hand those to the billed CLI instead of chat-agent.mjs.
   if ((options.withTasks || options.tasks) && options.realAgents?.includes('claude')) {
@@ -217,7 +256,8 @@ export const launchShowcaseApp = async (
   let app: ElectronApplication | undefined;
   try {
     const home = path.join(dir, 'home');
-    seedShellPrompt(home);
+    const blockedAgentsBin = blockRealAgents(dir, options.realAgents ?? []);
+    seedShellRc(home, blockedAgentsBin);
     const repo = seedDemoWorkspace(dir, home, options);
     if (options.realAgents?.includes('claude')) seedClaudeLogin(home, repo);
     app = await _electron.launch({
@@ -232,7 +272,7 @@ export const launchShowcaseApp = async (
         path.join(REPO_ROOT, 'dist-electron', 'main.js'),
       ],
       cwd: REPO_ROOT,
-      env: showcaseEnv(home, blockRealAgents(dir, options.realAgents ?? [])),
+      env: showcaseEnv(home, blockedAgentsBin),
     });
     const page = await app.firstWindow();
     await startApp(page, app);

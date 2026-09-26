@@ -3,7 +3,6 @@ import { createStore, reconcile } from 'solid-js/store';
 import type { AgentChatState } from '../../electron/shared/agent-chat-types';
 import type { RemoteChatAction } from '../../electron/remote/protocol';
 import { ChatView } from '../components/chat/ChatView';
-import { FILE_LINK_PREFIX } from '../components/chat/chat-markdown';
 import { readLocal, writeLocal } from './storage';
 import { TaskHeader } from './TaskHeader';
 import { agents, canControl, sendChatAction, status, watchChat } from './ws';
@@ -30,7 +29,8 @@ function handleLink(event: MouseEvent): void {
   const link = event.target instanceof Element ? event.target.closest('a') : null;
   const href = link?.getAttribute('href');
   if (!href || event.defaultPrevented) return;
-  if (href.startsWith(FILE_LINK_PREFIX)) {
+  // In-page links, worktree file links among them, would change the route.
+  if (href.startsWith('#')) {
     event.preventDefault();
     return;
   }

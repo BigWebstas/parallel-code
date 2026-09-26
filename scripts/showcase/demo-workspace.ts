@@ -65,13 +65,26 @@ export type DemoTask = DemoAgent & {
   state?: Record<string, unknown>;
 };
 
+// The user's git config must not apply: commit signing, hooks or a missing
+// identity would make a seed hang or fail, or run their hooks on the demo repo.
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_AUTHOR_NAME: 'Demo',
+  GIT_AUTHOR_EMAIL: 'demo@example.com',
+  GIT_COMMITTER_NAME: 'Demo',
+  GIT_COMMITTER_EMAIL: 'demo@example.com',
+};
+
 const git = (cwd: string, args: string[]): void => {
-  execFileSync('git', args, { cwd, stdio: 'ignore' });
+  // stderr piped, not ignored: a failure's message then says why.
+  execFileSync('git', args, { cwd, env: GIT_ENV, stdio: ['ignore', 'ignore', 'pipe'] });
 };
 
 const commit = (cwd: string, message: string): void => {
   git(cwd, ['add', '.']);
-  git(cwd, ['-c', 'user.name=Demo', '-c', 'user.email=demo@example.com', 'commit', '-qm', message]);
+  git(cwd, ['commit', '-qm', message]);
 };
 
 const writeFiles = (root: string, files: Record<string, string>): void => {

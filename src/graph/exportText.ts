@@ -67,7 +67,8 @@ export function graphToMermaid(document: GraphDocument, title?: string): string 
     const target = ids.get(link.target);
     if (!source || !target) continue;
     const arrow = link.kind === 'challenges' ? '-.->' : '-->';
-    lines.push(`  ${source} ${arrow}${link.kind ? `|${mermaidText(link.kind)}|` : ''} ${target}`);
+    // Quoted so brackets and parentheses in a kind are text, not node-shape syntax.
+    lines.push(`  ${source} ${arrow}${link.kind ? `|"${mermaidText(link.kind)}"|` : ''} ${target}`);
   }
   return lines.join('\n') + '\n';
 }
