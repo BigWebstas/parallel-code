@@ -71,6 +71,7 @@ const ALLOWED_CHANNELS = new Set([
   '__window_get_size',
   '__window_focus',
   '__window_blur',
+  '__window_visibility_changed',
   '__window_resized',
   '__window_moved',
   '__window_close_requested',

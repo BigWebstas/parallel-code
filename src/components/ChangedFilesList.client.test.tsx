@@ -5,6 +5,7 @@ import type { ChangedFile, CoverageSummary } from '../ipc/types';
 import type { CoverageComparison } from '../lib/coverage-comparison';
 import { invoke } from '../lib/ipc';
 import type { UnderstandingTourState } from '../lib/create-understanding-tour';
+import { startWindowVisibilityTracking } from '../lib/windowVisibility';
 import { UNCOMMITTED_SELECTION } from './CommitNavBar';
 import { ChangedFilesList } from './ChangedFilesList';
 
@@ -362,4 +363,58 @@ describe('ChangedFilesList coverage inventory fallbacks', () => {
       expect(container.textContent).not.toContain('↕');
     },
   );
+});
+
+describe('ChangedFilesList polling', () => {
+  it('skips polls while the window is hidden and resumes once it is shown', async () => {
+    let emitVisibility: ((visible: unknown) => void) | undefined;
+    vi.stubGlobal('electron', {
+      ipcRenderer: {
+        on: (channel: string, listener: (visible: unknown) => void) => {
+          if (channel === IPC.WindowVisibilityChanged) emitVisibility = listener;
+          return () => undefined;
+        },
+      },
+    });
+    const stopTracking = startWindowVisibilityTracking();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const polls = () =>
+        vi.mocked(invoke).mock.calls.filter(([ch]) => ch === IPC.GetUncommittedChangedFiles).length;
+      vi.mocked(invoke).mockImplementation(((channel: string) => {
+        if (channel === IPC.GetUncommittedChangedFiles) return Promise.resolve([]);
+        return Promise.reject(new Error(`Unexpected IPC call: ${channel}`));
+      }) as typeof invoke);
+      const container = document.createElement('div');
+      document.body.append(container);
+      disposers.push(
+        render(
+          () => (
+            <ChangedFilesList
+              worktreePath="/task"
+              isActive
+              selectedCommit={UNCOMMITTED_SELECTION}
+            />
+          ),
+          container,
+        ),
+      );
+      await waitFor(() => polls() === 1);
+      // Let the first refresh settle; an in-flight refresh drops later ticks.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      emitVisibility?.(false);
+      vi.advanceTimersByTime(15_000);
+      expect(polls()).toBe(1);
+
+      emitVisibility?.(true);
+      vi.advanceTimersByTime(5_000);
+      expect(polls()).toBe(2);
+    } finally {
+      emitVisibility?.(true);
+      stopTracking();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
 });
