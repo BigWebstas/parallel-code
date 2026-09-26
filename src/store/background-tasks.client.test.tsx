@@ -3,7 +3,7 @@ import { reconcile } from 'solid-js/store';
 import { render } from 'solid-js/web';
 import { TaskTitleBar } from '../components/TaskTitleBar';
 import { store, setStore } from './core';
-import { applyAgentHookEvent } from './agentHookStatus';
+import { AGENT_HOOK_STALE_MS, applyAgentHookEvent, getAgentHookStatus } from './agentHookStatus';
 import { clearAgentActivity, getTaskAttentionState, markAgentBusy } from './taskStatus';
 import { setActiveTask } from './navigation';
 import { computeAttentionEntries } from './sidebar-attention';
@@ -159,6 +159,42 @@ it('keeps unresolved background questions in the attention tray', () => {
   hook('waiting', 'Notification');
   expect(isTaskBackgrounded('one')).toBe(false);
   expect(computeAttentionEntries().map((entry) => entry.taskId)).toContain('one');
+});
+
+it('stays in the back when Claude re-reports a finished turn as idle', () => {
+  hook('working', 'UserPromptSubmit');
+  hook('done', 'Stop');
+  sendTaskToBack('one');
+  vi.advanceTimersByTime(60_000);
+  hook('done', 'Notification');
+  expect(isTaskBackgrounded('one')).toBe(true);
+  expect(store.taskOrder).toEqual(['two', 'three', 'one']);
+
+  hook('waiting', 'PermissionRequest');
+  expect(isTaskBackgrounded('one')).toBe(false);
+});
+
+it('returns for a new turn after an idle re-report', () => {
+  hook('done', 'Stop');
+  sendTaskToBack('one');
+  hook('done', 'Notification');
+  hook('working', 'UserPromptSubmit');
+  expect(isTaskBackgrounded('one')).toBe(false);
+});
+
+it.each([
+  ['waiting', 'PermissionRequest'],
+  ['working', 'UserPromptSubmit'],
+] as const)('stays in the back when a %s hook claim goes stale', (state, event) => {
+  hook(state, event);
+  sendTaskToBack('one');
+  vi.advanceTimersByTime(AGENT_HOOK_STALE_MS);
+  expect(getAgentHookStatus('one-agent')).toBeNull();
+  expect(isTaskBackgrounded('one')).toBe(true);
+
+  // Expiry re-baselines the task; later activity still wakes it.
+  hook('waiting', 'PermissionRequest');
+  expect(isTaskBackgrounded('one')).toBe(false);
 });
 
 it('notices completion even when the task attention state stays at review', () => {
