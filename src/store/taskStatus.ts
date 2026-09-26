@@ -1,4 +1,5 @@
 import { createSignal, untrack } from 'solid-js';
+import { createStore } from 'solid-js/store';
 import { isAgentChat } from './agent-chat';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
@@ -75,7 +76,6 @@ interface AgentTrackingState {
   lastAutoTrustCheckAt?: number;
   autoTrustAcceptedAt?: number;
   lastDataAt?: number;
-  lastOutputAt?: number;
   lastIdleResetAt?: number;
   idleTimer?: ReturnType<typeof setTimeout>;
   idleConfirmPending?: boolean;
@@ -88,6 +88,8 @@ interface AgentTrackingState {
 }
 
 const agentStates = new Map<string, AgentTrackingState>();
+// Tooltips must update even when output leaves the agent's activity unchanged.
+const [lastOutputAt, setLastOutputAt] = createStore<Record<string, number | undefined>>({});
 
 function getAgentState(agentId: string): AgentTrackingState {
   let state = agentStates.get(agentId);
@@ -696,7 +698,7 @@ export function markAgentSpawned(agentId: string): void {
   state.lastAnalysisAt = undefined;
   cancelPendingAnalysis(state);
   state.lastDataAt = Date.now();
-  state.lastOutputAt = undefined;
+  setLastOutputAt(agentId, undefined);
   // This also runs on reattachment. Main launch lifecycle observations alone
   // invalidate hook evidence for an actual replacement process.
   addToActive(agentId);
@@ -854,7 +856,7 @@ export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: stri
   // Focus, cursor and mode updates are terminal housekeeping, not agent work.
   // Keep tracking their raw bytes above, but do not change or extend activity.
   if (!normalizeForComparison(text)) return;
-  state.lastOutputAt = now;
+  setLastOutputAt(agentId, now);
 
   const latestOutput = stripAnsi(text.slice(Math.max(0, findLastFrameStart(text))));
   const frame = stripAnsi(combined.slice(Math.max(0, findLastFrameStart(combined))));
@@ -962,6 +964,7 @@ export function markAgentBusy(agentId: string): void {
 
 /** Clean up timers when an agent exits. */
 export function clearAgentActivity(agentId: string): void {
+  setLastOutputAt(agentId, undefined);
   const state = agentStates.get(agentId);
   if (state) {
     clearAutoTrustState(agentId);
@@ -1099,7 +1102,7 @@ export function getTaskActivityTooltip(taskId: string): string {
   if (hook && !(hook.state === 'done' && isAgentBlockedOnInput(agentId))) {
     return formatAgentHookTooltip({ ...hook, agentId });
   }
-  const outputAt = agentStates.get(agentId)?.lastOutputAt;
+  const outputAt = lastOutputAt[agentId];
   if (outputAt !== undefined) {
     const activity = isAgentBlockedOnInput(agentId)
       ? 'Waiting for input'

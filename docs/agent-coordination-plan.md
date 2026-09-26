@@ -206,6 +206,8 @@ Step B has passed `npm run check`, `npm run check:static`, and the full unit/cli
 
 Step B preserves hook observations across reattachment, rejects late events from replaced/retired launches, invalidates finished activity on prompt submission, and shares matching-tool wait reduction and source timestamps. Renderer snapshot ordering covers newer subscribed events, retired launches, and missed retirements while unsubscribed. Local interrupt/approval inference remains renderer-owned and labeled. Ongoing hook evidence expires from UI activity after 30 minutes and falls back to labeled terminal/process inference; MCP retains the cached hook observation with `freshness: stale`. Session readiness, input readiness, turn completion, and failure are distinct labels, independent of assignment completion. Static dot tooltips use absolute observation times; the existing clock-driven status line uses relative ages.
 
+Two independent Step B implementation reviews found a P2 provenance defect (reducing main observations again against local interrupt state) and a P3 tooltip defect (nonreactive terminal observation timestamps). Both are corrected: accepted main observations replace hook fields directly while preserving local unread/suppression handling, and terminal timestamps are reactive and cleared on replacement/cleanup. Regression tests also cover a newer snapshot replacing an older tool wait. Both reviewers' isolated reproductions now pass, along with 186 focused unit tests and the full client suite (1,123 passed; 6 skipped).
+
 ## External references behind the selected patterns
 
 - [Herdr status authority and explanations](https://herdr.dev/docs/agents/): explicit source evidence and workspace rollups.

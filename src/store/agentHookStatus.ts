@@ -10,6 +10,7 @@ import {
   type AgentHookEventPayload,
   type AgentHookPrompt,
   type AgentHookStatusState,
+  type ReducedAgentHookStatus,
 } from '../../electron/agent-hooks/status';
 import { formatRelativeAge } from '../lib/relativeAge';
 import { invoke } from '../lib/ipc';
@@ -128,17 +129,23 @@ export function applyAgentHookEvent(event: AgentHookEventPayload): boolean {
   const prev = statuses().get(event.agentId);
   const reduced = transitionAgentHookStatus(prev, event);
   if (reduced === prev) return false;
+  setHookStatus(event, reduced);
+  return true;
+}
+
+/** Only unread bookkeeping is carried across accepted hook observations. */
+function setHookStatus(event: AgentHookEventPayload, status: ReducedAgentHookStatus): void {
+  const prev = statuses().get(event.agentId);
   const sameState = prev?.state === event.state;
   const finished = event.event === 'Stop' || event.event === 'StopFailure';
   setStatus(event.agentId, {
-    ...reduced,
+    ...status,
     launchId: event.launchId ?? prev?.launchId,
     source: 'hook',
     unread: finished
       ? event.taskId !== store.activeTaskId
       : sameState && event.state === 'done' && prev.unread,
   });
-  return true;
 }
 
 /** Main observations are already reduced; the snapshot must retain their onset. */
@@ -155,11 +162,11 @@ export function applyAgentActivityObservation(observation: AgentActivityObservat
     return;
   }
   if (prev?.launchId !== observation.launchId) clearAgentHookStatus(observation.agentId);
-  const applied = applyAgentHookEvent(observation);
-  const status = statuses().get(observation.agentId);
-  if (applied && status?.source === 'hook') {
-    setStatus(observation.agentId, { ...status, since: observation.since });
-  }
+  clearTimer(interruptTimers, observation.agentId);
+  if (isSuppressedToolEvent(observation)) return;
+  // Main already matched tool results and reduced this state. Reducing it
+  // against local inference can invent hook details or reject a newer snapshot.
+  setHookStatus(observation, { ...observation, updatedAt: observation.at });
 }
 
 export function applyAgentActivitySnapshot(snapshot: AgentActivitySnapshot): void {

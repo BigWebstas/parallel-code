@@ -369,6 +369,62 @@ describe('agentHookStatus', () => {
     });
   });
 
+  it('does not attribute local interruption details to a later hook observation', () => {
+    applyAgentActivityObservation(observation());
+    noteAgentTerminalInput('a1', '\x1b');
+    vi.advanceTimersByTime(500);
+    expect(getAgentHookStatus('a1')).toMatchObject({ source: 'terminal', detail: 'Interrupted' });
+    vi.advanceTimersByTime(60_000);
+    const idle = observation({ state: 'done', event: 'Notification' });
+    applyAgentActivityObservation(idle);
+    expect(getAgentHookStatus('a1')).toMatchObject({
+      source: 'hook',
+      event: 'Notification',
+      since: idle.since,
+      updatedAt: idle.at,
+    });
+    expect(getAgentHookStatus('a1')?.detail).toBeUndefined();
+  });
+
+  it('replaces an older tool wait with the already reduced main snapshot', () => {
+    applyAgentActivityObservation(
+      observation({
+        state: 'waiting',
+        event: 'PermissionRequest',
+        prompt: 'permission',
+        toolUseId: 'old-tool',
+        detail: 'Old approval',
+      }),
+    );
+    vi.advanceTimersByTime(20);
+    const current = observation({ event: 'PostToolUse', toolUseId: 'new-tool' });
+    applyAgentActivitySnapshot({ sequence: current.sequence, observations: [current] });
+    expect(getAgentHookStatus('a1')).toMatchObject({
+      state: 'working',
+      toolUseId: 'new-tool',
+      since: current.since,
+      updatedAt: current.at,
+    });
+    expect(getAgentHookStatus('a1')?.detail).toBeUndefined();
+    expect(getAgentHookStatus('a1')?.prompt).toBeUndefined();
+  });
+
+  it('retains unread state and main-provided final text through idle observations', () => {
+    mockActiveTaskId = 'other';
+    applyAgentActivityObservation(
+      observation({ state: 'done', event: 'Stop', lastAssistantMessage: 'Finished' }),
+    );
+    applyAgentActivityObservation(
+      observation({ state: 'done', event: 'Notification', lastAssistantMessage: 'Finished' }),
+    );
+    expect(getAgentHookStatus('a1')).toMatchObject({
+      unread: true,
+      lastAssistantMessage: 'Finished',
+    });
+    markTaskRead('t1');
+    expect(getAgentHookStatus('a1')?.unread).toBe(false);
+  });
+
   it('does not change inferred interrupt onset when a tool event is suppressed', () => {
     applyAgentActivityObservation(observation());
     noteAgentTerminalInput('a1', '\x1b');
