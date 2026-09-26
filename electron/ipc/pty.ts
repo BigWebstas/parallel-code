@@ -22,6 +22,11 @@ import {
   createTerminalQueryResponder,
   type TerminalQueryResponder,
 } from './terminal-query-responder.js';
+import {
+  registerAgentLaunch,
+  retireAgentLaunch,
+  invalidateAgentActivity,
+} from '../agent-hooks/observations.js';
 import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
@@ -31,6 +36,7 @@ const __dirname = path.dirname(__filename);
 
 interface PtySession {
   proc: pty.IPty;
+  launchId: string;
   command: string;
   channelId: string;
   taskId: string;
@@ -402,7 +408,8 @@ export function validateCommand(command: string): void {
 function copyProcessEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined) env[k] = v;
+    // Hook ownership belongs to this PTY launch, never the app's parent process.
+    if (v !== undefined && !HOOK_PTY_ENV_KEYS.some((key) => key === k)) env[k] = v;
   }
   return env;
 }
@@ -566,6 +573,7 @@ function cleanupExistingSession(agentId: string, existing: PtySession | undefine
   if (!existing) return;
   if (existing.flushTimer) clearTimeout(existing.flushTimer);
   existing.subscribers.clear();
+  retireAgentLaunch(agentId, existing.launchId);
   existing.proc.kill();
   sessions.delete(agentId);
 }
@@ -658,6 +666,7 @@ function attachPtyOutputHandlers(
 
   session.proc.onExit(({ exitCode, signal }) => {
     session.queries.dispose();
+    retireAgentLaunch(args.agentId, session.launchId);
     if (sessions.get(args.agentId) !== session) return;
 
     if (containerName) {
@@ -698,7 +707,7 @@ function attachPtyOutputHandlers(
 /** What a Claude launch needs to self-report status; null until the hook server is up. */
 export interface AgentHookRuntime {
   claudeSettingsPath: string;
-  buildPtyEnv(agentId: string, taskId: string): Record<string, string>;
+  buildPtyEnv(agentId: string, taskId: string, launchId: string): Record<string, string>;
 }
 
 let agentHookRuntime: AgentHookRuntime | null = null;
@@ -717,11 +726,12 @@ export function applyAgentHookLaunch(
   args: Pick<SpawnAgentArgs, 'agentId' | 'taskId' | 'args' | 'isShell' | 'dockerMode'>,
   command: string,
   spawnEnv: Record<string, string>,
+  launchId: string,
 ): string[] {
   if (!agentHookRuntime || args.isShell || args.dockerMode || !isClaudeCommand(command)) {
     return args.args;
   }
-  Object.assign(spawnEnv, agentHookRuntime.buildPtyEnv(args.agentId, args.taskId));
+  Object.assign(spawnEnv, agentHookRuntime.buildPtyEnv(args.agentId, args.taskId, launchId));
   return withClaudeHookSettings(command, args.args, agentHookRuntime.claudeSettingsPath);
 }
 
@@ -754,7 +764,7 @@ export async function spawnAgent(
         data: toIpcBytes(existing.scrollback.read()),
       });
     }
-    emitPtyEvent('spawn', args.agentId);
+    emitPtyEvent('spawn', args.agentId, { reattached: true });
     return;
   }
 
@@ -781,7 +791,8 @@ export async function spawnAgent(
   codexExitIds.delete(args.agentId);
 
   const spawnEnv = buildPtySpawnEnv(args.env, fileEnv);
-  const launchArgs = applyAgentHookLaunch(args, command, spawnEnv);
+  const launchId = crypto.randomUUID();
+  const launchArgs = applyAgentHookLaunch(args, command, spawnEnv, launchId);
 
   // Backfill sandbox placeholders for pre-existing worktrees (and anywhere
   // Claude Code may launch). See ensureClaudeSandboxFiles for the why.
@@ -818,16 +829,24 @@ export async function spawnAgent(
 
   // Trusted main-process admission runs after asynchronous setup, immediately before launch.
   beforeSpawn?.();
-  const proc = pty.spawn(spawnSpec.spawnCommand, spawnSpec.spawnArgs, {
-    name: 'xterm-256color',
-    cols: args.cols,
-    rows: args.rows,
-    cwd: spawnSpec.cwd,
-    env: spawnSpec.env,
-  });
+  registerAgentLaunch(args.agentId, args.taskId, launchId);
+  let proc: pty.IPty;
+  try {
+    proc = pty.spawn(spawnSpec.spawnCommand, spawnSpec.spawnArgs, {
+      name: 'xterm-256color',
+      cols: args.cols,
+      rows: args.rows,
+      cwd: spawnSpec.cwd,
+      env: spawnSpec.env,
+    });
+  } catch (err) {
+    retireAgentLaunch(args.agentId, launchId);
+    throw err;
+  }
 
   const session: PtySession = {
     proc,
+    launchId,
     command,
     channelId,
     taskId: args.taskId,
@@ -874,6 +893,16 @@ function writeSessionInput(session: PtySession, data: string): void {
   const userActivity = hasTerminalUserActivity(data);
   if (userActivity) session.lastInputAt = Date.now();
   session.proc.write(data);
+  if (
+    session.inputPending &&
+    (data === '\r' ||
+      data === '\n' ||
+      data === '\r\n' ||
+      data === '\x1b[13u' ||
+      data === '\x1b[13;1u')
+  ) {
+    invalidateAgentActivity(session.agentId, session.launchId);
+  }
   // History recall/navigation can populate a draft without printable input.
   // Escape/Backspace alone preserve a draft but cannot create one on an empty line.
   const draftActivity = userActivity && [...data].some((ch) => ch !== '\x1b' && ch !== '\x7f');

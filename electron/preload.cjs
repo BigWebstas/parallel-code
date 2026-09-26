@@ -131,6 +131,7 @@ const ALLOWED_CHANNELS = new Set([
   'notification_clicked',
   'notification_failed',
   'agent_hook_event',
+  'agent_hook_snapshot',
   'start_pr_checks_watcher',
   'stop_pr_checks_watcher',
   'detect_pr_for_branch',

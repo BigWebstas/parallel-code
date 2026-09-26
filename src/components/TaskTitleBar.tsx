@@ -176,6 +176,7 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
         <span class="task-title-status" title={statusDescription()}>
           <StatusDot
             status={getTaskDotStatus(props.task.id)}
+            taskId={props.task.id}
             size="md"
             attention={getTaskAttentionState(props.task.id)}
           />

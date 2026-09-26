@@ -420,10 +420,10 @@ export function getAgentId(index = 0): string {
   return call[0] as string;
 }
 
-export function getSpawnHandler(): (agentId: string) => void {
+export function getSpawnHandler(): (agentId: string, data?: unknown) => void {
   const call = mockOnPtyEvent.mock.calls.find((c) => c[0] === 'spawn');
   if (!call) throw new Error('spawn handler not registered');
-  return call[1] as (agentId: string) => void;
+  return call[1] as (agentId: string, data?: unknown) => void;
 }
 
 export function getExitHandler(): (agentId: string, data: unknown) => void {

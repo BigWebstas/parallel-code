@@ -110,7 +110,12 @@ import {
   isAgentIdle,
   clearAgentActivity,
 } from './taskStatus';
-import { applyAgentHookEvent, getAgentHookStatus } from './agentHookStatus';
+import {
+  applyAgentActivityObservation,
+  applyAgentHookEvent,
+  getAgentHookStatus,
+} from './agentHookStatus';
+import { getTaskActivityTooltip } from './taskStatus';
 
 const CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG = [
   ' WebFetch(domain:registry.npmjs.org),',
@@ -1582,14 +1587,43 @@ describe('hook-reported agent status', () => {
     expect(getTaskOpenQuestion('task-1')?.agentId).toBe('agent-1');
   });
 
-  it('forgets hook state when the agent is respawned or torn down', () => {
+  it('preserves hook state on reattachment and clears it on an actual new launch or teardown', () => {
     hook('agent-1', 'waiting', 'PermissionRequest');
     markAgentSpawned('agent-1');
+    expect(getAgentHookStatus('agent-1')?.state).toBe('waiting');
+    applyAgentActivityObservation({
+      kind: 'launch',
+      agentId: 'agent-1',
+      taskId: 'task-1',
+      launchId: 'new-launch',
+      sequence: 1,
+      at: Date.now(),
+    });
     expect(getAgentHookStatus('agent-1')).toBeNull();
     expect(getTaskAttentionState('task-1')).toBe('active');
 
     hook('agent-1', 'working');
     clearAgentActivity('agent-1');
     expect(getAgentHookStatus('agent-1')).toBeNull();
+  });
+
+  it('names the asking secondary agent rather than claiming primary activity', () => {
+    setMockTask('task-1', { agentIds: ['agent-1', 'agent-2'] });
+    setMockAgent('agent-2', { status: 'running' });
+    hook('agent-1', 'working');
+    hook('agent-2', 'waiting', 'PermissionRequest');
+    expect(getTaskActivityTooltip('task-1')).toContain('Agent agent-2');
+    expect(getTaskActivityTooltip('task-1')).toContain('hook report (PermissionRequest)');
+  });
+
+  it('labels hookless output inference and keeps unknown source times unknown', () => {
+    markAgentSpawned('agent-1');
+    expect(getTaskActivityTooltip('task-1')).toContain('Activity unknown');
+    expect(getTaskActivityTooltip('task-1')).toContain('observation time unknown');
+    markAgentOutput('agent-1', new TextEncoder().encode('Building project...'), 'task-1');
+    expect(getTaskActivityTooltip('task-1')).toContain('Activity inferred from terminal output');
+    expect(getTaskActivityTooltip('task-1')).toContain('observed');
+    markAgentSpawned('agent-1');
+    expect(getTaskActivityTooltip('task-1')).toContain('observation time unknown');
   });
 });

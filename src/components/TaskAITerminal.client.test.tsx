@@ -421,7 +421,13 @@ it('hands off once Claude reports its turn over, though the screen is still redr
   // The TUI keeps repainting its footer after `Stop`; the output heuristic
   // alone reads that as work for another 15 seconds.
   markAgentOutput('agent', new TextEncoder().encode('Worked for 12s\r\n? for shortcuts\r\n'));
-  applyAgentHookEvent({ agentId: 'agent', taskId: 'task', state: 'done', event: 'Stop', at: 1 });
+  applyAgentHookEvent({
+    agentId: 'agent',
+    taskId: 'task',
+    state: 'done',
+    event: 'Stop',
+    at: Date.now(),
+  });
   mount();
   clickChat();
   expect(host.querySelector('[role="alert"]')).toBeNull();
@@ -436,7 +442,7 @@ it('keeps the terminal while Claude reports a turn in flight, though the screen 
     taskId: 'task',
     state: 'working',
     event: 'UserPromptSubmit',
-    at: 1,
+    at: Date.now(),
   });
   mount();
   clickChat();

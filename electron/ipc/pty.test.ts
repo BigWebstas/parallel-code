@@ -88,6 +88,12 @@ vi.mock('../log.js', () => ({
 }));
 
 import {
+  getAgentActivityEvidence,
+  getAgentActivitySnapshot,
+  observeAgentHook,
+  isCurrentAgentLaunch,
+} from '../agent-hooks/observations.js';
+import {
   buildPtySpawnEnv,
   handoffCodexTerminal,
   handoffClaudeTerminal,
@@ -104,6 +110,7 @@ import {
   resizeAgent,
   resolveProjectDockerfile,
   spawnAgent,
+  setAgentHookRuntime,
   subscribeToAgent,
   validateCommand,
   writeToAgent,
@@ -206,6 +213,7 @@ beforeEach(() => {
 
 afterEach(() => {
   killAllAgents();
+  setAgentHookRuntime(null);
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   for (const tempPath of tempPaths) {
@@ -221,6 +229,19 @@ describe('DOCKER_CONTAINER_HOME', () => {
 });
 
 describe('buildPtySpawnEnv', () => {
+  it('does not inherit or accept another launch identity from either env source', () => {
+    vi.stubEnv('PARALLEL_CODE_LAUNCH_ID', 'parent-launch');
+    vi.stubEnv('PARALLEL_CODE_AGENT_ID', 'parent-agent');
+    vi.stubEnv('PARALLEL_CODE_HOOK_ENDPOINT', '/parent/endpoint');
+    const env = buildPtySpawnEnv(
+      { PARALLEL_CODE_LAUNCH_ID: 'renderer-launch' },
+      { PARALLEL_CODE_LAUNCH_ID: 'file-launch' },
+    );
+    expect(env.PARALLEL_CODE_LAUNCH_ID).toBeUndefined();
+    expect(env.PARALLEL_CODE_AGENT_ID).toBeUndefined();
+    expect(env.PARALLEL_CODE_HOOK_ENDPOINT).toBeUndefined();
+  });
+
   it('applies safe renderer overrides and clears nested agent markers', () => {
     vi.stubEnv('CLAUDECODE', '1');
     vi.stubEnv('CLAUDE_CODE_SESSION', 'session');
@@ -811,6 +832,113 @@ describe('spawnAgent pending setup', () => {
 
     await expect(startup).rejects.toThrow('Agent startup cancelled');
     expect(mockPtySpawn).not.toHaveBeenCalled();
+  });
+});
+
+describe('PTY hook launch ownership', () => {
+  it('registers before spawn hooks can arrive and retires on spawn failure', async () => {
+    const agentId = 'agent-hook-failed-spawn';
+    const taskId = 'hook-task';
+    setAgentHookRuntime({
+      claudeSettingsPath: '/hook-settings.json',
+      buildPtyEnv: (id, task, launchId) => ({
+        PARALLEL_CODE_AGENT_ID: id,
+        PARALLEL_CODE_TASK_ID: task,
+        PARALLEL_CODE_LAUNCH_ID: launchId,
+      }),
+    });
+    mockPtySpawn.mockImplementationOnce((_command, _args, options) => {
+      const env = (options as unknown as { env: Record<string, string> }).env;
+      expect(isCurrentAgentLaunch(agentId, taskId, env.PARALLEL_CODE_LAUNCH_ID)).toBe(true);
+      observeAgentHook({
+        agentId,
+        taskId,
+        launchId: env.PARALLEL_CODE_LAUNCH_ID,
+        state: 'done',
+        event: 'SessionStart',
+        at: 100,
+      });
+      expect(getAgentActivityEvidence(agentId)?.activity).toBe('ready');
+      throw new Error('spawn failed');
+    });
+    await expect(
+      spawnAgent(
+        createMockNotify(),
+        buildSpawnArgs({ agentId, taskId, command: 'claude', args: [], dockerMode: false }),
+      ),
+    ).rejects.toThrow('spawn failed');
+    expect(getAgentActivityEvidence(agentId)).toBeUndefined();
+  });
+
+  it('preserves launch evidence on reattach and rejects delayed hooks/exits after replacement', async () => {
+    const agentId = 'agent-hook-restart';
+    const taskId = 'hook-task';
+    const args = buildSpawnArgs({
+      agentId,
+      taskId,
+      command: 'claude',
+      args: [],
+      dockerMode: false,
+    });
+    await spawnAgent(createMockNotify(), args);
+    const first = getAgentActivitySnapshot().observations.find((item) => item.agentId === agentId);
+    if (!first) throw new Error('Missing first launch');
+    observeAgentHook({
+      agentId,
+      taskId,
+      launchId: first.launchId,
+      state: 'done',
+      event: 'Stop',
+      at: 100,
+    });
+    const before = getAgentActivitySnapshot();
+    const oldProc = mockPtySpawn.mock.results[0].value as ReturnType<typeof mockPtySpawn>;
+    await spawnAgent(createMockNotify(), { ...args, attachExisting: true });
+    expect(getAgentActivitySnapshot()).toEqual(before);
+    oldProc.kill.mockImplementationOnce(() => {});
+    await spawnAgent(createMockNotify(), { ...args, attachExisting: false });
+    const replacement = getAgentActivityEvidence(agentId);
+    expect(replacement?.launchId).not.toBe(first.launchId);
+    oldProc.emitExit({ exitCode: 0, signal: undefined });
+    expect(getAgentActivityEvidence(agentId)).toEqual(replacement);
+    expect(
+      observeAgentHook({
+        agentId,
+        taskId,
+        launchId: first.launchId,
+        state: 'done',
+        event: 'Stop',
+        at: 200,
+      }),
+    ).toBeUndefined();
+    killAgent(agentId);
+    expect(getAgentActivityEvidence(agentId)).toBeUndefined();
+  });
+
+  it('invalidates finished evidence after submitted input and leaves a draft alone', async () => {
+    const agentId = 'agent-hook-prompt';
+    const taskId = 'hook-task';
+    await spawnAgent(
+      createMockNotify(),
+      buildSpawnArgs({ agentId, taskId, command: 'claude', args: [], dockerMode: false }),
+    );
+    const current = getAgentActivityEvidence(agentId);
+    if (!current?.launchId) throw new Error('Missing launch');
+    observeAgentHook({
+      agentId,
+      taskId,
+      launchId: current.launchId,
+      state: 'done',
+      event: 'Stop',
+      at: 100,
+    });
+    writeToAgent(agentId, 'new prompt');
+    expect(getAgentActivityEvidence(agentId)?.activity).toBe('turn_finished');
+    writeToAgent(agentId, '\r');
+    expect(getAgentActivityEvidence(agentId)).toMatchObject({
+      activity: 'unknown',
+      event: 'PromptSubmitted',
+    });
   });
 });
 

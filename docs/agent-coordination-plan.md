@@ -1,19 +1,18 @@
 # Agent coordination: actions, status evidence, and result handoffs
 
-Status: Step A implemented and independently reviewed; all implementation-review findings resolved. Steps B–E remain planned as separate changes. Prepared 2026-09-26.
+Status: Steps A and B implemented. Step A independently reviewed with all findings resolved; Step B locally reviewed and verified as recorded below. Steps C–E remain planned as separate changes. Updated 2026-09-26.
 
-Step A extends the sidebar tray with independent questions, reviews, and coordination failures; shares child attention summaries; hydrates delegation state without panel mounts; and opens child reviews without resuming collapsed agents. Already-merged results retain an explicit review acknowledgment. Full unit and client suites pass. Native Electron smoke testing has not been performed. The later status-evidence, completion-report, captured-review, and request-changes work is intentionally separate.
+Step A extends the sidebar tray with independent questions, reviews, and coordination failures; shares child attention summaries; hydrates delegation state without panel mounts; and opens child reviews without resuming collapsed agents. Already-merged results retain an explicit review acknowledgment. Step B adds launch-bound hook observations shared by MCP and the renderer, ordered snapshot hydration, and activity provenance labels. Native Electron smoke testing has not been performed. Completion reports, captured reviews, and request changes remain separate work.
 
 ## Remaining work
 
 Implement and validate each step separately; the scope and acceptance gates below are the handoff for future changes.
 
-1. **B — Explainable status:** bind hook evidence to the actual process launch, share accepted observations with MCP and the UI, and distinguish session readiness from turn completion.
-2. **C — Completion handoffs:** add optional bounded reports to `signal_done`, restore them through existing persistence, and add schemas/structured results for the five selected MCP tools.
-3. **D — Captured reviews:** after C, pin the displayed diff/files to Git objects, label report and verification provenance, and reject approval of superseded assignments through one shared review revision.
-4. **E — Request changes:** after B and D, submit feedback once to a verified, ready primary process with draft protection, revision invalidation, explicit outcomes, and no automatic retry.
+1. **C — Completion handoffs:** add optional bounded reports to `signal_done`, restore them through existing persistence, and add schemas/structured results for the five selected MCP tools.
+2. **D — Captured reviews:** after C, pin the displayed diff/files to Git objects, label report and verification provenance, and reject approval of superseded assignments through one shared review revision.
+3. **E — Request changes:** after B and D, submit feedback once to a verified, ready primary process with draft protection, revision invalidation, explicit outcomes, and no automatic retry.
 
-B and C can be delivered independently. D depends on C; E depends on both B and D. Start the next milestone with B. No later step is included in the Step A implementation or its test results.
+B and C can be delivered independently. D depends on C; E depends on both B and D. Start the next milestone with C. No later step is included in the completed milestones or their test results.
 
 ## Decision and scope
 
@@ -202,6 +201,10 @@ Relevant suites: `sidebar-attention.test.ts`, `sidebar-order.test.ts`, `agentHoo
 For implementation, run focused suites, then `npm run check`, `npm run check:static` for changed shared exports/dependencies, and the relevant unit/client suites. Run the real-PTY coordinator test for hook/rework delivery changes. Smoke-test native desktop with two children, a question plus review, failed delivery, source change during review, a blocked then explicitly resubmitted Request changes operation, and a same-ID restart. Report unavailable native/PTY verification. No paid real-agent suite is required by default. The hook snapshot IPC addition requires manifest/preload updates and the allowlist test.
 
 Step A has passed `npm run check`, `npm run check:static`, and the full unit/client suites (4,948 tests passed; 33 opt-in or otherwise skipped tests). The full suites were rerun after the implementation-review correction. These results cover the first milestone only. Native Electron smoke testing remains unperformed; the later hook/rework steps still require their real-PTY and native checks.
+
+Step B has passed `npm run check`, `npm run check:static`, and the full unit/client suites (4,995 tests passed; 33 opt-in or otherwise skipped tests). The real-PTY coordinator suite also passed all 9 tests. Full tests required execution outside the sandbox because local socket binding and some Git subprocesses were blocked with `EPERM`. Native Electron smoke testing remains unperformed; no paid real-agent suite was run.
+
+Step B preserves hook observations across reattachment, rejects late events from replaced/retired launches, invalidates finished activity on prompt submission, and shares matching-tool wait reduction and source timestamps. Renderer snapshot ordering covers newer subscribed events, retired launches, and missed retirements while unsubscribed. Local interrupt/approval inference remains renderer-owned and labeled. Ongoing hook evidence expires from UI activity after 30 minutes and falls back to labeled terminal/process inference; MCP retains the cached hook observation with `freshness: stale`. Session readiness, input readiness, turn completion, and failure are distinct labels, independent of assignment completion. Static dot tooltips use absolute observation times; the existing clock-driven status line uses relative ages.
 
 ## External references behind the selected patterns
 

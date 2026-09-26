@@ -45,7 +45,8 @@ import {
   onPtyEvent,
 } from '../ipc/pty.js';
 import { onAgentHookEvent } from '../agent-hooks/events.js';
-import type { AgentHookEventPayload } from '../agent-hooks/status.js';
+import { getAgentActivityEvidence } from '../agent-hooks/observations.js';
+import type { ActivityEvidence, AgentHookEventPayload } from '../agent-hooks/status.js';
 import {
   clampCoordinatorConcurrentTasks,
   DEFAULT_COORDINATOR_CONCURRENT_TASKS,
@@ -323,11 +324,14 @@ export class Coordinator {
     // Re-subscribe our output callback when the renderer reattaches to, or explicitly
     // replaces, a managed agent. Without this, our outputCb is lost and we can never
     // detect idle for that sub-task.
-    onPtyEvent('spawn', (agentId) => {
+    onPtyEvent('spawn', (agentId, data) => {
       const outputCb = this.subscribers.get(agentId);
       if (!outputCb) return; // not a coordinated agent, or initial spawn (not yet subscribed)
-      this.hookLiveAgentIds.delete(agentId); // a replaced PTY is a fresh hook session
-      this.tailBuffers.set(agentId, ''); // replaced PTYs should not inherit old prompt text
+      const reattached = (data as { reattached?: boolean } | undefined)?.reattached === true;
+      if (!reattached) {
+        this.hookLiveAgentIds.delete(agentId);
+        this.tailBuffers.set(agentId, '');
+      }
       for (const task of this.tasks.values()) {
         if (task.agentId === agentId && task.status === 'exited') {
           task.status = 'running';
@@ -1439,12 +1443,28 @@ export class Coordinator {
     }
   }
 
+  private activityEvidence(task: CoordinatedTask): ActivityEvidence {
+    return (
+      getAgentActivityEvidence(task.agentId) ?? {
+        agentId: task.agentId,
+        source: 'process',
+        activity: 'unknown',
+        event:
+          task.status === 'exited' || task.status === 'error'
+            ? 'ProcessUnavailable'
+            : 'NoObservation',
+        freshness: 'unknown',
+      }
+    );
+  }
+
   listTasks(): ApiTaskSummary[] {
     return Array.from(this.tasks.values()).map((t) => ({
       id: t.id,
       name: t.name,
       branchName: t.branchName,
       status: t.status,
+      activityEvidence: this.activityEvidence(t),
       coordinatorTaskId: t.coordinatorTaskId,
       integrationPolicy: t.integrationPolicy,
       signalDoneAt: t.signalDoneAt?.toISOString(),
@@ -1470,6 +1490,7 @@ export class Coordinator {
       coordinatorTaskId: task.coordinatorTaskId,
       integrationPolicy: task.integrationPolicy,
       exitCode: task.exitCode,
+      activityEvidence: this.activityEvidence(task),
       pendingPrompt: task.pendingPrompts?.[0],
       pendingPrompts: task.pendingPrompts ? [...task.pendingPrompts] : undefined,
       pendingPromptCount: task.pendingPrompts?.length,

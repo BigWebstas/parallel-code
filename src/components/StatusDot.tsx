@@ -1,4 +1,8 @@
-import type { TaskAttentionState, TaskDotStatus } from '../store/taskStatus';
+import {
+  getTaskActivityTooltip,
+  type TaskAttentionState,
+  type TaskDotStatus,
+} from '../store/taskStatus';
 import { theme } from '../lib/theme';
 
 const SIZES = { sm: 6, md: 8 } as const;
@@ -72,6 +76,7 @@ export function StatusDot(props: {
   status: TaskDotStatus;
   size?: 'sm' | 'md';
   attention?: TaskAttentionState;
+  taskId?: string;
 }) {
   const size = () => props.size ?? 'sm';
   const glyph = () => getStatusGlyph(props.status, props.attention);
@@ -79,7 +84,12 @@ export function StatusDot(props: {
   return (
     <span
       class="status-glyph"
-      title={getDotTooltip(props.status, props.attention)}
+      title={[
+        getDotTooltip(props.status, props.attention),
+        props.taskId ? getTaskActivityTooltip(props.taskId) : undefined,
+      ]
+        .filter(Boolean)
+        .join('\n')}
       style={{
         // Lane size travels as a variable so a host row can restyle the box —
         // the sidebar shrinks it to one text line to keep it off wrapped names.

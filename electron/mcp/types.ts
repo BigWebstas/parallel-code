@@ -1,4 +1,5 @@
 import type { VerificationRun } from '../ipc/shared-types.js';
+import type { ActivityEvidence } from '../agent-hooks/status.js';
 
 // Shared types for the MCP coordinating-agent system.
 
@@ -154,6 +155,8 @@ export interface LandSelfInput {
 // --- API request/response types ---
 
 export interface ApiTaskSummary {
+  /** Diagnostic evidence for the primary agent, independent of assignment completion. */
+  activityEvidence?: ActivityEvidence;
   integrationPolicy?: IntegrationPolicy;
   id: string;
   name: string;

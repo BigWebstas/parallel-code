@@ -14,7 +14,12 @@ import {
 } from '../lib/branch-divergence';
 import { warn as logWarn, info as logInfo, errMessage } from '../lib/log';
 import { adoptTaskBranch } from './task-branch';
-import { clearAgentHookStatus, getAgentHookStatus } from './agentHookStatus';
+import {
+  clearAgentHookStatus,
+  formatAgentHookTooltip,
+  getAgentActivitySubject,
+  getAgentHookStatus,
+} from './agentHookStatus';
 import { getPrChecks } from './pr-checks-state';
 import {
   chunkContainsAgentPrompt,
@@ -70,6 +75,7 @@ interface AgentTrackingState {
   lastAutoTrustCheckAt?: number;
   autoTrustAcceptedAt?: number;
   lastDataAt?: number;
+  lastOutputAt?: number;
   lastIdleResetAt?: number;
   idleTimer?: ReturnType<typeof setTimeout>;
   idleConfirmPending?: boolean;
@@ -690,8 +696,9 @@ export function markAgentSpawned(agentId: string): void {
   state.lastAnalysisAt = undefined;
   cancelPendingAnalysis(state);
   state.lastDataAt = Date.now();
-  // A fresh process has no turn yet; a leftover hook state would lie about it.
-  clearAgentHookStatus(agentId);
+  state.lastOutputAt = undefined;
+  // This also runs on reattachment. Main launch lifecycle observations alone
+  // invalidate hook evidence for an actual replacement process.
   addToActive(agentId);
   resetIdleTimer(agentId);
 }
@@ -847,6 +854,7 @@ export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: stri
   // Focus, cursor and mode updates are terminal housekeeping, not agent work.
   // Keep tracking their raw bytes above, but do not change or extend activity.
   if (!normalizeForComparison(text)) return;
+  state.lastOutputAt = now;
 
   const latestOutput = stripAnsi(text.slice(Math.max(0, findLastFrameStart(text))));
   const frame = stripAnsi(combined.slice(Math.max(0, findLastFrameStart(combined))));
@@ -1072,6 +1080,35 @@ export function getTaskAttentionState(taskId: string): TaskAttentionState {
   const active = activeAgents(); // reactive read
   if (hasShellActivity(taskId, (id) => active.has(id))) return 'shell_busy';
   return 'idle';
+}
+
+/** Attention is an aggregate; name the pane supplying its activity evidence. */
+export function getTaskActivityTooltip(taskId: string): string {
+  const task = store.tasks[taskId];
+  if (!task) return 'Activity evidence unavailable';
+  const ids = task.agentIds;
+  const active = activeAgents();
+  const agentId =
+    ids.find(isAgentBlockedOnInput) ??
+    ids.find((id) => isAgentWorking(id, active)) ??
+    ids.find((id) => getAgentHookStatus(id)) ??
+    ids[0];
+  if (!agentId) return 'Activity evidence unavailable';
+  const hook = getAgentHookStatus(agentId);
+  // A terminal question after a finished hook turn belongs to terminal evidence.
+  if (hook && !(hook.state === 'done' && isAgentBlockedOnInput(agentId))) {
+    return formatAgentHookTooltip({ ...hook, agentId });
+  }
+  const outputAt = agentStates.get(agentId)?.lastOutputAt;
+  if (outputAt !== undefined) {
+    const activity = isAgentBlockedOnInput(agentId)
+      ? 'Waiting for input'
+      : isAgentWorking(agentId, active)
+        ? 'Recent terminal activity'
+        : 'No ongoing activity detected';
+    return `${getAgentActivitySubject(agentId)} · ${activity} · Activity inferred from terminal output · observed ${new Date(outputAt).toLocaleString()}`;
+  }
+  return `${getAgentActivitySubject(agentId)} · Activity unknown · process state (${store.agents[agentId]?.status ?? 'unknown'}) · observation time unknown`;
 }
 
 export function taskNeedsAttention(taskId: string): boolean {
