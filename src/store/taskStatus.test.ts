@@ -132,6 +132,27 @@ const CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG = [
   ' Enter to confirm · Esc to cancel',
 ].join('\r\n');
 
+// The same dialog redrawn after the user presses an arrow key.
+const CLAUDE_DECLINE_DIALOG_ARROW_REDRAW = CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG.replace(
+  ' ❯ No, exit\r\n   Yes, I trust this folder',
+  '   No, exit\r\n ❯ Yes, I trust this folder',
+);
+
+const CLAUDE_TRUST_DIALOG = [
+  ' Do you trust the files in this folder?',
+  '',
+  ' ❯ 1. Yes, proceed',
+  '   2. No, exit',
+  '',
+  ' Enter to confirm · Esc to cancel',
+].join('\r\n');
+
+function enterWasSent(): boolean {
+  return vi
+    .mocked(invoke)
+    .mock.calls.some(([, args]) => (args as { data?: unknown } | undefined)?.data === '\r');
+}
+
 function setMockTask(taskId: string, overrides: Record<string, unknown> = {}): void {
   mockTasks[taskId] = {
     id: taskId,
@@ -530,12 +551,18 @@ describe('looksLikeQuestion', () => {
 describe('isTrustQuestionAutoHandled', () => {
   it('returns false when autoTrustFolders is disabled', () => {
     mockAutoTrustFolders = false;
-    expect(isTrustQuestionAutoHandled('Do you trust this folder?')).toBe(false);
+    expect(isTrustQuestionAutoHandled('Do you trust this folder?\n❯ Yes')).toBe(false);
   });
 
   it('returns true for trust dialog when autoTrustFolders is enabled', () => {
     mockAutoTrustFolders = true;
-    expect(isTrustQuestionAutoHandled('Do you trust this folder?')).toBe(true);
+    expect(isTrustQuestionAutoHandled('Do you trust this folder?\n❯ Yes')).toBe(true);
+  });
+
+  it('returns false for a trust dialog whose options are not rendered yet', () => {
+    mockAutoTrustFolders = true;
+    expect(isTrustQuestionAutoHandled('Do you trust this folder?')).toBe(false);
+    expect(isTrustQuestionAutoHandled('Do you trust this folder?\n❯ ')).toBe(false);
   });
 
   it('returns true for TUI-garbled trust dialog when autoTrustFolders is enabled', () => {
@@ -566,7 +593,7 @@ describe('isTrustQuestionAutoHandled', () => {
   it('does not false-positive on exclusion keywords in garbled text', () => {
     // "forkeyboardshortcuts" contains "key" but \b prevents matching
     mockAutoTrustFolders = true;
-    const garbled = '?forkeyboardshortcuts\nDoyoutrustthisfolder?';
+    const garbled = '?forkeyboardshortcuts\nDoyoutrustthisfolder?\n❯1.Yes';
     expect(isTrustQuestionAutoHandled(garbled)).toBe(true);
   });
 
@@ -591,7 +618,9 @@ describe('isTrustQuestionAutoHandled', () => {
     setMockAgent('agent-1', { status: 'running' });
     markAgentOutput('agent-1', new TextEncoder().encode('startup'), 'task-1');
 
-    expect(isAgentTrustQuestionAutoHandled('agent-1', 'Do you trust this folder?')).toBe(true);
+    expect(isAgentTrustQuestionAutoHandled('agent-1', 'Do you trust this folder?\n❯ Yes')).toBe(
+      true,
+    );
   });
 
   it('returns false for non-forced agent trust dialogs when global auto-trust is off', () => {
@@ -603,7 +632,9 @@ describe('isTrustQuestionAutoHandled', () => {
     setMockAgent('agent-1', { status: 'running' });
     markAgentOutput('agent-1', new TextEncoder().encode('startup'), 'task-1');
 
-    expect(isAgentTrustQuestionAutoHandled('agent-1', 'Do you trust this folder?')).toBe(false);
+    expect(isAgentTrustQuestionAutoHandled('agent-1', 'Do you trust this folder?\n❯ Yes')).toBe(
+      false,
+    );
   });
 });
 
@@ -620,7 +651,7 @@ describe('isAutoTrustSettling', () => {
     markAgentSpawned('agent-1');
 
     // Feed trust dialog output to trigger tryAutoTrust via markAgentOutput
-    const trustDialog = new TextEncoder().encode('Do you trust this folder?');
+    const trustDialog = new TextEncoder().encode(CLAUDE_TRUST_DIALOG);
     markAgentOutput('agent-1', trustDialog, 'task-1');
 
     // The 50ms timer is now pending — settling should be true
@@ -631,7 +662,7 @@ describe('isAutoTrustSettling', () => {
     mockAutoTrustFolders = true;
     markAgentSpawned('agent-1');
 
-    const trustDialog = new TextEncoder().encode('Do you trust this folder?');
+    const trustDialog = new TextEncoder().encode(CLAUDE_TRUST_DIALOG);
     markAgentOutput('agent-1', trustDialog, 'task-1');
 
     // Advance past the 50ms auto-trust timer
@@ -647,7 +678,7 @@ describe('isAutoTrustSettling', () => {
     mockAutoTrustFolders = true;
     markAgentSpawned('agent-1');
 
-    const trustDialog = new TextEncoder().encode('Do you trust this folder?');
+    const trustDialog = new TextEncoder().encode(CLAUDE_TRUST_DIALOG);
     markAgentOutput('agent-1', trustDialog, 'task-1');
 
     // Advance past auto-trust timer (50ms) + past settle (1000ms) but
@@ -678,11 +709,120 @@ describe('isAutoTrustSettling', () => {
     expect(isAgentAskingQuestion('agent-1')).toBe(true);
   });
 
+  describe('trust dialog focus', () => {
+    const encode = (text: string) => new TextEncoder().encode(text);
+    const screenClear = '\x1b[2J\x1b[H';
+
+    beforeEach(() => {
+      mockAutoTrustFolders = true;
+      mockActiveTaskId = 'task-1';
+      setMockTask('task-1', { agentIds: ['agent-1'] });
+      setMockAgent('agent-1');
+      markAgentSpawned('agent-1');
+    });
+
+    it('presses Enter when the dialog focuses "Yes"', () => {
+      markAgentOutput('agent-1', encode(CLAUDE_TRUST_DIALOG), 'task-1');
+      vi.advanceTimersByTime(60);
+
+      expect(enterWasSent()).toBe(true);
+    });
+
+    it('reads the focused option from a ● radio marker, as Gemini CLI draws it', () => {
+      const gemini = (marks: [string, string, string]) =>
+        [
+          ' Do you trust this folder?',
+          '',
+          ` ${marks[0]} 1. Trust folder (repo)`,
+          ` ${marks[1]} 2. Trust parent folder (www)`,
+          ` ${marks[2]} 3. Don't trust (esc)`,
+        ].join('\r\n');
+
+      markAgentOutput('agent-1', encode(gemini(['●', ' ', ' '])), 'task-1');
+      vi.advanceTimersByTime(60);
+      expect(enterWasSent()).toBe(true);
+    });
+
+    it('treats a ● marker on "Don\'t trust" as a declined dialog', () => {
+      markAgentOutput(
+        'agent-1',
+        encode(" Do you trust this folder?\r\n   1. Trust folder\r\n ● 2. Don't trust (esc)"),
+        'task-1',
+      );
+      vi.advanceTimersByTime(60);
+      expect(enterWasSent()).toBe(false);
+    });
+
+    it('does not press Enter after an arrow key moves focus off a blocked "No, exit"', () => {
+      markAgentOutput('agent-1', encode(CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG), 'task-1');
+      vi.advanceTimersByTime(500);
+      markAgentOutput(
+        'agent-1',
+        encode(screenClear + CLAUDE_DECLINE_DIALOG_ARROW_REDRAW),
+        'task-1',
+      );
+      vi.advanceTimersByTime(2_100);
+
+      expect(enterWasSent()).toBe(false);
+      expect(isAgentAskingQuestion('agent-1')).toBe(true);
+      expect(isAgentTrustQuestionAutoHandled('agent-1', CLAUDE_DECLINE_DIALOG_ARROW_REDRAW)).toBe(
+        false,
+      );
+    });
+
+    it('stays blocked after the blocked frame scrolls out of the tail', () => {
+      markAgentOutput('agent-1', encode(CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG), 'task-1');
+      vi.advanceTimersByTime(500);
+      // Redraws alone overflow the 16 KB tail while the dialog stays on screen.
+      const redraws = (screenClear + CLAUDE_DECLINE_DIALOG_ARROW_REDRAW).repeat(60);
+      markAgentOutput('agent-1', encode(redraws), 'task-1');
+      vi.advanceTimersByTime(2_100);
+
+      expect(enterWasSent()).toBe(false);
+    });
+
+    it('accepts a later dialog once the blocked one has left the tail', () => {
+      markAgentOutput('agent-1', encode(CLAUDE_DECLINE_FOCUSED_TRUST_DIALOG), 'task-1');
+      vi.advanceTimersByTime(500);
+      markAgentOutput('agent-1', encode('Working on it...\r\n'.repeat(1_000)), 'task-1');
+      vi.advanceTimersByTime(500);
+      markAgentOutput('agent-1', encode(screenClear + CLAUDE_TRUST_DIALOG), 'task-1');
+      vi.advanceTimersByTime(60);
+
+      expect(enterWasSent()).toBe(true);
+    });
+
+    it('waits for the option rows of a partially rendered dialog', () => {
+      markAgentOutput('agent-1', encode(' Do you trust the files in this folder?\r\n'), 'task-1');
+      vi.advanceTimersByTime(100);
+      expect(enterWasSent()).toBe(false);
+
+      markAgentOutput('agent-1', encode(' ❯ 1. Yes, proceed\r\n   2. No, exit\r\n'), 'task-1');
+      vi.advanceTimersByTime(300);
+      expect(enterWasSent()).toBe(true);
+    });
+
+    it('does not press Enter when focus moves to "No, exit" before the delayed accept', () => {
+      markAgentOutput('agent-1', encode(CLAUDE_TRUST_DIALOG), 'task-1');
+      markAgentOutput(
+        'agent-1',
+        encode(
+          screenClear +
+            CLAUDE_TRUST_DIALOG.replace('❯ 1. Yes', '  1. Yes').replace('  2. No', '❯ 2. No'),
+        ),
+        'task-1',
+      );
+      vi.advanceTimersByTime(2_100);
+
+      expect(enterWasSent()).toBe(false);
+    });
+  });
+
   it('returns false after settling period expires', () => {
     mockAutoTrustFolders = true;
     markAgentSpawned('agent-1');
 
-    const trustDialog = new TextEncoder().encode('Do you trust this folder?');
+    const trustDialog = new TextEncoder().encode(CLAUDE_TRUST_DIALOG);
     markAgentOutput('agent-1', trustDialog, 'task-1');
 
     // 50ms timer + 1000ms cooldown + 1000ms settle = 2050ms total
@@ -1397,11 +1537,7 @@ describe('coordinator auto-trust', () => {
     });
     setMockAgent('agent-1', { status: 'running' });
 
-    markAgentOutput(
-      'agent-1',
-      new TextEncoder().encode('Do you trust the files in this folder?'),
-      'task-1',
-    );
+    markAgentOutput('agent-1', new TextEncoder().encode(CLAUDE_TRUST_DIALOG), 'task-1');
 
     expect(isAutoTrustSettling('agent-1')).toBe(true);
     expect(getTaskAttentionState('task-1')).not.toBe('needs_input');
@@ -1417,11 +1553,7 @@ describe('coordinator auto-trust', () => {
     });
     setMockAgent('agent-1', { status: 'running' });
 
-    markAgentOutput(
-      'agent-1',
-      new TextEncoder().encode('Do you trust the files in this folder?'),
-      'task-1',
-    );
+    markAgentOutput('agent-1', new TextEncoder().encode(CLAUDE_TRUST_DIALOG), 'task-1');
     vi.advanceTimersByTime(50);
 
     expect(setStore).toHaveBeenCalledWith('tasks', 'task-1', 'userActivityHoldUntil', undefined);
@@ -1443,11 +1575,7 @@ describe('coordinator auto-trust', () => {
     });
     setMockAgent('agent-1', { status: 'running' });
 
-    markAgentOutput(
-      'agent-1',
-      new TextEncoder().encode('Do you trust the files in this folder?'),
-      'task-1',
-    );
+    markAgentOutput('agent-1', new TextEncoder().encode(CLAUDE_TRUST_DIALOG), 'task-1');
     vi.advanceTimersByTime(50);
 
     expect(setStore).toHaveBeenCalledWith('tasks', 'task-1', 'userActivityHoldUntil', undefined);
@@ -1469,13 +1597,10 @@ describe('coordinator auto-trust', () => {
     });
     setMockAgent('agent-1', { status: 'running' });
 
-    markAgentOutput(
-      'agent-1',
-      new TextEncoder().encode('Do you trust the files in this folder?'),
-      'task-1',
-    );
+    markAgentOutput('agent-1', new TextEncoder().encode(CLAUDE_TRUST_DIALOG), 'task-1');
     vi.advanceTimersByTime(50);
 
+    expect(enterWasSent()).toBe(true);
     expect(setStore).not.toHaveBeenCalledWith('tasks', 'task-1', 'controlledBy', 'coordinator');
     expect(invoke).not.toHaveBeenCalledWith('mcp_control_changed', {
       taskId: 'task-1',
@@ -1494,13 +1619,10 @@ describe('coordinator auto-trust', () => {
     });
     setMockAgent('agent-1', { status: 'running' });
 
-    markAgentOutput(
-      'agent-1',
-      new TextEncoder().encode('Do you trust the files in this folder?'),
-      'task-1',
-    );
+    markAgentOutput('agent-1', new TextEncoder().encode(CLAUDE_TRUST_DIALOG), 'task-1');
     vi.advanceTimersByTime(50);
 
+    expect(enterWasSent()).toBe(true);
     expect(setStore).not.toHaveBeenCalledWith('tasks', 'task-1', 'controlledBy', 'coordinator');
     expect(invoke).not.toHaveBeenCalledWith('mcp_control_changed', {
       taskId: 'task-1',
@@ -1625,5 +1747,20 @@ describe('hook-reported agent status', () => {
     expect(getTaskActivityTooltip('task-1')).toContain('observed');
     markAgentSpawned('agent-1');
     expect(getTaskActivityTooltip('task-1')).toContain('observation time unknown');
+  });
+
+  it('refreshes the observed output time at most once per second', () => {
+    const observedAt = (iso: string) => `observed ${new Date(iso).toLocaleString()}`;
+    markAgentSpawned('agent-1');
+    vi.setSystemTime(new Date('2026-05-10T10:00:00.500Z'));
+    markAgentOutput('agent-1', new TextEncoder().encode('Building 1'), 'task-1');
+
+    vi.setSystemTime(new Date('2026-05-10T10:00:01.200Z'));
+    markAgentOutput('agent-1', new TextEncoder().encode('Building 2'), 'task-1');
+    expect(getTaskActivityTooltip('task-1')).toContain(observedAt('2026-05-10T10:00:00Z'));
+
+    vi.setSystemTime(new Date('2026-05-10T10:00:01.600Z'));
+    markAgentOutput('agent-1', new TextEncoder().encode('Building 3'), 'task-1');
+    expect(getTaskActivityTooltip('task-1')).toContain(observedAt('2026-05-10T10:00:01Z'));
   });
 });

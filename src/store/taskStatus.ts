@@ -54,17 +54,37 @@ const TRUST_EXCLUSION_KEYWORDS =
 // "noexit" covers TUI-garbled text where the space between words is lost.
 const DECLINE_OPTION = /^(?:\d+\.\s*)?(?:no\b|noexit|don'?t|exit|quit|cancel|deny)/i;
 
-function isDeclineOptionFocused(tail: string): boolean {
+/** `wait` means no option is focused yet (partial frame), so Enter's target is unknown. */
+type TrustDialogVerdict = 'accept' | 'wait' | 'decline';
+
+function trustDialogVerdict(tail: string): TrustDialogVerdict {
   const visible = stripAnsi(tail);
-  const cursor = Math.max(visible.lastIndexOf('❯'), visible.lastIndexOf('›'));
-  if (cursor < 0) return false;
-  const focused = visible.slice(cursor + 1).split(/\r?\n/, 1)[0] ?? '';
-  return DECLINE_OPTION.test(focused.trim());
+  if (TRUST_EXCLUSION_KEYWORDS.test(visible)) return 'decline';
+  // Gemini CLI marks the selected radio option with ●. Copilot also prints ● as
+  // an output bullet, so only a ● before a numbered option counts as a cursor.
+  const focused = visible
+    .split(/[❯›]|●(?=\s*\d+\.)/)
+    .slice(1)
+    .map((line) => (line.split(/\r?\n/, 1)[0] ?? '').trim());
+  // Check older frames too: a redraw focusing "Yes" can land in the same
+  // analysis window as the frame that focused "No, exit".
+  if (focused.some((text) => DECLINE_OPTION.test(text))) return 'decline';
+  return focused.at(-1) ? 'accept' : 'wait';
 }
 
 /** True when a detected trust dialog must not be accepted automatically. */
 function blocksAutoTrust(tail: string): boolean {
-  return TRUST_EXCLUSION_KEYWORDS.test(stripAnsi(tail)) || isDeclineOptionFocused(tail);
+  return trustDialogVerdict(tail) !== 'accept';
+}
+
+/** Agent-aware {@link blocksAutoTrust} that latches a declined dialog until it
+ *  leaves the tail, so a redraw after the user moves the cursor to "Yes" is
+ *  never accepted on their behalf. */
+function blocksAutoTrustFor(state: AgentTrackingState, tail: string): boolean {
+  if (state.autoTrustBlocked) return true;
+  const verdict = trustDialogVerdict(tail);
+  if (verdict === 'decline') state.autoTrustBlocked = true;
+  return verdict !== 'accept';
 }
 
 // --- Consolidated per-agent tracking state ---
@@ -75,6 +95,8 @@ interface AgentTrackingState {
   autoTrustCooldown?: ReturnType<typeof setTimeout>;
   lastAutoTrustCheckAt?: number;
   autoTrustAcceptedAt?: number;
+  /** Set once a trust dialog was blocked; cleared when no dialog is in the tail. */
+  autoTrustBlocked?: boolean;
   lastDataAt?: number;
   lastIdleResetAt?: number;
   idleTimer?: ReturnType<typeof setTimeout>;
@@ -141,6 +163,7 @@ function clearAutoTrustState(agentId: string): void {
   if (!state) return;
   state.lastAutoTrustCheckAt = undefined;
   state.autoTrustAcceptedAt = undefined;
+  state.autoTrustBlocked = undefined;
   if (state.autoTrustTimer !== undefined) {
     clearTimeout(state.autoTrustTimer);
     state.autoTrustTimer = undefined;
@@ -477,7 +500,11 @@ export function isTrustQuestionAutoHandled(tail: string): boolean {
 /** Agent-aware variant for coordinator sub-tasks where trust handling can be
  *  forced by the task launch policy even when global auto-trust is disabled. */
 export function isAgentTrustQuestionAutoHandled(agentId: string, tail: string): boolean {
-  return (store.autoTrustFolders || isAutoTrustForced(agentId)) && isAutoHandledTrustQuestion(tail);
+  return (
+    (store.autoTrustFolders || isAutoTrustForced(agentId)) &&
+    !agentStates.get(agentId)?.autoTrustBlocked &&
+    isAutoHandledTrustQuestion(tail)
+  );
 }
 
 /** True when recent output contains a trust or permission dialog. */
@@ -727,14 +754,18 @@ function tryAutoTrust(agentId: string, rawTail: string): boolean {
   if (!looksLikeTrustDialog(rawTail)) {
     return false;
   }
-  if (blocksAutoTrust(rawTail)) {
+  const state = getAgentState(agentId);
+  if (blocksAutoTrustFor(state, rawTail)) {
     return false;
   }
 
-  const state = getAgentState(agentId);
   // Short delay to let the TUI finish rendering before sending Enter.
   state.autoTrustTimer = setTimeout(() => {
     state.autoTrustTimer = undefined;
+    // The dialog may have been redrawn during the delay (e.g. focus moved to
+    // "No, exit"); Enter must only confirm what is focused now.
+    const tail = state.outputTailBuffer;
+    if (!looksLikeTrustDialog(tail) || blocksAutoTrustFor(state, tail)) return;
     // Clear stale trust-dialog content (including ❯ selection cursor) so
     // chunkContainsAgentPrompt only fires on the agent's real prompt.
     state.outputTailBuffer = '';
@@ -781,6 +812,7 @@ function analyzeAgentOutput(agentId: string): void {
   const state = getAgentState(agentId);
   const rawTail = state.outputTailBuffer;
   let hasQuestion = looksLikeQuestion(rawTail);
+  if (state.autoTrustBlocked && !looksLikeTrustDialog(rawTail)) state.autoTrustBlocked = undefined;
 
   // Suppress question state for trust dialogs when auto-trust is enabled —
   // whether we just scheduled auto-trust or it's already pending/in cooldown.
@@ -790,7 +822,7 @@ function analyzeAgentOutput(agentId: string): void {
   // Also force this for coordinator sub-tasks with skipPermissions — they run
   // autonomously and trust dialogs must never block them regardless of the setting.
   if (hasQuestion && (store.autoTrustFolders || isAutoTrustForced(agentId))) {
-    if (looksLikeTrustDialog(rawTail) && !blocksAutoTrust(rawTail)) {
+    if (looksLikeTrustDialog(rawTail) && !blocksAutoTrustFor(state, rawTail)) {
       // Auto-trust may not have fired yet if this is the first analysis for
       // an active task that just became visible — trigger it now.
       tryAutoTrust(agentId, rawTail);
@@ -856,7 +888,8 @@ export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: stri
   // Focus, cursor and mode updates are terminal housekeeping, not agent work.
   // Keep tracking their raw bytes above, but do not change or extend activity.
   if (!normalizeForComparison(text)) return;
-  setLastOutputAt(agentId, now);
+  // The tooltip shows seconds; writing per chunk re-runs it many times a second.
+  if (now - (lastOutputAt[agentId] ?? 0) >= 1_000) setLastOutputAt(agentId, now);
 
   const latestOutput = stripAnsi(text.slice(Math.max(0, findLastFrameStart(text))));
   const frame = stripAnsi(combined.slice(Math.max(0, findLastFrameStart(combined))));
