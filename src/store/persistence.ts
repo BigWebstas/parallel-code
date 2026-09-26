@@ -805,7 +805,7 @@ export async function loadState(): Promise<void> {
       s.inactiveColumnOpacity =
         typeof rawOpacity === 'number' &&
         Number.isFinite(rawOpacity) &&
-        rawOpacity >= 0.3 &&
+        rawOpacity >= 0.1 &&
         rawOpacity <= 1.0
           ? Math.round(rawOpacity * 100) / 100
           : 0.6;

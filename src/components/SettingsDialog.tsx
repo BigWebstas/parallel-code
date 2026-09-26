@@ -863,7 +863,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               </div>
               <input
                 type="range"
-                min="30"
+                min="10"
                 max="100"
                 step="5"
                 value={store.inactiveColumnOpacity * 100}
