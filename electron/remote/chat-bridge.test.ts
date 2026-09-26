@@ -85,6 +85,67 @@ it('stops observing and drops a pending frame on unsubscribe and dispose', () =>
   expect(chat.listeners.size).toBe(0);
 });
 
+it('follows the new chat when the desktop reconnects under the same agent', () => {
+  const subscriptions = createChatSubscriptions(source, (message) => sent.push(message));
+  subscriptions.subscribe('a1');
+  const dead = chat;
+  chat = fakeChat();
+  chat.state.items.push({ id: '1', kind: 'assistant', text: 'Back again' });
+
+  subscriptions.rebind();
+  expect(dead.listeners.size).toBe(0);
+  expect(sent).toHaveLength(2);
+  expect(sent[1]).toMatchObject({ state: { items: [{ text: 'Back again' }] } });
+
+  chat.publish();
+  vi.advanceTimersByTime(CHAT_FRAME_INTERVAL_MS);
+  expect(sent).toHaveLength(3);
+  subscriptions.rebind();
+  expect(sent).toHaveLength(3);
+});
+
+it('rebinds on a repeated subscribe and resumes once a closed chat starts again', () => {
+  const subscriptions = createChatSubscriptions(source, (message) => sent.push(message));
+  subscriptions.subscribe('a1');
+  chat = fakeChat();
+  subscriptions.subscribe('a1');
+  expect(sent).toHaveLength(2);
+
+  const running = chat;
+  source.find = () => undefined;
+  subscriptions.rebind();
+  expect(running.listeners.size).toBe(0);
+  chat = fakeChat();
+  source.find = (agentId) => (agentId === 'a1' ? (chat as unknown as AgentChat) : undefined);
+  subscriptions.rebind();
+  expect(sent).toHaveLength(3);
+  expect(chat.listeners.size).toBe(1);
+});
+
+it('holds frames while the socket is congested, then sends the latest state', () => {
+  let congested = true;
+  const subscriptions = createChatSubscriptions(
+    source,
+    (message) => sent.push(message),
+    () => congested,
+  );
+  subscriptions.subscribe('a1');
+  expect(sent).toEqual([]);
+  chat.state.items.push({ id: '1', kind: 'assistant', text: 'Hel' });
+  chat.publish();
+  vi.advanceTimersByTime(CHAT_FRAME_INTERVAL_MS * 3);
+  expect(sent).toEqual([]);
+
+  chat.state.items[0].text = 'Hello';
+  congested = false;
+  vi.advanceTimersByTime(CHAT_FRAME_INTERVAL_MS);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]).toMatchObject({ state: { items: [{ text: 'Hello' }] } });
+  vi.advanceTimersByTime(CHAT_FRAME_INTERVAL_MS * 3);
+  expect(sent).toHaveLength(1);
+  subscriptions.dispose();
+});
+
 it('ignores subscriptions to chats that are not running', () => {
   createChatSubscriptions(source, (message) => sent.push(message)).subscribe('gone');
   expect(sent).toEqual([]);

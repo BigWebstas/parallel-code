@@ -821,6 +821,14 @@ describe('subtask token — restricted to sub-task terminal tools', () => {
     expect(res.status).toBe(400);
   });
 
+  it.each(['done', 'land'])(
+    'POST /api/tasks/{id}/%s rejects a malformed task id escape with 400',
+    async (route) => {
+      const res = await subtaskRequest('POST', `/api/tasks/%/${route}`, {}, DONE_TOKENS[taskA.id]);
+      expect(res.status).toBe(400);
+    },
+  );
+
   it('GET /api/tasks returns 403 with subtaskToken', async () => {
     const res = await subtaskRequest('GET', '/api/tasks');
     expect(res.status).toBe(403);

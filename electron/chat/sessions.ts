@@ -122,7 +122,7 @@ export async function startAgentChat(
     } catch (error) {
       chat?.stop();
       release();
-      if (chats.get(opts.agentId)?.chat === chat) chats.delete(opts.agentId);
+      if (chats.get(opts.agentId)?.chat === chat && chats.delete(opts.agentId)) notifyListChanged();
       throw error;
     } finally {
       starts.delete(opts.agentId);
@@ -204,6 +204,9 @@ export async function releaseChat(agentId: string) {
   } finally {
     // A timed-out release has already stopped the app-server. Only a refusal to
     // release at all (a running turn, a pending request) leaves a usable chat.
-    if (chats.get(agentId) === entry && entry.chat.state.status === 'closed') chats.delete(agentId);
+    if (chats.get(agentId) === entry && entry.chat.state.status === 'closed') {
+      chats.delete(agentId);
+      notifyListChanged();
+    }
   }
 }

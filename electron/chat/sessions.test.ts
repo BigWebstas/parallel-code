@@ -180,6 +180,24 @@ it('lists task chats, keeps one that crashed as exited, and reports each change'
   }
 });
 
+it('reports the list without a chat that failed to start or was released', async () => {
+  // What a listener last saw, as a phone would show it.
+  let reported: ReturnType<typeof listTaskChats> | undefined;
+  const stopListening = onAgentChatsChanged(() => (reported = listTaskChats()));
+  try {
+    mocks.start.mockRejectedValueOnce(new Error('Startup failed'));
+    await expect(startAgentChat({ ...opts, taskId: 'task' }, () => {})).rejects.toThrow();
+    expect(reported).toEqual([]);
+
+    await startAgentChat({ ...opts, taskId: 'task' }, () => {});
+    expect(reported).toEqual([{ agentId: 'agent', taskId: 'task', status: 'running' }]);
+    await releaseChat('agent');
+    expect(reported).toEqual([]);
+  } finally {
+    stopListening();
+  }
+});
+
 it('keeps chats without a task off the list', async () => {
   await startAgentChat(opts, () => {});
   expect(listTaskChats()).toEqual([]);

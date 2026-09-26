@@ -1,7 +1,7 @@
 // electron/remote/server.ts
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
-import { existsSync, readFile, readFileSync, rmSync } from 'fs';
+import { existsSync, readFile, readFileSync, rmSync, statSync } from 'fs';
 import { join, resolve, relative, extname, isAbsolute } from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, randomInt, timingSafeEqual, createHash, createHmac } from 'crypto';
@@ -448,6 +448,15 @@ function doneTokenMatches(req: IncomingMessage, expected: string | null | undefi
     Buffer.byteLength(incoming) === Buffer.byteLength(expected) &&
     timingSafeEqual(Buffer.from(incoming), Buffer.from(expected)),
   );
+}
+
+/** Whether a phone UI path can be served; like existsSync, a failed stat means no. */
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function readJsonBody(
@@ -1515,7 +1524,14 @@ export function startRemoteServer(opts: {
         }
 
         if (taskIdMatch) {
-          const taskId = decodeURIComponent(taskIdMatch[1]);
+          // A malformed escape (e.g. "%") throws URIError, which this handler
+          // would not catch; agent tokens reach this route.
+          let taskId: string;
+          try {
+            taskId = decodeURIComponent(taskIdMatch[1]);
+          } catch {
+            return jsonEnd(400, { error: 'invalid task id' });
+          }
           const subpath = taskIdMatch[2] ?? null;
           const taskRoute = COORDINATOR_TASK_ROUTES.find(
             (route) => route.subpath === subpath && route.method === req.method,
@@ -1569,9 +1585,11 @@ export function startRemoteServer(opts: {
       });
     };
 
-    if (!existsSync(fullPath)) {
+    if (!isFile(fullPath)) {
       const indexPath = join(opts.staticDir, 'index.html');
-      if (existsSync(indexPath)) {
+      // Only app routes fall back to the page. A missing asset, such as a hashed
+      // bundle from before an update, must fail: HTML in its place breaks the import.
+      if (!extname(fullPath) && existsSync(indexPath)) {
         serveFile(indexPath, 'text/html', 'no-cache');
         return;
       }
@@ -1622,6 +1640,9 @@ export function startRemoteServer(opts: {
   const pendingSubmissions = new Map<string, ReturnType<typeof setTimeout>>();
   const authTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
   const clientChats = new WeakMap<WebSocket, ReturnType<typeof createChatSubscriptions>>();
+  // A phone on a slow link cannot drain a full conversation every frame interval;
+  // past this backlog, chat frames wait rather than pile up in the send buffer.
+  const CHAT_SOCKET_BACKLOG_BYTES = 1024 * 1024;
 
   function broadcast(msg: ServerMessage): void {
     const json = JSON.stringify(msg);
@@ -1638,7 +1659,10 @@ export function startRemoteServer(opts: {
   });
 
   const unsubChats =
-    opts.chats?.onChange(() => broadcast({ type: 'agents', list: agentList() })) ?? (() => {});
+    opts.chats?.onChange(() => {
+      broadcast({ type: 'agents', list: agentList() });
+      for (const client of wss.clients) clientChats.get(client)?.rebind();
+    }) ?? (() => {});
 
   const unsubListChanged = onPtyEvent('list-changed', () => {
     const list = agentList();
@@ -1664,9 +1688,13 @@ export function startRemoteServer(opts: {
     if (opts.chats)
       clientChats.set(
         ws,
-        createChatSubscriptions(opts.chats, (message) => {
-          if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
-        }),
+        createChatSubscriptions(
+          opts.chats,
+          (message) => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+          },
+          () => ws.bufferedAmount > CHAT_SOCKET_BACKLOG_BYTES,
+        ),
       );
 
     // Support legacy URL-based auth (verifyClient accepted all connections).

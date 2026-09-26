@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import WebSocket from 'ws';
 import http from 'node:http';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -328,10 +328,11 @@ describe('buildRemoteCsp', () => {
 describe('mobile SPA static responses', () => {
   const html = '<!doctype html><title>Phone app</title>';
   const javascript = 'document.body.textContent = "Phone app";';
+  let staticDir = '';
 
   beforeEach(async () => {
     await stop();
-    const staticDir = mkdtempSync(join(tmpdir(), 'pc-remote-static-'));
+    staticDir = mkdtempSync(join(tmpdir(), 'pc-remote-static-'));
     writeFileSync(join(staticDir, 'index.html'), html);
     mkdirSync(join(staticDir, 'assets'));
     writeFileSync(join(staticDir, 'assets', 'index-test.js'), javascript);
@@ -367,13 +368,34 @@ describe('mobile SPA static responses', () => {
     expect(await res.text()).toBe(javascript);
   });
 
-  it('returns an uncached error when an existing path cannot be read as a file', async () => {
-    const res = await fetch(`http://127.0.0.1:${port}/assets`);
-    expect(res.status).toBe(500);
-    expect(res.headers.get('cache-control')).toBe('no-store');
+  it.each(['/assets', '/assets/'])(
+    'serves the app, not an error, for the directory %s',
+    async (path) => {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe(html);
+    },
+  );
+
+  it('returns 404 for a missing asset instead of the app page', async () => {
+    // An old hashed bundle requested after an update must fail as a script, not load HTML.
+    const res = await fetch(`http://127.0.0.1:${port}/assets/index-old.js`);
+    expect(res.status).toBe(404);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
-    expect(await res.text()).toContain('Unable to load the phone app.');
+    expect(await res.text()).toBe('Not found');
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    'returns an uncached error when an existing file cannot be read',
+    async () => {
+      chmodSync(join(staticDir, 'assets', 'index-test.js'), 0o000);
+      const res = await fetch(`http://127.0.0.1:${port}/assets/index-test.js`);
+      expect(res.status).toBe(500);
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(await res.text()).toContain('Unable to load the phone app.');
+    },
+  );
 });
 
 describe('unauthenticated WebSocket clients', () => {

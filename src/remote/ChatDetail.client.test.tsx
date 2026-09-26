@@ -119,6 +119,18 @@ it('keeps file links from replacing the phone route', async () => {
   expect(click.defaultPrevented).toBe(true);
 });
 
+it('keeps in-page links in agent output from changing the phone route', async () => {
+  await mount('a1', {
+    ...frame,
+    items: [{ id: 'a', kind: 'assistant', text: 'See [the other task](#/task/t2).' }],
+  });
+  const link = container.querySelector<HTMLAnchorElement>('a[href="#/task/t2"]');
+  expect(link).not.toBeNull();
+  const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+  link?.dispatchEvent(click);
+  expect(click.defaultPrevented).toBe(true);
+});
+
 it('keeps a follow-up queued in one chat out of every other chat', async () => {
   // Both conversations are new, so neither has a thread id to tell them apart yet.
   const busy: AgentChatState = { status: 'working', items: [], requests: [] };
