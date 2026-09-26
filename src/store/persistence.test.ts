@@ -69,9 +69,12 @@ async function loadPersistedAgent(def: AgentDef): Promise<AgentDef> {
   return store.agents[agentId as string].def;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   mockInvoke.mockResolvedValue(undefined);
+  // Saving is enabled only after the initial state has been read successfully.
+  await loadState();
+  vi.clearAllMocks();
   setStore('projects', []);
   setStore('lastProjectId', null);
   setStore('lastAgentId', null);
@@ -2068,6 +2071,8 @@ describe('MCP orchestration policy persistence', () => {
       IPC.DelegationRequest,
       expect.objectContaining({ action: 'register' }),
     );
+    await saveState();
+    expect(mockInvoke.mock.calls.some(([channel]) => channel === IPC.SaveAppState)).toBe(false);
   });
 });
 
