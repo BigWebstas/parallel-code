@@ -120,7 +120,8 @@ export function RequestCard(props: {
       </Show>
       <For each={props.request.questions}>
         {(q) => (
-          <label>
+          // Not a <label>: a label forwards a click on its text to the first option.
+          <div class="chat-request-question" role="group" aria-label={q.question}>
             {q.question}
             <div class="chat-options">
               <For each={q.options}>
@@ -150,7 +151,7 @@ export function RequestCard(props: {
                 setSelectedOptions({ ...selectedOptions(), [q.id]: [] });
               }}
             />
-          </label>
+          </div>
         )}
       </For>
       <div class="chat-options">

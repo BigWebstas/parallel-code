@@ -348,8 +348,7 @@
   max-height: 160px;
   overflow: auto;
 }
-.chat-request label {
-  display: block;
+.chat-request-question {
   margin: 12px 0 0;
 }
 .chat-request input {

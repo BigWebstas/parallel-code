@@ -226,6 +226,19 @@ describe('approval card contents', () => {
     expect(respond).toHaveBeenCalledWith(remembered, 'accept-always', {});
   });
 
+  it('does not pick an option when the question text is clicked', async () => {
+    await show(question());
+    const text = [...container.querySelectorAll<HTMLElement>('*')].find(
+      (node) =>
+        node.firstChild?.nodeType === Node.TEXT_NODE &&
+        node.firstChild.textContent === 'Which scope?',
+    );
+    expect(text).toBeDefined();
+    await act(() => text?.click());
+    expect(button('Narrow')?.getAttribute('aria-pressed')).toBe('false');
+    expect(button('Submit answers')?.disabled).toBe(true);
+  });
+
   it('never offers to remember an answer to a question', async () => {
     await show({ ...question(), canAlwaysAllow: true, alwaysAllowNote: 'always allow Read' });
     expect(button('Always allow')).toBeUndefined();

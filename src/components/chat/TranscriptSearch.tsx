@@ -38,7 +38,9 @@ export function TranscriptSearch(props: {
   const needle = () => query().trim().toLocaleLowerCase();
   const matches = createMemo(() => {
     const wanted = needle();
-    if (!wanted) return [];
+    // A closed panel keeps its query for reopening, but must not rescan the whole
+    // transcript on every streamed frame.
+    if (!open() || !wanted) return [];
     return props.items.flatMap((item) => {
       const text = searchable(item);
       return text.toLocaleLowerCase().includes(wanted) ? [{ item, text }] : [];
