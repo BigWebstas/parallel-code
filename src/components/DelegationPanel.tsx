@@ -5,7 +5,12 @@ import type { PeerMessage } from '../../electron/shared/delegation-types';
 import { IPC } from '../../electron/ipc/channels';
 import { invoke } from '../lib/ipc';
 import { theme } from '../lib/theme';
-import { DEFAULT_COORDINATOR_CONCURRENT_TASKS } from '../lib/coordinator-limits';
+import {
+  clampCoordinatorConcurrentTasks,
+  DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+  MAX_COORDINATOR_CONCURRENT_TASKS,
+  MIN_COORDINATOR_CONCURRENT_TASKS,
+} from '../lib/coordinator-limits';
 import { store, setStore } from '../store/core';
 import { restartAgent } from '../store/agents';
 import { clearStagedNotification } from '../store/tasks';
@@ -37,6 +42,8 @@ export function DelegationPanel(props: {
   const messages = () => state()?.messages.filter((m) => m.state === 'waiting') ?? [];
   const failures = () => state()?.messages.filter((m) => m.deliveryFailed) ?? [];
   const coordinating = () =>
+    props.task.delegationParent ||
+    props.task.coordinatorMode ||
     props.task.delegationPaused ||
     state()?.paused ||
     children().length > 0 ||
@@ -57,6 +64,21 @@ export function DelegationPanel(props: {
     } finally {
       setBusy(false);
     }
+  }
+  const childLimit = () => props.task.maxConcurrentTasks ?? DEFAULT_COORDINATOR_CONCURRENT_TASKS;
+  async function changeChildLimit(input: HTMLInputElement) {
+    const parsed = parseInt(input.value, 10);
+    const limit = Number.isNaN(parsed) ? childLimit() : clampCoordinatorConcurrentTasks(parsed);
+    input.value = String(limit);
+    if (limit === childLimit()) return;
+    const taskId = props.task.id;
+    // Store only after the backend accepts, so the shown limit is the enforced one.
+    await act(async () => {
+      await delegationRequest({ action: 'childLimit', taskId, limit });
+      setStore('tasks', taskId, 'maxConcurrentTasks', limit);
+    });
+    // A rejected change leaves the store untouched, so the input must be reset by hand.
+    input.value = String(childLimit());
   }
   async function copyMessage(message: PeerMessage) {
     // Manual copy never changes a composer draft or sends terminal input.
@@ -161,10 +183,19 @@ export function DelegationPanel(props: {
           <div
             style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap' }}
           >
-            <span>
-              {children().length} child task(s) · limit{' '}
-              {props.task.maxConcurrentTasks ?? DEFAULT_COORDINATOR_CONCURRENT_TASKS}
-            </span>
+            <span>{children().length} child task(s)</span>
+            <label style={{ display: 'flex', gap: '4px', 'align-items': 'center' }}>
+              Concurrent limit
+              <input
+                type="number"
+                min={MIN_COORDINATOR_CONCURRENT_TASKS}
+                max={MAX_COORDINATOR_CONCURRENT_TASKS}
+                value={childLimit()}
+                disabled={busy()}
+                onChange={(e) => void changeChildLimit(e.currentTarget)}
+                style={{ width: '48px' }}
+              />
+            </label>
             <Show
               when={props.task.delegationPaused || state()?.paused}
               fallback={

@@ -11,6 +11,10 @@ import { canConfigureCanvasMcp } from './canvas-config.js';
 import { validateBranchName } from './validation.js';
 import { getSkipPermissionsArgs } from '../shared/skip-permissions.js';
 import {
+  MAX_COORDINATOR_CONCURRENT_TASKS,
+  MIN_COORDINATOR_CONCURRENT_TASKS,
+} from '../shared/coordinator-limits.js';
+import {
   getActiveAgentIds,
   getAgentMeta,
   getAgentScrollback,
@@ -846,6 +850,21 @@ export class DelegationService {
         }
         this.emit(task.taskId);
         return { paused: request.paused };
+      }
+      case 'childLimit': {
+        const task = this.requireTask(id(request.taskId));
+        if (task.parentTaskId) throw new DelegationError('Child tasks cannot delegate');
+        const limit = request.limit;
+        if (
+          !Number.isInteger(limit) ||
+          limit < MIN_COORDINATOR_CONCURRENT_TASKS ||
+          limit > MAX_COORDINATOR_CONCURRENT_TASKS
+        )
+          throw new DelegationError('Invalid child limit');
+        // The renderer persists the value after this acknowledgment; restore re-registers it.
+        task.maxConcurrentTasks = limit;
+        this.options.currentCoordinator()?.setMaxConcurrentSubTasks(task.taskId, limit);
+        return { limit };
       }
       case 'review':
         return (await this.options.coordinator()).getReviewSnapshot(id(request.taskId));

@@ -1081,7 +1081,7 @@ describe('createTask delegation options', () => {
       autoMergeChildren: false,
       autoSendChildUpdates: false,
       propagateSkipPermissions: false,
-      maxConcurrentTasks: 3,
+      maxConcurrentTasks: 4,
     });
   });
 });

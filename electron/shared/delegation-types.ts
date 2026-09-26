@@ -109,6 +109,7 @@ export type DelegationRequest =
   | { action: 'projectPolicy'; policy: ProjectDelegationPolicy }
   | { action: 'orchestrationSetting'; enabled: boolean }
   | { action: 'pause'; taskId: string; paused: boolean }
+  | { action: 'childLimit'; taskId: string; limit: number }
   | { action: 'review'; taskId: string }
   | { action: 'merge'; taskId: string; review: Omit<DelegationReview, 'diff'> }
   | { action: 'inbox'; taskId: string }

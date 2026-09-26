@@ -70,6 +70,7 @@ let core: {
   deregisterCoordinator: ReturnType<typeof vi.fn>;
   stopChildren: ReturnType<typeof vi.fn>;
   resumeChildren: ReturnType<typeof vi.fn>;
+  setMaxConcurrentSubTasks: ReturnType<typeof vi.fn>;
   hasPendingPrompt: ReturnType<typeof vi.fn>;
 };
 let persist: () => void;
@@ -192,6 +193,7 @@ beforeEach(() => {
     deregisterCoordinator: vi.fn(),
     stopChildren: vi.fn(),
     resumeChildren: vi.fn(),
+    setMaxConcurrentSubTasks: vi.fn(),
     hasPendingPrompt: vi.fn().mockReturnValue(false),
   };
   persist = vi.fn();
@@ -366,6 +368,26 @@ describe('delegation authority and creation', () => {
     await service.request({ action: 'pause', taskId: 'parent', paused: true });
     expect(core.stopChildren).toHaveBeenCalledWith('parent');
     expect(mocks.kill.mock.calls).toEqual([['primary'], ['secondary']]);
+  });
+
+  it('changes a parent child limit within bounds and rejects children and invalid values', async () => {
+    await register('parent', { maxConcurrentTasks: 4 });
+    await register('child', { parentTaskId: 'parent' });
+    await expect(
+      service.request({ action: 'childLimit', taskId: 'parent', limit: 7 }),
+    ).resolves.toEqual({ limit: 7 });
+    expect(core.setMaxConcurrentSubTasks).toHaveBeenCalledWith('parent', 7);
+    expect(service.getTask('parent')?.maxConcurrentTasks).toBe(7);
+    for (const limit of [0, 21, 2.5, '5']) {
+      await expect(
+        service.request({ action: 'childLimit', taskId: 'parent', limit }),
+      ).rejects.toThrow('Invalid child limit');
+    }
+    await expect(
+      service.request({ action: 'childLimit', taskId: 'child', limit: 5 }),
+    ).rejects.toThrow('Child tasks cannot delegate');
+    expect(core.setMaxConcurrentSubTasks).toHaveBeenCalledOnce();
+    expect(service.getTask('parent')?.maxConcurrentTasks).toBe(7);
   });
 
   it('deduplicates a pending request and rejects changed content with the same ID', async () => {

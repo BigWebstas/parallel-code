@@ -92,8 +92,19 @@ it('offers tools restart after enabling MCP for a session without tools', () => 
     peers: true,
   });
   setStore('tasks', 'parent', 'delegationParent', true);
-  expect(host.querySelector('[aria-label="Task collaboration"]')).toBeNull();
+  expect(button('Restart and resume Claude')).toBeUndefined();
 });
+
+it.each(['delegationParent', 'coordinatorMode'] as const)(
+  'keeps the child limit available for an idle %s parent',
+  (parentFlag) => {
+    setStore('tasks', 'parent', parentFlag, true);
+    setStore('tasks', 'parent', 'maxConcurrentTasks', 6);
+    dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
+    expect(host.textContent).toContain('0 child task(s)');
+    expect(host.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe('6');
+  },
+);
 
 it('reviews and manually copies held messages without touching drafts or sending terminal input', async () => {
   const sender = {
@@ -157,6 +168,53 @@ it('reviews and manually copies held messages without touching drafts or sending
   expect(vi.mocked(invoke).mock.calls.every(([channel]) => channel !== IPC.WriteToAgent)).toBe(
     true,
   );
+});
+
+it('changes the child limit only after the backend accepts it', async () => {
+  setStore('tasks', 'parent', 'delegationParent', true);
+  let acceptLimit: () => void = () => {};
+  const acceptance = new Promise<void>((resolve) => {
+    acceptLimit = resolve;
+  });
+  vi.mocked(invoke).mockImplementation(async (_channel, args) => {
+    if (args?.action === 'childLimit') await acceptance;
+    if (args?.action === 'state') return state;
+    return {};
+  });
+  dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
+  const input = () => host.querySelector<HTMLInputElement>('input[type="number"]');
+  expect(input()?.value).toBe('4');
+  const change = (value: string) => {
+    const el = input();
+    if (!el) throw new Error('limit input missing');
+    el.value = value;
+    el.dispatchEvent(new Event('change'));
+  };
+  change('7');
+  expect(input()?.disabled).toBe(true);
+  expect(store.tasks.parent.maxConcurrentTasks).toBeUndefined();
+  acceptLimit();
+  await vi.waitFor(() => expect(store.tasks.parent.maxConcurrentTasks).toBe(7));
+  expect(input()?.disabled).toBe(false);
+  expect(invoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
+    action: 'childLimit',
+    taskId: 'parent',
+    limit: 7,
+  });
+  vi.mocked(invoke).mockImplementation(async (_channel, args) => {
+    if (args?.action === 'childLimit') throw new Error('Invalid child limit');
+    if (args?.action === 'state') return state;
+    return {};
+  });
+  change('99');
+  await vi.waitFor(() => expect(host.textContent).toContain('Invalid child limit'));
+  expect(invoke).toHaveBeenLastCalledWith(IPC.DelegationRequest, {
+    action: 'childLimit',
+    taskId: 'parent',
+    limit: 20,
+  });
+  expect(store.tasks.parent.maxConcurrentTasks).toBe(7);
+  expect(input()?.value).toBe('7');
 });
 
 it('approves only the child commit and target shown in the review', async () => {

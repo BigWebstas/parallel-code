@@ -6190,12 +6190,38 @@ describe('Coordinator createTask — concurrency enforcement', () => {
 
   it('applies the default limit when the coordinator registers without one', async () => {
     coordinator.registerCoordinator('coord-default', 'proj-1');
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       await coordinator.createTask({ name: `t${i}`, coordinatorTaskId: 'coord-default' });
     }
     await expect(
       coordinator.createTask({ name: 'over', coordinatorTaskId: 'coord-default' }),
     ).rejects.toThrow(/concurrency limit/);
+  });
+
+  it('admits against a limit changed after registration without killing running children', async () => {
+    await coordinator.createTask({ name: 'a', coordinatorTaskId: 'coord-1' });
+    await coordinator.createTask({ name: 'b', coordinatorTaskId: 'coord-1' });
+    coordinator.setMaxConcurrentSubTasks('coord-1', 3);
+    await expect(
+      coordinator.createTask({ name: 'c', coordinatorTaskId: 'coord-1' }),
+    ).resolves.toBeDefined();
+    coordinator.setMaxConcurrentSubTasks('coord-1', 1);
+    await expect(
+      coordinator.createTask({ name: 'd', coordinatorTaskId: 'coord-1' }),
+    ).rejects.toThrow(/3\/1 in flight/);
+    expect(mockKillAgent).not.toHaveBeenCalled();
+  });
+
+  it('applies limit changes to exited child restarts', async () => {
+    const child = await coordinator.createTask({ name: 'a', coordinatorTaskId: 'coord-1' });
+    await coordinator.createTask({ name: 'b', coordinatorTaskId: 'coord-1' });
+    getExitHandler()(child.agentId, { exitCode: 0 });
+    coordinator.setMaxConcurrentSubTasks('coord-1', 1);
+    expect(() => coordinator.reserveChildRestart(child.id)).toThrow(/concurrency limit/);
+    coordinator.setMaxConcurrentSubTasks('coord-1', 2);
+    const release = coordinator.reserveChildRestart(child.id);
+    expect(() => coordinator.reserveChildRestart(child.id)).toThrow(/concurrency limit/);
+    release();
   });
 });
 

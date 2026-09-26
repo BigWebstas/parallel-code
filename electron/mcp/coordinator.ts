@@ -2811,6 +2811,12 @@ export class Coordinator {
     return this.coordinators.has(coordinatorTaskId);
   }
 
+  /** Applies to later admissions only; children already in flight keep running. */
+  setMaxConcurrentSubTasks(coordinatorTaskId: string, value: number): void {
+    const state = this.coordinators.get(coordinatorTaskId);
+    if (state) state.maxConcurrentSubTasks = clampCoordinatorConcurrentTasks(value);
+  }
+
   registerCoordinator(
     coordinatorTaskId: string,
     projectId: string,
