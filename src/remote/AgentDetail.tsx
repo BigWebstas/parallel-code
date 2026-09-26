@@ -503,10 +503,25 @@ export function AgentDetail(props: AgentDetailProps) {
             />
           </div>
         </Show>
-        <Show when={view() === 'terminal' && !terminalBottom()}>
-          <button class="mobile-button mobile-latest" onClick={jumpToLatest}>
-            ↓ Latest output
-          </button>
+        <Show when={view() === 'terminal'}>
+          <div class="mobile-output-actions">
+            <Show when={!terminalBottom()}>
+              <button class="mobile-button" onClick={jumpToLatest}>
+                ↓ Latest output
+              </button>
+            </Show>
+            <Show when={nextTask()}>
+              {(next) => (
+                <button
+                  class="mobile-button mobile-next-task"
+                  aria-label={`Next task needing you: ${next().taskName}`}
+                  onClick={() => props.onNextTask(next().taskId)}
+                >
+                  Next task →
+                </button>
+              )}
+            </Show>
+          </div>
         </Show>
       </div>
       <Show
@@ -522,6 +537,20 @@ export function AgentDetail(props: AgentDetailProps) {
               </p>
             </Show>
             <div class="mobile-composer-row">
+              <Show when={bashMode()}>
+                <button
+                  class="mobile-button mobile-bash"
+                  aria-label="Shell command mode"
+                  aria-pressed="true"
+                  disabled={sending()}
+                  onClick={() => {
+                    setBashMode(false);
+                    inputRef?.focus();
+                  }}
+                >
+                  !
+                </button>
+              </Show>
               <textarea
                 ref={(element) => {
                   inputRef = element;
@@ -552,17 +581,6 @@ export function AgentDetail(props: AgentDetailProps) {
                 {sending() ? 'Sending…' : canControl() ? 'Send' : 'Authorize'}
               </button>
             </div>
-            <Show when={nextTask()}>
-              {(next) => (
-                <button
-                  class="mobile-button quiet mobile-next-task"
-                  aria-label={`Next task needing you: ${next().taskName}`}
-                  onClick={() => props.onNextTask(next().taskId)}
-                >
-                  Next task →
-                </button>
-              )}
-            </Show>
             <Show when={inputText().length >= 3600}>
               <p class="muted" role="status">
                 {4000 - inputText().length} characters remaining
@@ -574,21 +592,10 @@ export function AgentDetail(props: AgentDetailProps) {
               </p>
             </Show>
             <div id="terminal-keys" class="mobile-keys" role="group" aria-label="Terminal keys">
-              <button
-                class="mobile-button mobile-bash"
-                aria-label="Shell command mode"
-                aria-pressed={bashMode()}
-                disabled={sending()}
-                onClick={() => {
-                  setBashMode((on) => !on);
-                  inputRef?.focus();
-                }}
-              >
-                !
-              </button>
               <For
                 each={[
                   { label: 'Enter', name: 'Enter', data: '\r' },
+                  { label: '/', name: 'Slash', data: '/' },
                   { label: 'Tab', name: 'Tab', data: '\t' },
                   { label: '↑', name: 'Arrow up', data: '\x1b[A' },
                   { label: '↓', name: 'Arrow down', data: '\x1b[B' },

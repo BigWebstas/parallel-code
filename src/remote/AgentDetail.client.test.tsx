@@ -155,7 +155,7 @@ describe('phone reply composer', () => {
   it('sends a shell command as one request the server can keep ordered', async () => {
     vi.mocked(sendInput).mockResolvedValue(undefined);
     mount();
-    bashButton().click();
+    type('!');
     type('ls -la');
     click('Send');
     await vi.waitFor(() => expect(composer().value).toBe(''));
@@ -163,7 +163,7 @@ describe('phone reply composer', () => {
       ['a1', '\x1b[200~ls -la\x1b[201~', { submit: true, prefixKey: '!' }],
     ]);
     // The agent's shell prompt closes after the command, so the next reply is text.
-    expect(bashButton().getAttribute('aria-pressed')).toBe('false');
+    expect(composer().placeholder).toBe('Reply to agent…');
   });
   it('switches to the shell when "!" opens an empty prompt, as the desktop TUI does', () => {
     mount();
@@ -176,7 +176,7 @@ describe('phone reply composer', () => {
     vi.mocked(sendInput).mockResolvedValue(undefined);
     localStorage.setItem('parallel-mobile:reply:a1', '!important: do not deploy');
     mount();
-    expect(bashButton().getAttribute('aria-pressed')).toBe('false');
+    expect(composer().placeholder).toBe('Reply to agent…');
     click('Send');
     await vi.waitFor(() => expect(composer().value).toBe(''));
     expect(vi.mocked(sendInput).mock.calls).toEqual([
@@ -186,7 +186,7 @@ describe('phone reply composer', () => {
   it('keeps shell mode with the draft when a send fails or the task is reopened', async () => {
     vi.mocked(sendInput).mockRejectedValue(new Error('Delivery could not be confirmed'));
     mount();
-    bashButton().click();
+    type('!');
     type('npm test');
     click('Send');
     await vi.waitFor(() => expect(host.textContent).toContain('Delivery could not be confirmed'));
@@ -304,9 +304,14 @@ describe('phone terminal viewport', () => {
     ]);
     expect(host.querySelector('.mobile-tabs [aria-label="Smaller terminal text"]')).not.toBeNull();
     expect(host.querySelector('.mobile-tabs [aria-label="Larger terminal text"]')).not.toBeNull();
-    expect(host.querySelector('.mobile-keys [aria-label="Shell command mode"]')).not.toBeNull();
+    expect(
+      [...host.querySelectorAll('.mobile-keys button')].map((button) => button.textContent),
+    ).toEqual(['Enter', '/', 'Tab', '↑', '↓', 'Esc', 'Ctrl+C']);
     click('Enter');
     expect(sendInput).toHaveBeenCalledWith('a1', '\r');
+    await vi.waitFor(() => expect(composer().disabled).toBe(false));
+    click('/');
+    expect(sendInput).toHaveBeenCalledWith('a1', '/');
     await vi.waitFor(() => expect(composer().disabled).toBe(false));
     click('Notes');
     expect(host.querySelector('[aria-label="Smaller terminal text"]')).toBeNull();

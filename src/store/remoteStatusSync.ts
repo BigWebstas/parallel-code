@@ -72,7 +72,7 @@ export function startRemoteStatusSync(): () => void {
       const statuses: Record<string, RemoteAttentionState> = {};
       const contexts: Record<
         string,
-        Pick<RemoteAgent, 'projectName' | 'agentName' | 'lastLine'>
+        Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'>
       > = {};
       for (const taskId of [...store.taskOrder, ...store.collapsedTaskOrder]) {
         statuses[taskId] = getTaskAttentionState(taskId);
@@ -81,8 +81,10 @@ export function startRemoteStatusSync(): () => void {
         const agentId =
           task.agentIds.find((id) => store.agents[id]?.status === 'running') ?? task.agentIds[0];
         const agent = store.agents[agentId];
+        const project = store.projects.find((project) => project.id === task.projectId);
         contexts[taskId] = {
-          projectName: store.projects.find((project) => project.id === task.projectId)?.name ?? '',
+          projectName: project?.name ?? '',
+          projectColor: project?.color ?? '',
           agentName: agent?.def.name ?? '',
           // Untracked like the terminal tail: a streaming reply changes every frame.
           lastLine: taskUsesAgentChat(task)

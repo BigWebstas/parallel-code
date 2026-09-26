@@ -578,7 +578,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   const taskAttention = new Map<string, RemoteAttentionState>();
   const taskContext = new Map<
     string,
-    Pick<RemoteAgent, 'projectName' | 'agentName' | 'lastLine'>
+    Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'>
   >();
 
   // --- MCP coordinator (lazy — only loaded when coordinator mode is enabled) ---
@@ -1709,7 +1709,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
         statuses?: Record<string, string>;
         contexts?: Record<
           string,
-          { projectName?: unknown; agentName?: unknown; lastLine?: unknown }
+          { projectName?: unknown; projectColor?: unknown; agentName?: unknown; lastLine?: unknown }
         >;
       },
     ) => {
@@ -1723,6 +1723,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
           taskContext.set(taskId, {
             projectName:
               typeof context.projectName === 'string' ? context.projectName.slice(0, 200) : '',
+            projectColor:
+              typeof context.projectColor === 'string' ? context.projectColor.slice(0, 200) : '',
             agentName: typeof context.agentName === 'string' ? context.agentName.slice(0, 200) : '',
             lastLine: typeof context.lastLine === 'string' ? context.lastLine.slice(0, 300) : '',
           });
