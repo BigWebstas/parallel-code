@@ -1,8 +1,8 @@
 # Cross-agent coordination
 
-Status: V1 delegation and V2 held peer messaging implemented in this working tree. Existing sessions keep their launch-time tools; enabling new tools requires a conversation-preserving restart where supported. Native Electron smoke tests use isolated worktrees and local fake agents. Docker and real-provider compatibility require separate validation.
+Status: V1 delegation and V2 automatic peer messaging implemented in this working tree. Existing sessions keep their launch-time tools; enabling new tools requires a conversation-preserving restart where supported. Native Electron smoke tests use isolated worktrees and local fake agents. Docker and real-provider compatibility require separate validation.
 
-Latest product direction: users should orchestrate from their current agent terminal through MCP, including asking an agent to coordinate existing open tasks. The dedicated delegation dialog has been removed. Autonomous coordination of unrelated open tasks remains follow-up work; the implemented peer channel still holds messages for human review.
+Latest product direction: users should orchestrate from their current agent terminal through MCP, including asking an agent to coordinate existing open tasks. The dedicated delegation dialog has been removed. Peer prompts queue for automatic submission when the exact recipient is ready. Existing project-level peer permissions still govern unrelated tasks.
 
 ## MCP settings
 
@@ -20,7 +20,7 @@ Let ordinary Parallel Code tasks delegate work without a dedicated coordinator t
 
 **V1 ships delegation:** agent-initiated task creation through MCP for supported fresh sessions, review-required results by default, explicit per-task automation options, existing child supervision, and complete parent lifecycle. Peer discovery and messaging do not block this release.
 
-**V2 adds peer discovery and held messages:** exact recipients, a recipient inbox, restricted access, and delivery receipts. Automatic peer delivery, recursive delegation, cross-project access, and durable messaging are separate follow-ups.
+**V2 adds peer discovery and queued messages:** exact recipients, automatic delivery when ready, a pending-message inbox, restricted access, and delivery receipts. Recursive delegation, cross-project access, and durable messaging remain separate follow-ups.
 
 V1 supports top-level Git worktree tasks. Shell panes cannot initiate agent operations. Coordinated children retain completion tools but cannot create grandchildren; explain that restriction in their MCP instructions. Direct-checkout and non-Git delegation are deferred. Agent-initiated delegation requires app-provisioned tools and credentials; chat-backed and unsupported custom-agent tool integration is deferred.
 
@@ -58,7 +58,7 @@ Reuse the child strip and sidebar grouping for any parent with children. Show st
 
 Show a transient assignment-attempt row before a live task exists. The existing child-created event is emitted after spawn; retain a failed attempt with the error and cleanup status for the current app run rather than making it disappear. Never label an absent PTY as running.
 
-Completion/blocker summaries appear in the task UI and through existing list/status/wait tools. With `autoSendChildUpdates` off, staged summaries await explicit review/acknowledgment and do not type into the parent terminal. With it on, use the existing delayed automatic child-update delivery with draft/activity holds and the global orchestration gate. The effective policy is `autoSendChildUpdates ?? coordinatorMode ?? false`: an explicit false overrides the legacy fallback. Keep this independent of merge policy and legacy transport. Preserve outcomes after self-landed children leave the active list. Peer prompts remain held even when automatic child updates are enabled.
+Completion/blocker summaries appear in the task UI and through existing list/status/wait tools. With `autoSendChildUpdates` off, staged summaries await explicit review/acknowledgment and do not type into the parent terminal. With it on, use the existing delayed automatic child-update delivery with draft/activity holds and the global orchestration gate. The effective policy is `autoSendChildUpdates ?? coordinatorMode ?? false`: an explicit false overrides the legacy fallback. Keep this independent of merge policy and legacy transport. Preserve outcomes after self-landed children leave the active list. Peer prompt delivery is independent of automatic child updates; it uses the orchestration switch and existing relationship permissions.
 
 ## Architecture: build on existing ownership
 
@@ -86,16 +86,16 @@ If context is missing, conflicting, closing, or not restored yet, fail closed fo
 
 ### Access rules
 
-| Operation                        | Required authority                                                                                                                                                                                       |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Canvas tools                     | Own task, preserving current behavior.                                                                                                                                                                   |
-| Create child                     | Eligible top-level owning task; validated project, snapshot, and branch. No nested creation.                                                                                                             |
-| List/status/wait/manage children | Own direct children, with existing ownership checks and the integration policy. Empty child lists are valid.                                                                                             |
-| Merge/close/land                 | Operation-specific ownership and verification. Review-policy child integration additionally requires user approval. Peer rights confer none of these.                                                    |
-| V2 discovery/output              | Only recipients in the caller's allowed relationship/scope; permission checks apply to discovery as well as reads.                                                                                       |
-| V2 prompts                       | Children may contact only their own parent. Top-level tasks may contact their own children. Unrelated top-level peers require a project-level opt-in. All new peer prompts are held for user acceptance. |
+| Operation                        | Required authority                                                                                                                                                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Canvas tools                     | Own task, preserving current behavior.                                                                                                                                                                                          |
+| Create child                     | Eligible top-level owning task; validated project, snapshot, and branch. No nested creation.                                                                                                                                    |
+| List/status/wait/manage children | Own direct children, with existing ownership checks and the integration policy. Empty child lists are valid.                                                                                                                    |
+| Merge/close/land                 | Operation-specific ownership and verification. Review-policy child integration additionally requires user approval. Peer rights confer none of these.                                                                           |
+| V2 discovery/output              | Only recipients in the caller's allowed relationship/scope; permission checks apply to discovery as well as reads.                                                                                                              |
+| V2 prompts                       | Children may contact only their own parent. Top-level tasks may contact their own children. Unrelated top-level peers require a project-level opt-in. Peer prompts wait for a ready recipient with no user draft or input hold. |
 
-In V2, **Allow peer access between tasks** defaults off and explicitly enables discovery, output access, and held messages between eligible top-level sessions in that project. It does not expand a child's scope beyond its parent. No cross-project grants in this design. Treat output and prompts as untrusted peer content, not system instructions.
+In V2, **Allow peer access between tasks** defaults off and explicitly enables discovery, output access, and automatic messages between eligible top-level sessions in that project. It does not expand a child's scope beyond its parent. No cross-project grants in this design. Treat output and prompts as untrusted peer content, not system instructions.
 
 ### Exact V1 tool exposure and completion loop
 
@@ -147,7 +147,7 @@ Detach every affected child from the authoritative task registry, including chil
 
 If the parent agent exits, keep the task and child results available. Multiple panes share task ownership, but unsolicited notifications must not jump to an arbitrary replacement pane. Summaries remain task UI state when automatic child updates are off; sessions can always explicitly inspect their task's results. When the parent branch changes, pause integration for user review rather than retargeting it silently. Detached children keep their work and finish independently; enabling them as new parents requires a user action.
 
-## V2: exact-session discovery and held prompts
+## V2: exact-session discovery and queued prompts
 
 ### Tools and addressing
 
@@ -157,28 +157,28 @@ Discover live sessions from the PTY registry joined with validated task context.
 | ----------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `list_agent_sessions`   | Caller-scoped; no project override.                                          | Eligible sessions and their supported actions.                         |
 | `get_agent_output`      | Exact agent and instance IDs; bounded size.                                  | Decoded plain-text output, observation time, and truncation indicator. |
-| `send_agent_prompt`     | Exact target IDs, prompt, sender-scoped request ID.                          | Held delivery ID and recipient-review status; no PTY write.            |
+| `send_agent_prompt`     | Exact target IDs, prompt, sender-scoped request ID.                          | Delivery ID and queued/submitted/closed receipt state.                 |
 | `wait_for_agent_prompt` | Delivery ID, optional last observed state, and bounded timeout; sender only. | Current/changed receipt state, timeout, or expired/unavailable.        |
 
 Require both recipient IDs and revalidate them at acceptance and delivery. A restarted pane is a different recipient even when `agentId` stays the same. Never redirect automatically. Decode scrollback, strip terminal control sequences, and enforce size limits. Validate membership, IDs, and payloads at the HTTP boundary; URL encoding is not authorization.
 
-### Inbox and acceptance
+### Inbox and delivery
 
-Use the staged-notification UI pattern with acknowledgment, extended to a list of held incoming prompts per recipient instance. Store bounded held entries in main-process runtime state so panel unmount/remount does not lose them; the renderer subscribes to snapshots/updates. Show sender/task attribution, preview, arrival time, and **Review** / **Dismiss**. Keep pending counts visible without stealing focus. Child summaries and the inbox start collapsed; expanded content scrolls within a bounded area so the task terminal remains usable. App restart may expire these entries; V2 does not promise a durable inbox.
+Use the staged-notification UI pattern with acknowledgment, extended to a list of queued incoming prompts per recipient instance. Store bounded queued entries in main-process runtime state so panel unmount/remount does not lose them; the renderer subscribes to snapshots/updates. Show sender/task attribution, preview, arrival time, and **Review** / **Dismiss**. Keep pending counts visible without stealing focus. Child summaries and the inbox start collapsed; expanded content scrolls within a bounded area so the task terminal remains usable. App restart may expire these entries; V2 does not promise a durable inbox.
 
-**Review** opens a preview and leaves the entry waiting. After preview, an explicit **Use in composer** action claims the entry for manual handling and places it only in an empty app `PromptInput` belonging to the exact recipient session. If that field already has a draft, keep the incoming prompt in the inbox and offer preview/copy; never replace or concatenate the draft. Neither action sends Enter. For direct xterm input, terminal-composer contents are unknowable: always use manual copy, with no terminal-clearance detection or automatic PTY submission. The user chooses when to paste and submit.
+**Review** opens a preview and leaves the entry waiting. After preview, an explicit **Use in composer** action claims the entry for manual handling and places it only in an empty app `PromptInput` belonging to the exact recipient session. If that field already has a draft, keep the incoming prompt in the inbox and offer preview/copy; never replace or concatenate the draft. Neither action sends Enter. Manual handling remains available while a message is waiting. It does not submit the prompt; automatic delivery claims are exclusive with manual handling.
 
-Keep sender receipts to three states: `waiting` (still in the inbox), `handled` (the user took it into `PromptInput` or copied it), and `closed` (dismissed, failed, or expired, with a reason). Preview alone leaves it waiting. Handled means a human took responsibility; it never claims submission, agent acceptance, or task completion. Both handled and closed end the receipt wait loop. No per-keystroke submission tracking is required.
+Keep sender receipts to four states: `waiting` (queued until the recipient is ready), `delivered` (submitted to the exact terminal session), `handled` (the user took it into `PromptInput` or copied it), and `closed` (dismissed, failed, or expired, with a reason). Preview alone leaves it waiting. Handled means a human took responsibility; it never claims submission, agent acceptance, or task completion. Delivered, handled, and closed end the receipt wait loop; delivery does not mean the agent completed the request. No per-keystroke submission tracking is required.
 
-Use sender-scoped in-memory request deduplication and existing prompt-byte/queue limits. Reject reuse with different target/content. A recipient exit expires held entries; do not replay them on restart. Provide long-poll delivery receipts using existing wait conventions: after the initial state, callers supply their last observed state and wait for a change or timeout. Use a 30-second default wait and a 60-second maximum; agent-facing descriptions prohibit immediate polling/resending after a timeout and require another bounded wait. Receipt state describes transport only, not task completion.
+Use sender-scoped in-memory request deduplication and existing prompt-byte/queue limits. Reject reuse with different target/content. A recipient exit expires queued entries; do not replay them on restart. Provide long-poll delivery receipts using existing wait conventions: after the initial state, callers supply their last observed state and wait for a change or timeout. Use a 30-second default wait and a 60-second maximum; agent-facing descriptions prohibit immediate polling/resending after a timeout and require another bounded wait. Receipt state describes transport only, not task completion.
 
-### Automatic delivery is a separate follow-up
+### Automatic delivery and input arbitration
 
-The current delivery implementation is largely task-keyed: `controlMap`, `writingPromptTaskIds`, `task.pendingPrompts`, `automationWriteInFlight`, and renderer draft/activity flags. Two panes cannot safely gain independent automatic delivery merely by changing tool parameters.
+A global renderer loop offers queued messages for delivery independently of mounted task panels. It holds messages while the task has an unsent draft, terminal input, recent user activity, an initial assignment, staged child updates, a pause, or a write in progress. These task-wide holds conservatively cover every pane. Chat composer drafts use the same persisted draft field.
 
-Before adding an explicit per-task automatic-peer-delivery opt-in, move recipient queues, write locks, readiness, and input/draft holds to `(agentId, sessionInstanceId)`. Task-wide pause remains a gate over all its panes. Task-scoped legacy operations must resolve the intended pane and pass through the same serialization. Preserve legacy coordinator behavior during that migration.
+The backend validates the exact recipient launch, current relationship permissions, and orchestration setting. Delivery requires a parsed, stable ready prompt from the existing headless terminal mirror. Chat-only conversations have no peer session identity and are not redirected targets. Earlier queued messages and coordinator assignments take precedence.
 
-A hold sent after the first keystroke through asynchronous IPC does not eliminate the first-keystroke race. Auto-delivery requires a concrete shared input-arbitration mechanism covering terminal keystrokes, app composer submissions, coordinator writes, and peer writes, plus trustworthy composer/readiness state. Echo verification after writing is insufficient. Integrations lacking that contract remain manual; do not advertise auto-delivery just because they support MCP. This work is not a V1/V2 release gate.
+The PTY writer binds its lock to the actual terminal session. Without bracketed-paste support, newlines and tabs become spaces so only the explicit Enter submits the prompt. Recent input delays acquisition; a per-session pending-input hold also protects unsent phone and secondary-pane drafts. During paste and delayed Enter, competing terminal, composer, phone, and coordinator writes queue behind that transaction with their inter-write timing preserved. Session identity and authorization are checked again before Enter. Restarted sessions never receive the old prompt or queued input. Failed delivery closes the receipt instead of retrying a possibly pasted body. A visible failure notice and recovery instructions remain in the recipient panel until the user dismisses them, including after the recipient session ends; dismissal does not change the sender receipt. Queued competing input is discarded on failed submission so an old Enter cannot submit the canceled body; the failure receipt explains this. Prompts identify the sending agent and task, and terminal control characters are rejected.
 
 ## Rollout and implementation sequence
 
@@ -195,9 +195,9 @@ Explicit user-owned `--mcp-config` / related configuration currently prevents au
 **V2 release:**
 
 4. Add relationship-scoped discovery/output and the optional top-level project peer-access setting. Verify exact panes, stale launch IDs, and permission enforcement.
-5. Add the held inbox, explicit user handling, bounded receipts/long polling, and cancellation/expiry. No automatic terminal injection.
+5. Add the queued inbox, automatic delivery when ready, optional manual handling, bounded receipts/long polling, and cancellation/expiry.
 
-No generic coordination service, persistent creation journal, automatic commit UI, nested delegation, or automatic peer-delivery engine is required for these releases.
+No generic coordination service, persistent creation journal, automatic commit UI, or nested delegation is required for these releases.
 
 ## Verification and acceptance criteria
 
@@ -211,7 +211,7 @@ No generic coordination service, persistent creation journal, automatic commit U
 - **Creation recovery:** duplicate requests return one result during the app run. Startup failures stay visible until dismissal/recovery. Simulated crash residue can be inspected/imported without automatic replay or deletion; no cross-crash exactly-once guarantee is claimed.
 - **Close/restore:** a renderer crash during parent close cannot restore children targeting a deleted parent. Landing/close races, partial deletion, and retry preserve child work and integration policy. Detach covers authoritative children absent from runtime coordinator state and revokes relationship privileges across all panes. Hydration rejects unvalidated ownership and uses private credential files.
 - **V2 access:** children can contact only their parent, unrelated top-level peers require opt-in, and cross-project requests fail. Test discovery/output as well as sends; disabling opt-in prevents further access and cancels unaccepted unrelated-peer entries.
-- **V2 delivery:** distinct panes and restarted instances stay distinct. Held prompts survive panel remount, remain visible beside an existing `PromptInput` draft, and use manual copy for xterm. Three-state receipts never claim delivery/completion; bounded waits report handling or closure with a reason.
+- **V2 delivery:** distinct panes and restarted instances stay distinct. Queued prompts survive panel remount and wait beside an existing draft. Submission waits for a ready, draft-free exact terminal, including phone and secondary-pane input. Four-state receipts distinguish delivery from manual handling, closure, and waiting; none claims task completion. Cancellation must not submit a pasted body through a queued Enter.
 - **UX:** MCP task creation without a delegation dialog, preserved terminal drafts/focus, visible startup/errors, review and integration, resume-preserving restarts with fresh credentials, and parent-close warnings work in Electron.
 
 Run focused unit tests for startup/tool dispatch, HTTP authorization, coordinator lifecycle, and delivery. Pure logic tests use `npm run test:unit`; DOM tests use `*.client.test.tsx` through `npm run test:client`. Extend and run the opt-in PTY suite for changed delivery paths and perform native Electron smoke checks. Report unavailable Docker/native verification and skipped paid real-agent suites.

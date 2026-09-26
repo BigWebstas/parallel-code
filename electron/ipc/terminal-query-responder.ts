@@ -24,6 +24,8 @@ export interface TerminalQueryResponder {
    * are stale and get no answer.
    */
   feedDisplayOnly(data: string): void;
+  /** Current visible screen and input mode; null until queued output has been parsed. */
+  snapshot(): { text: string; bracketedPaste: boolean } | null;
   resize(cols: number, rows: number): void;
   dispose(): void;
 }
@@ -48,6 +50,7 @@ export function createTerminalQueryResponder(opts: {
   });
   let muted = 0;
   let disposed = false;
+  let pendingWrites = 0;
 
   term.onData((data) => {
     if (disposed || muted > 0 || !CURSOR_POSITION_REPORT.test(data)) return;
@@ -56,15 +59,30 @@ export function createTerminalQueryResponder(opts: {
 
   return {
     feed(data) {
-      if (!disposed) term.write(data);
+      if (disposed) return;
+      pendingWrites++;
+      term.write(data, () => {
+        pendingWrites--;
+      });
     },
     feedDisplayOnly(data) {
       if (disposed) return;
       muted++;
+      pendingWrites++;
       // Writes are parsed in order, so the callback runs before any later feed.
       term.write(data, () => {
         muted--;
+        pendingWrites--;
       });
+    },
+    snapshot() {
+      if (disposed || pendingWrites > 0) return null;
+      const buffer = term.buffer.active;
+      const lines: string[] = [];
+      for (let row = 0; row < term.rows; row++) {
+        lines.push(buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '');
+      }
+      return { text: lines.join('\n'), bracketedPaste: term.modes.bracketedPasteMode };
     },
     resize(cols, rows) {
       if (!disposed && cols > 0 && rows > 0) term.resize(cols, rows);

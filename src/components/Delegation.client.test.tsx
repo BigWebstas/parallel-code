@@ -188,6 +188,58 @@ it('approves only the child commit and target shown in the review', async () => 
   );
 });
 
+it('keeps an automatic failure visible after remount until explicitly dismissed', async () => {
+  const session = {
+    agentId: 'agent',
+    sessionInstanceId: 'old-instance',
+    taskId: 'parent',
+    name: 'Parent',
+    agentLabel: 'Claude',
+    branchName: 'task/parent',
+    status: 'exited',
+  };
+  state.messages = [
+    {
+      deliveryId: 'failed-delivery',
+      sender: { ...session, name: 'Other task' },
+      recipient: session,
+      prompt: 'Review this patch',
+      createdAt: new Date().toISOString(),
+      state: 'closed',
+      deliveryFailed: true,
+      reason: 'Delivery failed; inspect the recipient before resending: Enter failed',
+    },
+  ];
+  vi.mocked(invoke).mockImplementation(async (_channel, args) => {
+    if (args?.action === 'dismissMessageFailure') state = { ...state, messages: [] };
+    if (args?.action === 'state') return state;
+    return {};
+  });
+  const mount = () => {
+    dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
+  };
+  mount();
+  await vi.waitFor(() =>
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Enter failed'),
+  );
+  expect(host.querySelector('[role="alert"]')?.closest('details')).toBeNull();
+  expect(host.textContent).toContain('inspect the recipient before resending');
+  expect(button('Use in composer')).toBeUndefined();
+  dispose?.();
+  mount();
+  await vi.waitFor(() => expect(button('Dismiss failure')).toBeDefined());
+  button('Dismiss failure')?.click();
+  await vi.waitFor(() => expect(host.querySelector('[role="alert"]')).toBeNull());
+  expect(invoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
+    action: 'dismissMessageFailure',
+    deliveryId: 'failed-delivery',
+  });
+  expect(store.tasks.parent.promptDraft).toBe('Keep my draft');
+  expect(vi.mocked(invoke).mock.calls.every(([channel]) => channel !== IPC.WriteToAgent)).toBe(
+    true,
+  );
+});
+
 it('uses only the exact recipient empty composer and marks handling without sending', async () => {
   const session = {
     agentId: 'agent',

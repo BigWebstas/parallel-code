@@ -1,4 +1,9 @@
-import { registerTaskAuthority, delegationRequest, applyDelegationChange } from './delegation';
+import {
+  registerTaskAuthority,
+  delegationRequest,
+  applyDelegationChange,
+  startPeerMessageDelivery,
+} from './delegation';
 import type { DelegationChanged, IntegrationPolicy } from '../../electron/shared/delegation-types';
 import { produce } from 'solid-js/store';
 import { isAgentChat, supportsAgentChat } from './agent-chat';
@@ -1183,6 +1188,14 @@ export function initMCPListeners(): () => void {
   activeMCPListenersCleanup?.();
 
   const cleanups: Array<() => void> = [];
+  cleanups.push(
+    startPeerMessageDelivery((message) => {
+      const { taskId, agentId } = message.recipient;
+      setTaskLastInputAt(taskId);
+      setLastPrompt(taskId, message.prompt, agentId);
+      markAgentBusy(agentId);
+    }),
+  );
   cleanups.push(
     window.electron.ipcRenderer.on(IPC.DelegationChanged, (data: unknown) => {
       applyDelegationChange(data as DelegationChanged);

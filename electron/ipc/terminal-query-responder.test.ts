@@ -15,6 +15,24 @@ function setup(cols = 80, rows = 24) {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 describe('createTerminalQueryResponder', () => {
+  it('snapshots only the parsed visible screen and bracketed-paste mode', async () => {
+    const { responder } = setup(40, 3);
+    responder.feed('stale history\r\n'.repeat(5));
+    responder.feed('\x1b[2J\x1b[H\x1b[32mready\x1b[0m\x1b[?2004h');
+    expect(responder.snapshot()).toBeNull();
+    await vi.waitFor(() =>
+      expect(responder.snapshot()).toEqual({ text: 'ready\n\n', bracketedPaste: true }),
+    );
+
+    responder.feedDisplayOnly('\r\x1b[2Kupdated\x1b[?2004l');
+    expect(responder.snapshot()).toBeNull();
+    await vi.waitFor(() =>
+      expect(responder.snapshot()).toEqual({ text: 'updated\n\n', bracketedPaste: false }),
+    );
+    responder.dispose();
+    expect(responder.snapshot()).toBeNull();
+  });
+
   it('answers a cursor-position query with the position after the preceding output', async () => {
     const { responder, replies } = setup();
     responder.feed('hello\r\nworld\x1b[6n');

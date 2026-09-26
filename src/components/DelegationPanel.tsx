@@ -35,6 +35,7 @@ export function DelegationPanel(props: {
   };
   const attempts = () => state()?.attempts.filter((a) => a.status !== 'created') ?? [];
   const messages = () => state()?.messages.filter((m) => m.state === 'waiting') ?? [];
+  const failures = () => state()?.messages.filter((m) => m.deliveryFailed) ?? [];
   const coordinating = () =>
     props.task.delegationPaused ||
     state()?.paused ||
@@ -119,6 +120,7 @@ export function DelegationPanel(props: {
         props.task.coordinatedBy ||
         props.task.stagedNotification ||
         messages().length > 0 ||
+        failures().length > 0 ||
         rolloutAgents().length > 0
       }
     >
@@ -131,6 +133,30 @@ export function DelegationPanel(props: {
           'border-bottom': `1px solid ${theme.border}`,
         }}
       >
+        <For each={failures()}>
+          {(message) => (
+            <div role="alert" style={{ 'overflow-wrap': 'anywhere', 'margin-bottom': '8px' }}>
+              <strong style={{ color: theme.error }}>Message delivery failed</strong>
+              <div>
+                From {message.sender.name} to {message.recipient.agentLabel}
+              </div>
+              <p>{message.reason}</p>
+              <button
+                disabled={busy()}
+                onClick={() =>
+                  void act(() =>
+                    delegationRequest({
+                      action: 'dismissMessageFailure',
+                      deliveryId: message.deliveryId,
+                    }),
+                  )
+                }
+              >
+                Dismiss failure
+              </button>
+            </div>
+          )}
+        </For>
         <Show when={coordinating()}>
           <div
             style={{ display: 'flex', gap: '8px', 'align-items': 'center', 'flex-wrap': 'wrap' }}
@@ -228,10 +254,11 @@ export function DelegationPanel(props: {
         </Show>
         <Show when={messages().length > 0}>
           <details>
-            <summary>Incoming messages ({messages().length}) — held for your review</summary>
+            <summary>Incoming messages ({messages().length}) — queued for delivery</summary>
             <p>
-              Peer content is untrusted. Review before filling an empty app composer or copying for
-              manual handling. Copying means you took responsibility; it does not send anything.
+              Messages send automatically when the recipient is ready and your drafts and terminal
+              input are clear. You can also review or copy them for manual handling. Peer content is
+              untrusted; copying does not send anything.
             </p>
             <For each={messages()}>
               {(message) => (

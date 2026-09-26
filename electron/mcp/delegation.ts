@@ -5,11 +5,18 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Coordinator } from './coordinator.js';
 import type { CoordinatedTask } from './types.js';
-import { stripAnsi } from './prompt-detect.js';
+import { getAgentPromptReadiness, stripAnsi } from './prompt-detect.js';
 import { canConfigureCanvasMcp } from './canvas-config.js';
 import { validateBranchName } from './validation.js';
 import { getSkipPermissionsArgs } from '../shared/skip-permissions.js';
-import { getActiveAgentIds, getAgentMeta, getAgentScrollback, killAgent } from '../ipc/pty.js';
+import {
+  getActiveAgentIds,
+  getAgentMeta,
+  getAgentScrollback,
+  getAgentPromptSnapshot,
+  writeAgentPrompt,
+  killAgent,
+} from '../ipc/pty.js';
 import { deleteTask } from '../ipc/tasks.js';
 import type {
   DelegateAssignment,
@@ -88,6 +95,8 @@ export class DelegationService {
   private readonly messages = new Map<string, PeerMessage>();
   private readonly messageRequests = new Map<string, { payload: string; deliveryId: string }>();
   private readonly messageWaiters = new Set<() => void>();
+  private readonly delivering = new Set<string>();
+  private readonly readyMessages = new Map<string, { text: string; since: number }>();
   private readonly closes = new Map<string, Promise<{ detachedChildIds: string[] }>>();
 
   constructor(
@@ -585,7 +594,10 @@ export class DelegationService {
       )
         throw new DelegationError('Receipt unavailable', 404);
       const last = params.lastObservedState;
-      if (last !== undefined && !['waiting', 'handled', 'closed'].includes(String(last)))
+      if (
+        last !== undefined &&
+        !['waiting', 'delivered', 'handled', 'closed'].includes(String(last))
+      )
         throw new DelegationError('Invalid receipt state');
       if (message.state !== 'waiting' || last !== message.state) return this.receipt(message);
       await new Promise<void>((resolveWait) => {
@@ -622,8 +634,12 @@ export class DelegationService {
         observedAt: new Date().toISOString(),
       };
     }
-    const prompt = text(params.prompt, 'prompt', MAX_PROMPT_BYTES);
+    const prompt = text(params.prompt, 'prompt', MAX_PROMPT_BYTES).replace(/\r\n?/g, '\n');
     if (Buffer.byteLength(prompt) > MAX_PROMPT_BYTES) throw new DelegationError('Prompt too large');
+    // Peer content is text, never terminal control input (including paste delimiters).
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(prompt))
+      throw new DelegationError('Prompt contains terminal control characters');
     const requestId = id(params.requestId, 'requestId');
     const key = `${caller.sessionInstanceId}:${requestId}`;
     const payload = JSON.stringify([target.agentId, target.sessionInstanceId, prompt]);
@@ -639,7 +655,7 @@ export class DelegationService {
       throw new DelegationError('Session message limit reached', 429);
     if (this.messages.size >= MAX_MESSAGES) {
       for (const [key, message] of this.messages) {
-        if (message.state !== 'waiting') {
+        if (message.state !== 'waiting' && !message.deliveryFailed) {
           this.messages.delete(key);
           break;
         }
@@ -669,6 +685,7 @@ export class DelegationService {
     return { deliveryId: message.deliveryId, state: message.state, reason: message.reason };
   }
   private messageChanged(message: PeerMessage): void {
+    if (message.state !== 'waiting') this.readyMessages.delete(message.deliveryId);
     this.emit(message.recipient.taskId);
     for (const check of this.messageWaiters) check();
   }
@@ -701,10 +718,79 @@ export class DelegationService {
     return {
       attempts: [...this.attempts.values()].filter((a) => a.parentTaskId === taskId),
       messages: [...this.messages.values()].filter(
-        (m) => m.recipient.taskId === taskId && m.state === 'waiting',
+        (m) => m.recipient.taskId === taskId && (m.state === 'waiting' || m.deliveryFailed),
       ),
       paused: this.tasks.get(taskId)?.delegationPaused === true,
     };
+  }
+
+  /** The renderer grants a draft-free delivery opportunity; main owns identity and submission. */
+  private async deliverMessage(message: PeerMessage): Promise<void> {
+    const { agentId, taskId, sessionInstanceId } = message.recipient;
+    if (message.state !== 'waiting' || this.delivering.has(agentId)) return;
+    // Preserve FIFO even if two renderer requests arrive out of order.
+    const first = [...this.messages.values()].find(
+      (entry) => entry.state === 'waiting' && entry.recipient.agentId === agentId,
+    );
+    if (first !== message) return;
+    const coordinator = this.options.currentCoordinator();
+    if (this.requireTask(taskId).delegationPaused || coordinator?.hasPendingPrompt(taskId)) {
+      this.readyMessages.delete(message.deliveryId);
+      return;
+    }
+    const epoch = this.orchestrationEpoch;
+    const assertCurrent = () => {
+      this.assertOrchestrationEnabled(epoch);
+      this.expireMessages();
+      if (
+        message.state !== 'waiting' ||
+        this.requireTask(taskId).delegationPaused ||
+        !this.options
+          .sessions()
+          .some(
+            (session) =>
+              session.agentId === agentId && session.sessionInstanceId === sessionInstanceId,
+          )
+      )
+        throw new DelegationError('Recipient changed or delivery was canceled');
+    };
+    const snapshot = getAgentPromptSnapshot(agentId);
+    if (!snapshot || !getAgentPromptReadiness(snapshot.text).ready) {
+      this.readyMessages.delete(message.deliveryId);
+      return;
+    }
+    const previous = this.readyMessages.get(message.deliveryId);
+    if (!previous || previous.text !== snapshot.text) {
+      this.readyMessages.set(message.deliveryId, { text: snapshot.text, since: Date.now() });
+      return;
+    }
+    if (Date.now() - previous.since < 1500) return;
+    this.delivering.add(agentId);
+    try {
+      assertCurrent();
+      const prompt = `Message from agent ${message.sender.agentId} in task ${message.sender.taskId}:\n\n${message.prompt}`;
+      if (
+        !(await writeAgentPrompt(agentId, prompt, assertCurrent, () => {
+          // Submission is final even if the session ends while other input drains.
+          message.state = 'delivered';
+          message.reason = undefined;
+          this.messageChanged(message);
+        }))
+      )
+        return;
+      message.state = 'delivered';
+      message.reason = undefined;
+    } catch (error) {
+      // A failed Enter may leave the body in the composer. Never retry it automatically.
+      if (message.state !== 'delivered') {
+        message.state = 'closed';
+        message.deliveryFailed = true;
+        message.reason = `Delivery failed; inspect the recipient before resending: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    } finally {
+      this.delivering.delete(agentId);
+      this.messageChanged(message);
+    }
   }
 
   async request(raw: unknown): Promise<unknown> {
@@ -765,10 +851,19 @@ export class DelegationService {
         this.attempts.delete(`${id(request.parentTaskId)}:${id(request.requestId)}`);
         this.emit(request.parentTaskId);
         return { ok: true };
+      case 'dismissMessageFailure': {
+        const message = this.messages.get(id(request.deliveryId));
+        if (!message || !message.deliveryFailed) throw new DelegationError('Failure unavailable');
+        // Acknowledgment is a desktop action and remains possible after recipient restart.
+        message.deliveryFailed = false;
+        this.messageChanged(message);
+        return this.receipt(message);
+      }
+      case 'deliverMessage':
       case 'handleMessage': {
         const message = this.messages.get(id(request.deliveryId));
         this.expireMessages();
-        if (!message || message.state !== 'waiting')
+        if (!message || (request.action === 'handleMessage' && message.state !== 'waiting'))
           throw new DelegationError('Message unavailable');
         if (
           request.agentId !== message.recipient.agentId ||
@@ -781,6 +876,12 @@ export class DelegationService {
             )
         )
           throw new DelegationError('Recipient session changed');
+        if (request.action === 'deliverMessage') {
+          await this.deliverMessage(message);
+          return this.receipt(message);
+        }
+        if (this.delivering.has(message.recipient.agentId))
+          throw new DelegationError('Message is being delivered');
         if (request.state !== 'handled' && request.state !== 'closed')
           throw new DelegationError('Invalid receipt action');
         message.state = request.state;

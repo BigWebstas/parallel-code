@@ -1632,6 +1632,11 @@ export class Coordinator {
     return this.tasks.get(taskId)?.automationWriteInFlight === true;
   }
 
+  hasPendingPrompt(taskId: string): boolean {
+    const task = this.tasks.get(taskId);
+    return !!(task?.initialPrompt || task?.pendingPrompts?.length || task?.automationWriteInFlight);
+  }
+
   private setAutomationWriteInFlight(task: CoordinatedTask, value: boolean): void {
     if (task.automationWriteInFlight === value) return;
     task.automationWriteInFlight = value;

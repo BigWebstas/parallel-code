@@ -74,6 +74,8 @@ describe('nextTerminalInputPending', () => {
 
   it('ignores bracketed paste markers but keeps pasted text pending', () => {
     expect(nextTerminalInputPending(false, '\x1b[200~hello\x1b[201~')).toBe(true);
+    expect(nextTerminalInputPending(false, '\x1b[200~hello\n\x1b[201~')).toBe(true);
+    expect(nextTerminalInputPending(false, '\x1b[200~hello\n\x1b[201~\r')).toBe(false);
   });
 
   it('does not make a backspace on a clean line pending', () => {

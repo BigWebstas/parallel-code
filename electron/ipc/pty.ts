@@ -1,5 +1,6 @@
 import * as pty from 'node-pty';
 import { codexResumeId, isCodexUnsavedSessionExit } from '../shared/codex-resume.js';
+import { hasTerminalUserActivity, nextTerminalInputPending } from '../shared/terminal-input.js';
 import { stopAgentChat, stopAllAgentChats, runningAgentChatIds } from '../chat/sessions.js';
 import { execFileSync, execFile, spawn as cpSpawn } from 'child_process';
 import crypto from 'crypto';
@@ -23,7 +24,7 @@ import {
 } from './terminal-query-responder.js';
 import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
-import { debug as logDebug } from '../log.js';
+import { debug as logDebug, warn as logWarn } from '../log.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,6 +41,10 @@ interface PtySession {
   subscribers: Set<(encoded: string) => void>;
   scrollback: RingBuffer;
   queries: TerminalQueryResponder;
+  lastInputAt: number;
+  inputPending: boolean;
+  /** Present while a peer prompt and any competing input are being written. */
+  peerInputQueue?: { data: string; at: number }[];
   /** Assigned container name when running in Docker mode, null otherwise. */
   containerName: string | null;
 }
@@ -832,6 +837,8 @@ export async function spawnAgent(
     flushTimer: null,
     subscribers: new Set(),
     scrollback: new RingBuffer(),
+    lastInputAt: -Infinity,
+    inputPending: false,
     queries: createTerminalQueryResponder({
       cols: args.cols,
       rows: args.rows,
@@ -854,10 +861,125 @@ export function writeToAgent(agentId: string, data: string): void {
   if (handingOff.has(agentId)) throw new Error('Wait for the view switch to finish.');
   const session = sessions.get(agentId);
   if (!session) throw new Error(`Agent not found: ${agentId}`);
+  const at = Date.now();
+  if (hasTerminalUserActivity(data)) session.lastInputAt = at;
+  if (session.peerInputQueue) {
+    session.peerInputQueue.push({ data, at });
+    return;
+  }
+  writeSessionInput(session, data);
+}
+
+function writeSessionInput(session: PtySession, data: string): void {
+  const userActivity = hasTerminalUserActivity(data);
+  if (userActivity) session.lastInputAt = Date.now();
   session.proc.write(data);
+  // History recall/navigation can populate a draft without printable input.
+  // Escape/Backspace alone preserve a draft but cannot create one on an empty line.
+  const draftActivity = userActivity && [...data].some((ch) => ch !== '\x1b' && ch !== '\x7f');
+  session.inputPending = nextTerminalInputPending(session.inputPending || draftActivity, data);
   // Claude Code fires no Stop hook for a user interrupt, so consumers that
   // trust hook state (the coordinator) need to hear about the keystroke.
-  if (!session.isShell && INTERRUPT_KEYSTROKES.has(data)) emitPtyEvent('interrupt', agentId);
+  if (!session.isShell && INTERRUPT_KEYSTROKES.has(data))
+    emitPtyEvent('interrupt', session.agentId);
+}
+
+export function getAgentPromptSnapshot(
+  agentId: string,
+): { text: string; bracketedPaste: boolean } | null {
+  return sessions.get(agentId)?.queries.snapshot() ?? null;
+}
+
+/**
+ * Paste and submit one peer prompt without interleaving other terminal input.
+ * `onSubmitted` runs immediately after Enter, before queued raw input is replayed.
+ */
+export async function writeAgentPrompt(
+  agentId: string,
+  prompt: string,
+  assertCurrent: () => void,
+  onSubmitted?: () => void,
+): Promise<boolean> {
+  const session = sessions.get(agentId);
+  if (
+    !session ||
+    handingOff.has(agentId) ||
+    session.peerInputQueue ||
+    session.inputPending ||
+    Date.now() - session.lastInputAt < 5_000
+  )
+    return false;
+  const snapshot = session.queries.snapshot();
+  if (!snapshot) return false;
+
+  const queue: { data: string; at: number }[] = [];
+  session.peerInputQueue = queue;
+  const isCurrentSession = () => sessions.get(agentId) === session && !handingOff.has(agentId);
+  const assertSession = () => {
+    if (!isCurrentSession()) throw new Error('Agent terminal changed during prompt delivery');
+  };
+  try {
+    try {
+      assertCurrent();
+      assertSession();
+      writeSessionInput(session, '\x1b[I');
+      assertCurrent();
+      assertSession();
+      // Without bracketed paste, newlines submit and tabs invoke completion.
+      // Keep the fallback on one line until the authorized Enter below.
+      const body = snapshot.bracketedPaste
+        ? `\x1b[200~${prompt}\x1b[201~`
+        : prompt.replace(/\r\n?|\n|\t/g, ' ');
+      writeSessionInput(session, body);
+      const delay = Math.min(500, Math.max(50, prompt.split('\n').length * 15));
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      assertCurrent();
+      assertSession();
+      writeSessionInput(session, '\r');
+    } catch (err) {
+      // Queued Enter or escape sequences could submit a canceled pasted body.
+      // No queued input is safe to replay after a failed peer delivery.
+      if (queue.length > 0) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw Object.assign(
+          new Error(`${detail}. Queued terminal input was discarded after failed prompt delivery.`),
+          { cause: err },
+        );
+      }
+      throw err;
+    }
+
+    try {
+      onSubmitted?.();
+    } catch {
+      logWarn('pty', 'peer prompt submission callback failed after Enter', { agentId });
+    }
+
+    // Shift the original arrival timeline after submission, preserving the gap
+    // between a competing writer's paste and Enter even if both were queued.
+    const firstArrivalAt = queue[0]?.at ?? 0;
+    const replayStartedAt = Date.now();
+    try {
+      while (queue.length > 0 && isCurrentSession()) {
+        const input = queue[0];
+        const delay = replayStartedAt + input.at - firstArrivalAt - Date.now();
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+        if (!isCurrentSession()) break;
+        writeSessionInput(session, input.data);
+        queue.shift();
+      }
+    } catch {
+      // The peer was submitted successfully: a later raw-input error must not
+      // turn its receipt into a failed delivery that could be retried.
+      logWarn('pty', 'queued terminal input discarded after submitted peer prompt', {
+        agentId,
+        queuedWrites: queue.length,
+      });
+    }
+    return true;
+  } finally {
+    delete session.peerInputQueue;
+  }
 }
 
 export function resizeAgent(agentId: string, cols: number, rows: number): void {

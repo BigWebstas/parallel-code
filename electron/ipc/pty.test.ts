@@ -1,6 +1,8 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { createInterface } from 'node:readline';
+import { PassThrough } from 'node:stream';
 import type { Notify } from './notify.js';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
@@ -82,6 +84,7 @@ vi.mock('node-pty', () => ({
 
 vi.mock('../log.js', () => ({
   debug: mockLogDebug,
+  warn: vi.fn(),
 }));
 
 import {
@@ -92,6 +95,7 @@ import {
   DOCKER_CONTAINER_HOME,
   dockerImageExists,
   hashDockerfile,
+  getAgentPromptSnapshot,
   isDockerAvailable,
   killAgent,
   killAllAgents,
@@ -103,6 +107,7 @@ import {
   subscribeToAgent,
   validateCommand,
   writeToAgent,
+  writeAgentPrompt,
 } from './pty.js';
 
 let tempPaths: string[] = [];
@@ -986,6 +991,326 @@ describe('spawnAgent terminal queries', () => {
     proc.emitData('\x1b[6n');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(proc.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('peer prompt delivery', () => {
+  async function launch(bracketedPaste = true) {
+    const args = buildSpawnArgs({ command: 'codex', args: [], dockerMode: false });
+    await spawnAgent(createMockNotify(), args);
+    const proc = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1]
+      .value as ReturnType<typeof mockPtySpawn>;
+    proc.emitData(`\x1b[2J\x1b[Hready${bracketedPaste ? '\x1b[?2004h' : ''}`);
+    expect(getAgentPromptSnapshot(args.agentId)).toBeNull();
+    await vi.waitFor(() => expect(getAgentPromptSnapshot(args.agentId)?.text).toContain('ready'));
+    vi.useFakeTimers();
+    return { args, proc };
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it('refuses output that is still being parsed, without writing', async () => {
+    const { args, proc } = await launch();
+    proc.emitData('\r\x1b[2Kworking');
+    const assertCurrent = vi.fn();
+    expect(await writeAgentPrompt(args.agentId, 'hello', assertCurrent)).toBe(false);
+    expect(assertCurrent).not.toHaveBeenCalled();
+    expect(proc.write).not.toHaveBeenCalled();
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    expect(getAgentPromptSnapshot(args.agentId)).toBeNull();
+  });
+
+  it('separates paste from Enter, refuses a competing peer and applies cooldown', async () => {
+    const { args, proc } = await launch();
+    const assertCurrent = vi.fn();
+    const delivery = writeAgentPrompt(args.agentId, 'hello', assertCurrent);
+    expect(proc.write.mock.calls).toEqual([['\x1b[I'], ['\x1b[200~hello\x1b[201~']]);
+    expect(await writeAgentPrompt(args.agentId, 'another', assertCurrent)).toBe(false);
+    await vi.advanceTimersByTimeAsync(49);
+    expect(proc.write).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await delivery).toBe(true);
+    expect(proc.write.mock.lastCall).toEqual(['\r']);
+    expect(assertCurrent).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(await writeAgentPrompt(args.agentId, 'next', assertCurrent)).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const next = writeAgentPrompt(args.agentId, 'next', assertCurrent);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await next).toBe(true);
+  });
+
+  it('uses the current mode and caps the multiline submit delay', async () => {
+    const { args, proc } = await launch(false);
+    const prompt = 'line\n'.repeat(40);
+    const delivery = writeAgentPrompt(args.agentId, prompt, () => {});
+    expect(proc.write.mock.calls).toEqual([['\x1b[I'], ['line '.repeat(40)]]);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(proc.write).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await delivery).toBe(true);
+  });
+
+  it.each([false, true])(
+    'submits unbracketed text only through the authorized Enter (cancel: %s)',
+    async (cancel) => {
+      const { args, proc } = await launch(false);
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const completer = vi.fn((line: string): [string[], string] => [[], line]);
+      const editor = createInterface({ input, output, terminal: true, completer });
+      const submitted: string[] = [];
+      editor.on('line', (line) => submitted.push(line));
+      proc.write.mockImplementation((data: string) => {
+        input.write(data);
+      });
+      let current = true;
+      const onSubmitted = vi.fn();
+      try {
+        const delivery = writeAgentPrompt(
+          args.agentId,
+          'Message from agent sender in task sender:\n\nReview\tthis\r\npatch',
+          () => {
+            if (!current) throw new Error('canceled');
+          },
+          onSubmitted,
+        );
+        expect(submitted).toEqual([]);
+        expect(completer).not.toHaveBeenCalled();
+        const outcome = cancel
+          ? expect(delivery).rejects.toThrow('canceled')
+          : expect(delivery).resolves.toBe(true);
+        current = !cancel;
+        await vi.advanceTimersByTimeAsync(500);
+        await outcome;
+        expect(submitted).toEqual(
+          cancel ? [] : ['Message from agent sender in task sender:  Review this patch'],
+        );
+        expect(onSubmitted).toHaveBeenCalledTimes(cancel ? 0 : 1);
+      } finally {
+        editor.close();
+      }
+    },
+  );
+
+  it('defers to recent raw input for five seconds', async () => {
+    const { args, proc } = await launch();
+    writeToAgent(args.agentId, 'user submission\r');
+    const assertCurrent = vi.fn();
+    expect(await writeAgentPrompt(args.agentId, 'peer', assertCurrent)).toBe(false);
+    expect(assertCurrent).not.toHaveBeenCalled();
+    expect(proc.write.mock.calls).toEqual([['user submission\r']]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const delivery = writeAgentPrompt(args.agentId, 'peer', assertCurrent);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await delivery).toBe(true);
+  });
+
+  it.each(['phone draft', '\x1b[200~multiline draft\n\x1b[201~', '\x1b[A'])(
+    'holds unsent raw input %j after cooldown until explicitly cleared',
+    async (draft) => {
+      const { args, proc } = await launch();
+      writeToAgent(args.agentId, draft);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await writeAgentPrompt(args.agentId, 'peer', () => {})).toBe(false);
+      expect(proc.write.mock.calls).toEqual([[draft]]);
+      writeToAgent(args.agentId, '\x15');
+      expect(await writeAgentPrompt(args.agentId, 'peer', () => {})).toBe(false);
+      await vi.advanceTimersByTimeAsync(5_000);
+      writeToAgent(args.agentId, '\x1b[I');
+      writeToAgent(args.agentId, '\x1b[1;1R');
+      const delivery = writeAgentPrompt(args.agentId, 'peer', () => {});
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await delivery).toBe(true);
+    },
+  );
+
+  it.each(['\x1b', '\x7f', '\x1b\x1b', '\x7f\x7f', '\x1b\x7f\x1b'])(
+    'keeps only the cooldown when empty input receives %j',
+    async (keys) => {
+      const { args, proc } = await launch();
+      writeToAgent(args.agentId, keys);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(await writeAgentPrompt(args.agentId, 'peer', () => {})).toBe(false);
+      expect(proc.write.mock.calls).toEqual([[keys]]);
+      await vi.advanceTimersByTimeAsync(1);
+      const delivery = writeAgentPrompt(args.agentId, 'peer', () => {});
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await delivery).toBe(true);
+      expect(proc.write.mock.lastCall).toEqual(['\r']);
+    },
+  );
+
+  it.each(['\x1b', '\x7f', '\x1b\x1b', '\x7f\x7f', '\x1b\x7f\x1b'])(
+    'preserves an existing draft when input receives %j',
+    async (keys) => {
+      const { args, proc } = await launch();
+      writeToAgent(args.agentId, 'unsent draft');
+      writeToAgent(args.agentId, keys);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await writeAgentPrompt(args.agentId, 'peer', () => {})).toBe(false);
+      expect(proc.write.mock.calls).toEqual([['unsent draft'], [keys]]);
+    },
+  );
+
+  it('keeps pending input isolated to its PTY session', async () => {
+    const { args, proc } = await launch();
+    writeToAgent(args.agentId, 'primary draft');
+    const secondaryArgs = buildSpawnArgs({ command: 'codex', args: [], dockerMode: false });
+    await spawnAgent(createMockNotify(), secondaryArgs);
+    const secondary = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1]
+      .value as ReturnType<typeof mockPtySpawn>;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await writeAgentPrompt(args.agentId, 'primary peer', () => {})).toBe(false);
+    const delivery = writeAgentPrompt(secondaryArgs.agentId, 'secondary peer', () => {});
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await delivery).toBe(true);
+    expect(proc.write.mock.calls).toEqual([['primary draft']]);
+    expect(secondary.write.mock.lastCall).toEqual(['\r']);
+  });
+
+  it('serializes competing writes with their spacing and holds the lock while draining', async () => {
+    const { args, proc } = await launch();
+    const prompt = Array.from({ length: 10 }, () => 'line').join('\n');
+    let writeCountAtSubmit: number | undefined;
+    const onSubmitted = vi.fn(() => {
+      writeCountAtSubmit = proc.write.mock.calls.length;
+    });
+    const delivery = writeAgentPrompt(args.agentId, prompt, () => {}, onSubmitted);
+    await vi.advanceTimersByTimeAsync(30);
+    writeToAgent(args.agentId, '\x1b[I');
+    writeToAgent(args.agentId, 'competing body');
+    await vi.advanceTimersByTimeAsync(70);
+    writeToAgent(args.agentId, '\r');
+    expect(proc.write).toHaveBeenCalledTimes(2);
+    expect(onSubmitted).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+    expect(writeCountAtSubmit).toBe(3);
+    expect(proc.write.mock.calls.slice(2)).toEqual([['\r'], ['\x1b[I'], ['competing body']]);
+    await vi.advanceTimersByTimeAsync(25);
+    writeToAgent(args.agentId, 'during drain');
+    expect(await writeAgentPrompt(args.agentId, 'another peer', () => {})).toBe(false);
+    await vi.advanceTimersByTimeAsync(44);
+    expect(proc.write).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(proc.write.mock.lastCall).toEqual(['\r']);
+    await vi.advanceTimersByTimeAsync(74);
+    expect(proc.write).toHaveBeenCalledTimes(6);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await delivery).toBe(true);
+    expect(proc.write.mock.lastCall).toEqual(['during drain']);
+    expect(await writeAgentPrompt(args.agentId, 'cooldown', () => {})).toBe(false);
+  });
+
+  it('does not submit or replay queued input into a same-id replacement', async () => {
+    const { args, proc } = await launch();
+    const onSubmitted = vi.fn();
+    const delivery = writeAgentPrompt(args.agentId, 'peer', () => {}, onSubmitted);
+    const rejected = expect(delivery).rejects.toThrow('terminal changed');
+    writeToAgent(args.agentId, 'queued raw');
+    await spawnAgent(createMockNotify(), args);
+    const replacement = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1]
+      .value as ReturnType<typeof mockPtySpawn>;
+    await vi.advanceTimersByTimeAsync(50);
+    await rejected;
+    expect(proc.write).toHaveBeenCalledTimes(2);
+    expect(onSubmitted).not.toHaveBeenCalled();
+    expect(replacement.write).not.toHaveBeenCalled();
+  });
+
+  it('stops draining when a session is replaced between competing body and Enter', async () => {
+    const { args, proc } = await launch();
+    const onSubmitted = vi.fn();
+    const delivery = writeAgentPrompt(args.agentId, 'line\n'.repeat(10), () => {}, onSubmitted);
+    writeToAgent(args.agentId, 'competing body');
+    await vi.advanceTimersByTimeAsync(70);
+    writeToAgent(args.agentId, '\r');
+    await vi.advanceTimersByTimeAsync(95);
+    expect(proc.write.mock.lastCall).toEqual(['competing body']);
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+    await spawnAgent(createMockNotify(), args);
+    const replacement = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1]
+      .value as ReturnType<typeof mockPtySpawn>;
+    await vi.advanceTimersByTimeAsync(70);
+    expect(await delivery).toBe(true);
+    expect(proc.write.mock.lastCall).toEqual(['competing body']);
+    expect(replacement.write).not.toHaveBeenCalled();
+  });
+
+  it('reports submission even if its callback fails after Enter', async () => {
+    const { args, proc } = await launch();
+    const onSubmitted = vi.fn(() => {
+      throw new Error('receipt failed');
+    });
+    const delivery = writeAgentPrompt(args.agentId, 'peer', () => {}, onSubmitted);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await delivery).toBe(true);
+    expect(onSubmitted).toHaveBeenCalledTimes(1);
+    expect(proc.write.mock.lastCall).toEqual(['\r']);
+  });
+
+  it('cancels before any writes and discards queued Enter after delayed submission is revoked', async () => {
+    const { args, proc } = await launch();
+    await expect(
+      writeAgentPrompt(args.agentId, 'peer', () => {
+        throw new Error('cancelled');
+      }),
+    ).rejects.toThrow('cancelled');
+    expect(proc.write).not.toHaveBeenCalled();
+
+    let current = true;
+    const cancellation = new Error('cancelled');
+    const delivery = writeAgentPrompt(args.agentId, 'peer', () => {
+      if (!current) throw cancellation;
+    });
+    const rejected = expect(delivery).rejects.toMatchObject({
+      message: expect.stringContaining('Queued terminal input was discarded'),
+      cause: cancellation,
+    });
+    writeToAgent(args.agentId, 'user input');
+    writeToAgent(args.agentId, '\r');
+    current = false;
+    await vi.advanceTimersByTimeAsync(50);
+    await rejected;
+    expect(proc.write.mock.calls).toEqual([['\x1b[I'], ['\x1b[200~peer\x1b[201~']]);
+    writeToAgent(args.agentId, 'after cancellation');
+    expect(proc.write.mock.lastCall).toEqual(['after cancellation']);
+  });
+
+  it('keeps a successful submission receipt when replaying queued raw input fails', async () => {
+    const { args, proc } = await launch();
+    proc.write.mockImplementation((data: string) => {
+      if (data === 'competing body') throw new Error('raw input failed');
+    });
+    const delivery = writeAgentPrompt(args.agentId, 'peer', () => {});
+    writeToAgent(args.agentId, 'competing body');
+    writeToAgent(args.agentId, '\r');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await delivery).toBe(true);
+    expect(proc.write.mock.calls).toEqual([
+      ['\x1b[I'],
+      ['\x1b[200~peer\x1b[201~'],
+      ['\r'],
+      ['competing body'],
+    ]);
+    writeToAgent(args.agentId, 'after replay failure');
+    expect(proc.write.mock.lastCall).toEqual(['after replay failure']);
+  });
+
+  it('releases the writer after a PTY write error without retrying the body', async () => {
+    const { args, proc } = await launch();
+    proc.write
+      .mockImplementationOnce(() => {})
+      .mockImplementationOnce(() => {
+        throw new Error('PTY write failed');
+      });
+    await expect(writeAgentPrompt(args.agentId, 'peer', () => {})).rejects.toThrow(
+      'PTY write failed',
+    );
+    expect(proc.write).toHaveBeenCalledTimes(2);
+    writeToAgent(args.agentId, 'after failure');
+    expect(proc.write.mock.lastCall).toEqual(['after failure']);
   });
 });
 
