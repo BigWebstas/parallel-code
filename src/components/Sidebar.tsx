@@ -20,7 +20,6 @@ import {
   setPanelUserSize,
   setProjectTasksCollapsed,
   setProjectsCollapsed,
-  setSidebarNeedsInputFirst,
   uncollapseTask,
   isProjectMissing,
   showNotification,
@@ -34,7 +33,8 @@ import {
   computeGroupedTasks,
   getCoordinatorChildren,
 } from '../store/sidebar-order';
-import { computeNeedsInputTasks, jumpToWaitingTask } from '../store/sidebar-attention';
+import { getChildAttentionSummary } from '../store/sidebar-attention';
+import { AttentionTray } from './AttentionTray';
 import { ConnectPhoneModal } from './ConnectPhoneModal';
 import { RemoveProjectConfirm } from './RemoveProjectConfirm';
 import { EditProjectDialog } from './EditProjectDialog';
@@ -53,7 +53,6 @@ import { TaskAgentStatusLine } from './TaskAgentStatusLine';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { abbreviateHomePath } from '../lib/path';
-import { formatRelativeAge } from '../lib/relativeAge';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { ImportableWorktree } from '../ipc/types';
@@ -266,143 +265,6 @@ function taskAttentionStyles(
           ? `1.5px solid color-mix(in srgb, ${offscreenAttention.color()} 38%, transparent)`
           : '1.5px solid transparent',
   };
-}
-
-/** One pinned row in the "waiting for you" tray. */
-function NeedsInputRow(props: {
-  taskId: string;
-  since: number;
-  panel: string | null;
-  nowMs: number;
-}) {
-  const task = () => store.tasks[props.taskId];
-  const project = () => store.projects.find((p) => p.id === task()?.projectId) ?? null;
-  const waited = () => formatRelativeAge(props.since, props.nowMs);
-
-  return (
-    <Show when={task()}>
-      {(t) => (
-        <div
-          class="task-item sidebar-attention-row"
-          role="button"
-          tabIndex={0}
-          aria-current={store.activeTaskId === props.taskId ? 'true' : undefined}
-          data-attention={getTaskAttentionState(props.taskId)}
-          title={`${t().name} — waiting for your input`}
-          onClick={() => jumpToWaitingTask(props.taskId, props.panel)}
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter' && e.key !== ' ') return;
-            e.preventDefault();
-            jumpToWaitingTask(props.taskId, props.panel);
-          }}
-          style={{
-            display: 'flex',
-            'flex-direction': 'column',
-            'flex-shrink': '0',
-            gap: '2px',
-            padding: '6px 8px',
-            'border-radius': 'var(--radius-sm)',
-            'font-size': sf(12),
-            color: theme.fg,
-            'font-weight': '500',
-            cursor: 'pointer',
-          }}
-        >
-          <div class="task-item-head">
-            {/* The task's real attention state, not a hardcoded `needs_input`:
-                since membership is question-driven, a row here can also be
-                errored or awaiting review, and the dot must not contradict the
-                same task's dot in the list below. The tray header carries the
-                "waiting for you" message on its own. */}
-            <StatusDot
-              status={getTaskDotStatus(props.taskId)}
-              size="sm"
-              attention={getTaskAttentionState(props.taskId)}
-            />
-            <TaskName name={t().name} />
-          </div>
-          {/* Project and elapsed time share the second line so the name gets
-              the full row width on the first. */}
-          <div
-            style={{
-              display: 'flex',
-              'align-items': 'center',
-              gap: '5px',
-              'padding-left': 'var(--task-row-indent)',
-              'font-size': sf(11),
-              color: theme.fgSubtle,
-              'min-width': '0',
-            }}
-          >
-            <Show when={project()}>
-              {(p) => (
-                <>
-                  <ProjectSwatch color={p().color} size={6} />
-                  <span
-                    style={{
-                      overflow: 'hidden',
-                      'text-overflow': 'ellipsis',
-                      'white-space': 'nowrap',
-                    }}
-                  >
-                    {p().name}
-                  </span>
-                </>
-              )}
-            </Show>
-            <span style={{ color: theme.warning, 'flex-shrink': '0' }}>
-              {project() ? '· ' : ''}
-              {waited()}
-            </span>
-          </div>
-        </div>
-      )}
-    </Show>
-  );
-}
-
-/** Tasks blocked on an answer, pinned directly under the New Task button with
- *  the most recent question first. */
-function NeedsInputTray(props: { nowMs: number }) {
-  const entries = createMemo(() => computeNeedsInputTasks());
-
-  return (
-    <Show when={store.sidebarNeedsInputFirst && entries().length > 0}>
-      <div class="sidebar-attention-tray">
-        <div class="sidebar-attention-tray-header">
-          <span
-            style={{
-              'font-size': sf(12),
-              color: theme.warning,
-              'font-weight': '600',
-            }}
-          >
-            Waiting for you ({entries().length})
-          </span>
-          <IconButton
-            icon={
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z" />
-              </svg>
-            }
-            onClick={() => setSidebarNeedsInputFirst(false)}
-            title="Stop pinning tasks that need input (re-enable in Settings)"
-            size="sm"
-          />
-        </div>
-        <For each={entries()}>
-          {(entry) => (
-            <NeedsInputRow
-              taskId={entry.taskId}
-              since={entry.since}
-              panel={entry.panel}
-              nowMs={props.nowMs}
-            />
-          )}
-        </For>
-      </div>
-    </Show>
-  );
 }
 
 export function TaskRowShell(props: {
@@ -993,7 +855,7 @@ export function Sidebar() {
         </Show>
 
         {/* Tasks waiting on an answer — pinned here so they never scroll away */}
-        <NeedsInputTray nowMs={nowMs()} />
+        <AttentionTray nowMs={nowMs()} />
 
         {/* Tasks grouped by project */}
         <div
@@ -1270,6 +1132,11 @@ function CoordinatorFolder(props: TaskEntryProps) {
               nowMs={props.nowMs}
             />
             <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <Show when={getChildAttentionSummary(props.taskId)}>
+              {(summary) => (
+                <div style={{ 'font-size': sf(11), color: theme.fgMuted }}>{summary()}</div>
+              )}
+            </Show>
           </TaskRowShell>
 
           {/* Indented active children */}
@@ -1383,6 +1250,11 @@ function CollapsedTaskEntry(props: {
               </Show>
             </div>
             <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <Show when={getChildAttentionSummary(props.taskId)}>
+              {(summary) => (
+                <div style={{ 'font-size': sf(11), color: theme.fgMuted }}>{summary()}</div>
+              )}
+            </Show>
           </TaskRowShell>
 
           {/* If collapsed coordinator, still show children nested */}

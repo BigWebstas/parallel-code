@@ -813,9 +813,12 @@ export class DelegationService {
       case 'projectPolicy':
         this.updatePolicy(request.policy);
         return request.policy;
-      case 'state':
+      case 'state': {
+        const taskId = id(request.taskId);
+        this.requireTask(taskId);
         this.expireMessages();
-        return this.state(id(request.taskId));
+        return this.state(taskId);
+      }
       case 'inbox':
         this.expireMessages();
         return this.state(id(request.taskId)).messages;

@@ -7,6 +7,7 @@ import {
   showNotification,
 } from '../store/store';
 import { getCoordinatorChildren } from '../store/sidebar-order';
+import { getChildAttentionSummary } from '../store/sidebar-attention';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { StatusDot } from './StatusDot';
@@ -136,6 +137,7 @@ function MCPLogModal(props: { onClose: () => void }) {
 
 export function SubTaskStrip(props: SubTaskStripProps) {
   const [showLogs, setShowLogs] = createSignal(false);
+  const summary = createMemo(() => getChildAttentionSummary(props.coordinatorTaskId));
 
   const subTasks = createMemo(() => {
     const { active, collapsed } = getCoordinatorChildren(props.coordinatorTaskId);
@@ -143,7 +145,10 @@ export function SubTaskStrip(props: SubTaskStripProps) {
   });
 
   const taskTone = (task: (typeof store.tasks)[string]) => {
-    if (task.landingState === 'landed_pending_review' || task.landingState === 'reviewed') {
+    if (task.landingState === 'landed_pending_review') {
+      return { color: theme.warning, label: 'merged, awaiting review' };
+    }
+    if (task.landingState === 'reviewed') {
       return { color: theme.success, label: 'landed' };
     }
     if (
@@ -168,7 +173,7 @@ export function SubTaskStrip(props: SubTaskStripProps) {
       <Show when={showLogs()}>
         <MCPLogModal onClose={() => setShowLogs(false)} />
       </Show>
-      <Show when={subTasks().length > 0}>
+      <Show when={subTasks().length > 0 || summary()}>
         <div
           style={{
             display: 'flex',
@@ -191,6 +196,13 @@ export function SubTaskStrip(props: SubTaskStripProps) {
           >
             Sub-tasks:
           </span>
+          <Show when={summary()}>
+            {(text) => (
+              <span style={{ 'font-size': sf(11), color: theme.fgMuted, 'white-space': 'nowrap' }}>
+                {text()}
+              </span>
+            )}
+          </Show>
           <For each={subTasks()}>
             {(task) => (
               <span style={{ display: 'inline-flex', gap: '4px', 'align-items': 'center' }}>
@@ -276,7 +288,7 @@ export function SubTaskStrip(props: SubTaskStripProps) {
           </Show>
         </div>
       </Show>
-      <Show when={subTasks().length === 0 && store.verboseLogging}>
+      <Show when={subTasks().length === 0 && !summary() && store.verboseLogging}>
         <div
           style={{
             display: 'flex',

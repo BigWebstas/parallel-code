@@ -1,14 +1,21 @@
-import { reconcile } from 'solid-js/store';
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { produce, reconcile } from 'solid-js/store';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IPC } from '../../electron/ipc/channels';
-import type { PeerMessage } from '../../electron/shared/delegation-types';
+import type {
+  DelegationChanged,
+  DelegationState,
+  PeerMessage,
+} from '../../electron/shared/delegation-types';
 import { invoke } from '../lib/ipc';
 import { warn } from '../lib/log';
 import { setStore, store } from './core';
 import {
   canUsePeerComposer,
   delegationStates,
+  refreshDelegationState,
+  registerTaskAuthority,
   setDelegationStates,
+  startDelegationStateHydration,
   startPeerMessageDelivery,
 } from './delegation';
 import type { Agent, Task } from './types';
@@ -88,6 +95,7 @@ afterEach(() => {
   cleanup?.();
   vi.useRealTimers();
   vi.resetAllMocks();
+  vi.unstubAllGlobals();
 });
 
 it('delivers to an unmounted background second pane using backend session authority', async () => {
@@ -239,4 +247,202 @@ it('records terminal failures without repeatedly logging or treating them as del
   expect(delegationStates[task.id].messages[0].state).toBe('closed');
   await vi.advanceTimersByTimeAsync(1_000);
   expect(invoke).toHaveBeenCalledTimes(4);
+});
+
+describe('delegation state hydration', () => {
+  let changed: ((data: DelegationChanged) => void) | undefined;
+  const unsubscribe = vi.fn();
+  const failure: DelegationState = {
+    attempts: [
+      {
+        requestId: 'attempt',
+        parentTaskId: task.id,
+        name: 'Child',
+        status: 'failed',
+        error: 'Launch failed',
+      },
+    ],
+    messages: [{ ...message(), state: 'closed', deliveryFailed: true, reason: 'Recipient exited' }],
+    paused: false,
+  };
+
+  beforeEach(() => {
+    cleanup?.();
+    cleanup = undefined;
+    setDelegationStates(reconcile({}));
+    changed = undefined;
+    vi.stubGlobal('electron', {
+      ipcRenderer: {
+        on: vi.fn((channel: string, handler: (data: DelegationChanged) => void) => {
+          expect(channel).toBe(IPC.DelegationChanged);
+          changed = handler;
+          return unsubscribe;
+        }),
+      },
+    });
+    vi.mocked(invoke).mockImplementation(async () => {
+      expect(changed).toBeDefined();
+      return failure;
+    });
+  });
+
+  it('loads pre-existing failures for active, background, and collapsed tasks without a panel', async () => {
+    setStore('tasks', 'background', { ...task, id: 'background' });
+    setStore('tasks', 'collapsed', { ...task, id: 'collapsed', collapsed: true });
+    setStore('taskOrder', [task.id, 'background']);
+    setStore('collapsedTaskOrder', ['collapsed']);
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invoke).toHaveBeenCalledTimes(3);
+    for (const id of [task.id, 'background', 'collapsed'])
+      expect(delegationStates[id]?.messages[0].deliveryFailed).toBe(true);
+    expect(delegationStates[task.id]?.attempts[0].error).toBe('Launch failed');
+    setStore('tasks', task.id, 'name', 'Renamed');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(invoke).toHaveBeenCalledTimes(3);
+  });
+
+  it('loads adopted tasks and refreshes an existing task after authority registration', async () => {
+    setStore('tasks', reconcile({}));
+    setStore('projects', [{ id: 'project', name: 'Repo', path: '/repo', color: '' }]);
+    cleanup = startDelegationStateHydration();
+    setStore('tasks', task.id, { ...task });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(delegationStates[task.id]?.messages).toEqual(failure.messages);
+    await registerTaskAuthority(store.tasks[task.id]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invoke).toHaveBeenCalledTimes(3);
+    expect(invoke).toHaveBeenLastCalledWith(IPC.DelegationRequest, {
+      action: 'state',
+      taskId: task.id,
+    });
+  });
+
+  it('preserves a saved pause flag when failed authority restoration makes the snapshot unavailable', async () => {
+    setStore('tasks', task.id, 'delegationPaused', true);
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('Task unavailable or closing'));
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.tasks[task.id].delegationPaused).toBe(true);
+    expect(delegationStates[task.id]).toBeUndefined();
+    expect(warn).toHaveBeenCalledOnce();
+  });
+
+  it('skips hidden document-agent tasks, which have no delegation authority', async () => {
+    setStore('projects', [
+      { id: 'documents', name: 'Documents', path: '/docs', color: '', kind: 'document' },
+    ]);
+    setStore('tasks', 'document-agent', { ...task, id: 'document-agent', projectId: 'documents' });
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(delegationStates['document-agent']).toBeUndefined();
+  });
+
+  it('does not refresh a replacement task after an older authority registration resolves', async () => {
+    setStore('projects', [{ id: 'project', name: 'Repo', path: '/repo', color: '' }]);
+    let resolve: (() => void) | undefined;
+    vi.mocked(invoke).mockImplementationOnce(
+      () => new Promise((done) => (resolve = () => done({ ready: true }))),
+    );
+    const registration = registerTaskAuthority(store.tasks[task.id]);
+    setStore(
+      'tasks',
+      produce((tasks) => delete tasks.recipient),
+    );
+    setStore('tasks', task.id, { ...task, name: 'Replacement' });
+    resolve?.();
+    await registration;
+    expect(invoke).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a newer subscribed change when the initial snapshot resolves late', async () => {
+    let resolve: ((state: DelegationState) => void) | undefined;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    changed?.({ taskId: task.id, state: { ...failure, paused: true } });
+    resolve?.({ attempts: [], messages: [], paused: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(delegationStates[task.id]?.paused).toBe(true);
+    expect(delegationStates[task.id]?.messages[0].deliveryFailed).toBe(true);
+  });
+
+  it('replaces omitted optional fields and ignores older concurrent refreshes', async () => {
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    let resolve: ((state: DelegationState) => void) | undefined;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+    const older = refreshDelegationState(task.id);
+    const newer = { attempts: [], messages: [message()], paused: false };
+    vi.mocked(invoke).mockResolvedValueOnce(newer);
+    await refreshDelegationState(task.id);
+    resolve?.(failure);
+    await older;
+    expect(delegationStates[task.id]?.messages[0].reason).toBeUndefined();
+    expect(delegationStates[task.id]?.messages[0].deliveryFailed).toBeUndefined();
+  });
+
+  it('keeps a detached child paused when an earlier child snapshot arrives', async () => {
+    setStore('tasks', task.id, 'coordinatedBy', 'parent');
+    let resolve: ((state: DelegationState) => void) | undefined;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    changed?.({ taskId: 'parent', detachedChildIds: [task.id] });
+    resolve?.(failure);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.tasks[task.id].coordinatedBy).toBeUndefined();
+    expect(store.tasks[task.id].delegationPaused).toBe(true);
+    expect(delegationStates[task.id]).toBeUndefined();
+  });
+
+  it('does not revive a removed task from an in-flight snapshot or late event', async () => {
+    let resolve: ((state: DelegationState) => void) | undefined;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    changed?.({ taskId: task.id, state: failure });
+    setStore(
+      'tasks',
+      produce((tasks) => delete tasks.recipient),
+    );
+    resolve?.(failure);
+    await vi.advanceTimersByTimeAsync(0);
+    changed?.({ taskId: task.id, state: failure });
+    expect(delegationStates[task.id]).toBeUndefined();
+  });
+
+  it('disposes the subscription and ignores pending snapshots and later task insertions', async () => {
+    let resolve: ((state: DelegationState) => void) | undefined;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    cleanup();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    resolve?.(failure);
+    setStore('tasks', 'later', { ...task, id: 'later' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invoke).toHaveBeenCalledOnce();
+    expect(delegationStates[task.id]).toBeUndefined();
+  });
+
+  it('does not apply a removed task snapshot to an adopted replacement with the same ID', async () => {
+    let resolve: ((state: DelegationState) => void) | undefined;
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise((done) => (resolve = done)));
+    cleanup = startDelegationStateHydration();
+    await vi.advanceTimersByTimeAsync(0);
+    setStore(
+      'tasks',
+      produce((tasks) => delete tasks.recipient),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    vi.mocked(invoke).mockResolvedValueOnce({ attempts: [], messages: [], paused: true });
+    setStore('tasks', task.id, { ...task, name: 'Replacement' });
+    await vi.advanceTimersByTimeAsync(0);
+    resolve?.(failure);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(delegationStates[task.id]?.paused).toBe(true);
+    expect(delegationStates[task.id]?.messages).toEqual([]);
+  });
 });
