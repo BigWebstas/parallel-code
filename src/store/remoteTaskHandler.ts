@@ -7,6 +7,7 @@
 import { publishAgentTour } from './agent-tour';
 import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } from './canvas';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
+import { unwrap } from 'solid-js/store';
 import { store } from './core';
 import { codeProjects, getProjectPath } from './projects';
 import {
@@ -376,6 +377,13 @@ export function startRemoteTaskHandlers(): () => void {
       if (data && typeof data === 'object') handleGetNotes(data as GetNotesRequest);
     },
   );
+  const offGetUsage = window.electron.ipcRenderer.on(
+    IPC.Remote_GetUsageRequest,
+    (data: unknown) => {
+      if (data && typeof data === 'object')
+        reply((data as RendererRequest).reqId, true, unwrap(store.usage));
+    },
+  );
   const offSetNotes = window.electron.ipcRenderer.on(
     IPC.Remote_SetNotesRequest,
     (data: unknown) => {
@@ -459,5 +467,6 @@ export function startRemoteTaskHandlers(): () => void {
     offDiff();
     offReadiness();
     offMerge();
+    offGetUsage();
   };
 }

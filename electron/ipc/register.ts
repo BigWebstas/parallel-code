@@ -77,6 +77,7 @@ import type {
   RemoteTaskContext,
   RemoteTaskDiff,
 } from '../remote/protocol.js';
+import type { UsageProvider, UsageState } from './shared-types.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { getUserDataDir } from '../user-data-dir.js';
 import {
@@ -1677,6 +1678,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<RemoteMergeReadiness>(IPC.Remote_GetMergeReadinessRequest, { taskId }),
     mergeTaskFromMobile: (req: { taskId: string; squash: boolean; cleanup: boolean }) =>
       callRenderer<{ ok: boolean }>(IPC.Remote_MergeTaskRequest, req).then(() => {}),
+    getUsage: () => callRenderer<Record<UsageProvider, UsageState>>(IPC.Remote_GetUsageRequest, {}),
     getTaskAttention: (taskId: string): RemoteAttentionState => taskAttention.get(taskId) ?? 'idle',
     getTaskContext: (taskId: string) => taskContext.get(taskId),
     getCollapsedTaskIds: (): string[] => {
