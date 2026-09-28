@@ -1,0 +1,60 @@
+package com.parallelcode.phone
+
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class ProtocolTest {
+    @Test
+    fun parsesTheAgentList() {
+        val msg = parseServerMessage(
+            """{"type":"agents","list":[{"agentId":"a1","taskId":"t1","taskName":"Fix login",
+            "status":"running","exitCode":null,"lastLine":"thinking","projectName":"web",
+            "attention":"needs_input"},{"agentId":"c1","taskId":"t2","taskName":"Chat",
+            "status":"exited","exitCode":0,"lastLine":"","attention":"idle","kind":"chat"}]}""",
+        ) as ServerMessage.Agents
+        val (terminal, chat) = msg.list
+        assertEquals("Fix login", terminal.taskName)
+        assertEquals(true, terminal.running)
+        assertNull(terminal.exitCode)
+        assertEquals("web", terminal.projectName)
+        assertNull(terminal.agentName)
+        assertEquals("needs_input", terminal.attention)
+        assertEquals(false, terminal.isChat)
+        assertEquals(0, chat.exitCode)
+        assertEquals(true, chat.isChat)
+    }
+
+    @Test
+    fun decodesTerminalData() {
+        val scrollback = parseServerMessage(
+            """{"type":"scrollback","agentId":"a1","data":"aGk=","cols":100}""",
+        ) as ServerMessage.Scrollback
+        assertArrayEquals("hi".toByteArray(), scrollback.data)
+        assertEquals(100, scrollback.cols)
+        assertEquals(24, scrollback.rows)
+    }
+
+    @Test
+    fun parsesInputResults() {
+        assertEquals(
+            ServerMessage.InputResult("7", false, "busy"),
+            parseServerMessage("""{"type":"input-result","requestId":"7","ok":false,"error":"busy"}"""),
+        )
+    }
+
+    @Test
+    fun ignoresUnknownAndMalformedMessages() {
+        assertNull(parseServerMessage("""{"type":"chat-state","agentId":"a","state":{}}"""))
+        assertNull(parseServerMessage("""{"type":"output","agentId":"a"}"""))
+        assertNull(parseServerMessage("nope"))
+    }
+
+    @Test
+    fun preparesRepliesLikeThePhoneWebUi() {
+        assertEquals("one two", messageForTerminal(" one\r\ntwo\u0003 ", bracketedPaste = false))
+        assertEquals("\u001b[200~one\ntwo\u001b[201~", messageForTerminal("one\rtwo", bracketedPaste = true))
+        assertEquals("", messageForTerminal(" \u001b ", bracketedPaste = true))
+    }
+}
