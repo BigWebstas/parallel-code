@@ -191,6 +191,7 @@ private fun SetupPage(title: String, content: @Composable () -> Unit) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AgentsScreen(
+    client: RemoteClient,
     host: String,
     state: ConnectionState,
     agents: List<RemoteAgent>,
@@ -234,6 +235,7 @@ fun AgentsScreen(
                 .padding(padding),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            item { UsageStrip(client, connected = state.status == ConnectionStatus.CONNECTED) }
             if (state.status == ConnectionStatus.CONNECTED && !state.canControl) {
                 item { PairBanner(onPair) }
             }

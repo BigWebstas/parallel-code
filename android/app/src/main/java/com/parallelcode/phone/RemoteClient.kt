@@ -147,6 +147,10 @@ class RemoteClient(private val credentials: CredentialStore) {
         return api("POST", "/api/mobile/tasks", body, pairedTokenOrThrow()).getString("taskId")
     }
 
+    /** The desktop status bar's subscription usage; readable with the view-only token. */
+    suspend fun fetchUsage(): List<ProviderUsage> =
+        parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
+
     /** The task's notes panel; readable with the view-only token. */
     suspend fun fetchNotes(taskId: String): String =
         api("GET", notesPath(taskId), null, credentials.pairedToken ?: credentials.link?.token)
@@ -185,8 +189,10 @@ class RemoteClient(private val credentials: CredentialStore) {
         }
         if (code in 200..299) return text
         val error = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotEmpty() }
-        // The desktop revoked this phone's typing rights; drop to view-only like a 4003 close.
-        if ((code == 401 || code == 403) && token == credentials.pairedToken && path != "/api/pair/verify") {
+        // 401 means the desktop no longer knows this token, so drop to view-only like a 4001 close.
+        // 403 only means this route is not open to the token (or to an older desktop), so the
+        // pairing stays.
+        if (code == 401 && token == credentials.pairedToken && path != "/api/pair/verify") {
             credentials.clearPairedToken()
             reconnect()
             throw ApiException("This phone is no longer paired. Pair again to continue.", code)

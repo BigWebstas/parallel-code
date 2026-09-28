@@ -54,7 +54,7 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
 
     fun failed(e: ApiException, suffix: String = "") {
         // The client has already dropped a rejected paired token.
-        if (e.status == 401 || e.status == 403) onNeedsPairing() else error = e.message + suffix
+        if (e.status == 401) onNeedsPairing() else error = e.message + suffix
     }
 
     LaunchedEffect(loadAttempt) {

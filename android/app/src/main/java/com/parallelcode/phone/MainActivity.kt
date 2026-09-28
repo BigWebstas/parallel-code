@@ -82,6 +82,7 @@ private fun PhoneApp(model: PhoneViewModel) {
     if (screen != Screen.Agents) BackHandler { screenKey = "agents" }
     when (screen) {
         Screen.Agents -> AgentsScreen(
+            client = model.client,
             host = link.baseUrl,
             state = state,
             agents = agents,
