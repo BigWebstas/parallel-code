@@ -31,7 +31,7 @@ jobs:
       # so skip electron-builder's rebuild: it needs a Visual Studio toolchain
       # node-gyp cannot find on the runner.
       - name: Build
-        run: npm run build -- --publish never -c.npmRebuild=false
+        run: npm run build -- --publish never --config.npmRebuild=false
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
