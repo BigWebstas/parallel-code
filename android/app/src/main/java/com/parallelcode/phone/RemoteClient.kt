@@ -22,8 +22,11 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED }
@@ -44,7 +47,10 @@ interface TerminalListener {
     fun onOutput(data: ByteArray)
 }
 
-class PairingException(message: String) : Exception(message)
+/** A REST call the desktop refused or could not answer; `status` is 0 when it was unreachable. */
+class ApiException(message: String, val status: Int = 0) : IOException(message)
+
+data class MobileProject(val id: String, val name: String, val agentName: String?)
 
 /**
  * Client for the desktop's Remote Access server (electron/remote/server.ts). Mirrors the phone web
@@ -114,34 +120,78 @@ class RemoteClient(private val credentials: CredentialStore) {
 
     /** Trade the desktop's six-digit PIN for a paired token, then reconnect with it. */
     suspend fun pair(pin: String, remember: Boolean) {
-        val link = credentials.link ?: throw PairingException("Not connected to a computer.")
-        val body = JSONObject().put("pin", pin).put("remember", remember).toString()
-        val request = Request.Builder()
-            .url("${link.baseUrl}/api/pair/verify")
-            .header("Authorization", "Bearer ${credentials.pairedToken ?: link.token}")
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .build()
-        val token = withContext(Dispatchers.IO) {
-            try {
-                http.newCall(request).execute().use(::pairedTokenFrom)
-            } catch (e: IOException) {
-                throw PairingException("Could not reach your computer. Check you're on the same network.")
-            }
-        }
+        val reply = api(
+            "POST",
+            "/api/pair/verify",
+            JSONObject().put("pin", pin).put("remember", remember),
+            token = credentials.pairedToken ?: credentials.link?.token,
+        )
+        val token = reply.optString("token").takeIf { it.isNotEmpty() }
+            ?: throw ApiException("Your computer sent an unexpected reply.")
         credentials.savePairedToken(token)
         reconnect()
     }
 
-    private fun pairedTokenFrom(response: Response): String {
-        val json = runCatching { JSONObject(response.body.string()) }.getOrNull()
-        if (!response.isSuccessful) {
-            throw PairingException(
-                json?.optString("error")?.takeIf { it.isNotEmpty() }
-                    ?: "Pairing failed (${response.code}). Try a fresh code from your computer.",
-            )
+    /** Projects a paired phone may start tasks in. */
+    suspend fun fetchProjects(): List<MobileProject> {
+        val list = JSONArray(apiRaw("GET", "/api/mobile/projects", null, pairedTokenOrThrow()))
+        return List(list.length()) { i ->
+            val p = list.getJSONObject(i)
+            MobileProject(p.getString("id"), p.getString("name"), p.optString("agentName").ifEmpty { null })
         }
-        return json?.optString("token")?.takeIf { it.isNotEmpty() }
-            ?: throw PairingException("Your computer sent an unexpected reply.")
+    }
+
+    /** Start a top-level task on the desktop; returns its task id. */
+    suspend fun createTask(projectId: String, name: String, prompt: String): String {
+        val body = JSONObject().put("projectId", projectId).put("name", name).put("prompt", prompt)
+        return api("POST", "/api/mobile/tasks", body, pairedTokenOrThrow()).getString("taskId")
+    }
+
+    /** The task's notes panel; readable with the view-only token. */
+    suspend fun fetchNotes(taskId: String): String =
+        api("GET", notesPath(taskId), null, credentials.pairedToken ?: credentials.link?.token)
+            .optString("notes")
+
+    suspend fun saveNotes(taskId: String, notes: String) {
+        api("PUT", notesPath(taskId), JSONObject().put("notes", notes), pairedTokenOrThrow())
+    }
+
+    private fun notesPath(taskId: String) = "/api/mobile/notes/" + URLEncoder.encode(taskId, "UTF-8").replace("+", "%20")
+
+    private fun pairedTokenOrThrow(): String =
+        credentials.pairedToken ?: throw ApiException("Pair this phone first.", 401)
+
+    private suspend fun api(method: String, path: String, body: JSONObject?, token: String?): JSONObject =
+        try {
+            JSONObject(apiRaw(method, path, body, token))
+        } catch (e: JSONException) {
+            throw ApiException("Your computer sent an unexpected reply.")
+        }
+
+    private suspend fun apiRaw(method: String, path: String, body: JSONObject?, token: String?): String {
+        val link = credentials.link ?: throw ApiException("Not connected to a computer.")
+        if (token == null) throw ApiException("Not connected to a computer.")
+        val request = Request.Builder()
+            .url(link.baseUrl + path)
+            .header("Authorization", "Bearer $token")
+            .method(method, body?.toString()?.toRequestBody("application/json".toMediaType()))
+            .build()
+        val (code, text) = withContext(Dispatchers.IO) {
+            try {
+                http.newCall(request).execute().use { it.code to it.body.string() }
+            } catch (e: IOException) {
+                throw ApiException("Could not reach your computer. Check you're on the same network.")
+            }
+        }
+        if (code in 200..299) return text
+        val error = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotEmpty() }
+        // The desktop revoked this phone's typing rights; drop to view-only like a 4003 close.
+        if ((code == 401 || code == 403) && token == credentials.pairedToken && path != "/api/pair/verify") {
+            credentials.clearPairedToken()
+            reconnect()
+            throw ApiException("This phone is no longer paired. Pair again to continue.", code)
+        }
+        throw ApiException(error ?: "Request failed ($code).", code)
     }
 
     /** Stream an agent's terminal. The server answers with a scrollback snapshot, then output. */

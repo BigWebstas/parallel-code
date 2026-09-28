@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
 private sealed interface Screen {
     data object Agents : Screen
     data object Pair : Screen
+    data object NewTask : Screen
     data class Agent(val agentId: String) : Screen
 }
 
@@ -68,6 +69,7 @@ private fun PhoneApp(model: PhoneViewModel) {
     var screenKey by rememberSaveable { mutableStateOf("agents") }
     val screen = when {
         screenKey == "pair" -> Screen.Pair
+        screenKey == "new-task" -> Screen.NewTask
         screenKey.startsWith("agent:") -> Screen.Agent(screenKey.removePrefix("agent:"))
         else -> Screen.Agents
     }
@@ -85,6 +87,7 @@ private fun PhoneApp(model: PhoneViewModel) {
             agents = agents,
             onOpen = { screenKey = "agent:${it.agentId}" },
             onPair = { screenKey = "pair" },
+            onNewTask = { screenKey = "new-task" },
             onForget = {
                 model.client.forget()
                 screenKey = "agents"
@@ -93,6 +96,11 @@ private fun PhoneApp(model: PhoneViewModel) {
         Screen.Pair -> PairScreen(
             pair = model.client::pair,
             onDone = { screenKey = "agents" },
+        )
+        Screen.NewTask -> NewTaskScreen(
+            client = model.client,
+            onDone = { screenKey = "agents" },
+            onNeedsPairing = { screenKey = "pair" },
         )
         is Screen.Agent -> {
             val agent = agents.firstOrNull { it.agentId == screen.agentId }

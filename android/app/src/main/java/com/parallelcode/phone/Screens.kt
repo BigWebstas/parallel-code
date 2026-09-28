@@ -1,6 +1,8 @@
 package com.parallelcode.phone
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,10 +27,13 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -45,7 +50,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -146,7 +157,7 @@ fun PairScreen(pair: suspend (pin: String, remember: Boolean) -> Unit, onDone: (
                     try {
                         pair(pin, remember)
                         onDone()
-                    } catch (e: PairingException) {
+                    } catch (e: ApiException) {
                         error = e.message
                     } finally {
                         busy = false
@@ -185,6 +196,7 @@ fun AgentsScreen(
     agents: List<RemoteAgent>,
     onOpen: (RemoteAgent) -> Unit,
     onPair: () -> Unit,
+    onNewTask: () -> Unit,
     onForget: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -201,6 +213,7 @@ fun AgentsScreen(
                     }
                 },
                 actions = {
+                    if (state.canControl) TextButton(onClick = onNewTask) { Text("New task") }
                     TextButton(onClick = { menuOpen = true }) { Text("More") }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
@@ -325,7 +338,8 @@ fun AgentScreen(
         onDispose { stop() }
     }
     // Recomposition is batched per frame, so a burst of output renders the text once.
-    val text = remember(version) { screen.text() }
+    val lines = remember(version) { screen.styledLines() }
+    var tab by rememberSaveable { mutableStateOf(AgentTab.TERMINAL) }
 
     Scaffold(
         topBar = {
@@ -349,24 +363,52 @@ fun AgentScreen(
                 .padding(padding)
                 .imePadding(),
         ) {
-            TerminalText(text, Modifier.weight(1f))
-            if (state.canControl) {
+            PrimaryTabRow(selectedTabIndex = tab.ordinal) {
+                AgentTab.entries.forEach {
+                    Tab(selected = tab == it, onClick = { tab = it }, text = { Text(it.label) })
+                }
+            }
+            when (tab) {
+                AgentTab.TERMINAL -> TerminalText(lines, Modifier.weight(1f))
+                AgentTab.NOTES -> if (agent != null) {
+                    NotesPane(agent.taskId, state.canControl, client, Modifier.weight(1f))
+                } else {
+                    Text("This agent is no longer running.", Modifier.weight(1f).padding(16.dp))
+                }
+            }
+            if (!state.canControl) {
+                PairBanner(onPair)
+                Spacer(Modifier.padding(4.dp))
+            } else if (tab == AgentTab.TERMINAL) {
                 ReplyBox(
                     send = { draft ->
                         val data = messageForTerminal(draft, screen.bracketedPaste)
                         if (data.isNotEmpty()) client.sendInput(agentId, data, submit = true)
                     },
+                    sendKey = { client.sendInput(agentId, it, submit = false) },
                 )
-            } else {
-                PairBanner(onPair)
-                Spacer(Modifier.padding(4.dp))
             }
         }
     }
 }
 
+private enum class AgentTab(val label: String) { TERMINAL("Terminal"), NOTES("Notes") }
+
+/** Keys agent TUIs ask for that a phone keyboard can't type, as in the phone web UI. */
+private val QUICK_KEYS = listOf(
+    "Enter" to "\r",
+    "Esc" to "\u001b",
+    "Tab" to "\t",
+    "↑" to "\u001b[A",
+    "↓" to "\u001b[B",
+    "/" to "/",
+    "Ctrl+C" to "\u0003",
+)
+
 @Composable
-private fun TerminalText(text: String, modifier: Modifier) {
+private fun TerminalText(lines: List<List<StyledSpan>>, modifier: Modifier) {
+    val palette = if (isSystemInDarkTheme()) TerminalPalette.OBSIDIAN else TerminalPalette.OBSIDIAN_LIGHT
+    val text = remember(lines, palette) { terminalAnnotatedString(lines, palette) }
     val vertical = rememberScrollState()
     var follow by remember { mutableStateOf(true) }
     // Stay pinned to the newest output unless the reader scrolled up.
@@ -382,21 +424,77 @@ private fun TerminalText(text: String, modifier: Modifier) {
     Box(
         modifier
             .fillMaxWidth()
+            .background(Color(palette.background))
             .verticalScroll(vertical)
             .horizontalScroll(rememberScrollState())
             .padding(12.dp),
     ) {
-        Text(text, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, softWrap = false)
+        Text(
+            text,
+            color = Color(palette.foreground),
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            lineHeight = 14.sp,
+            softWrap = false,
+        )
     }
 }
 
+private fun terminalAnnotatedString(lines: List<List<StyledSpan>>, palette: TerminalPalette) =
+    buildAnnotatedString {
+        lines.forEachIndexed { i, line ->
+            if (i > 0) append('\n')
+            line.forEach { span ->
+                if (span.style == CellStyle.DEFAULT) {
+                    append(span.text)
+                    return@forEach
+                }
+                val s = palette.resolve(span.style)
+                withStyle(
+                    SpanStyle(
+                        color = Color(s.foreground),
+                        background = s.background?.let(::Color) ?: Color.Unspecified,
+                        fontWeight = if (s.bold) FontWeight.Bold else null,
+                        fontStyle = if (s.italic) FontStyle.Italic else null,
+                        textDecoration = when {
+                            s.underline && s.strike -> TextDecoration.combine(
+                                listOf(TextDecoration.Underline, TextDecoration.LineThrough),
+                            )
+                            s.underline -> TextDecoration.Underline
+                            s.strike -> TextDecoration.LineThrough
+                            else -> null
+                        },
+                    ),
+                ) { append(span.text) }
+            }
+        }
+    }
+
 @Composable
-private fun ReplyBox(send: suspend (String) -> Unit) {
+private fun ReplyBox(send: suspend (String) -> Unit, sendKey: suspend (String) -> Unit) {
     val scope = rememberCoroutineScope()
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    fun run(action: suspend () -> Unit) {
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                action()
+            } catch (e: IOException) {
+                error = e.message
+            } finally {
+                busy = false
+            }
+        }
+    }
     Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            QUICK_KEYS.forEach { (label, data) ->
+                OutlinedButton(onClick = { run { sendKey(data) } }, enabled = !busy) { Text(label) }
+            }
+        }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
         Row(verticalAlignment = Alignment.Bottom) {
             OutlinedTextField(
@@ -411,17 +509,9 @@ private fun ReplyBox(send: suspend (String) -> Unit) {
             Button(
                 enabled = draft.isNotBlank() && !busy,
                 onClick = {
-                    busy = true
-                    error = null
-                    scope.launch {
-                        try {
-                            send(draft)
-                            draft = ""
-                        } catch (e: IOException) {
-                            error = e.message
-                        } finally {
-                            busy = false
-                        }
+                    run {
+                        send(draft)
+                        draft = ""
                     }
                 },
             ) { Text("Send") }

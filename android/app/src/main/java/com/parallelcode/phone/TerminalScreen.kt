@@ -4,10 +4,13 @@ import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
 
+/** A run of characters sharing one [CellStyle]-encoded style. */
+data class StyledSpan(val text: String, val style: Long)
+
 /**
- * Plain-text VT100 screen for an agent's PTY stream. Agent TUIs redraw with cursor movement, so
- * stripping escape codes would garble them; this keeps a character grid and applies the movement,
- * erase and scroll sequences they use. Colors and styles are dropped.
+ * VT100 screen for an agent's PTY stream. Agent TUIs redraw with cursor movement, so stripping
+ * escape codes would garble them; this keeps a character grid and applies the movement, erase,
+ * scroll and SGR (color and style) sequences they use.
  */
 class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     var cols = cols
@@ -19,9 +22,19 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     var bracketedPaste = false
         private set
 
+    private class Line(cols: Int, style: Long) {
+        val chars = CharArray(cols) { ' ' }
+        val styles = LongArray(cols) { style }
+
+        fun fill(from: Int, to: Int, style: Long) {
+            chars.fill(' ', from, to)
+            styles.fill(style, from, to)
+        }
+    }
+
     private var grid = blankGrid()
-    private var savedMainGrid: Array<CharArray>? = null
-    private val history = ArrayDeque<String>()
+    private var savedMainGrid: Array<Line>? = null
+    private val history = ArrayDeque<Line>()
     private var row = 0
     private var col = 0
     private var wrapPending = false
@@ -29,6 +42,8 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     private var scrollBottom = rows - 1
     private var savedRow = 0
     private var savedCol = 0
+    private var style = CellStyle.DEFAULT
+    private var savedStyle = CellStyle.DEFAULT
 
     private var state = State.GROUND
     private val sequence = StringBuilder()
@@ -43,6 +58,8 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     fun reset(cols: Int, rows: Int, data: ByteArray) {
         this.cols = cols.coerceIn(1, 500)
         this.rows = rows.coerceIn(1, 300)
+        style = CellStyle.DEFAULT
+        savedStyle = CellStyle.DEFAULT
         grid = blankGrid()
         savedMainGrid = null
         history.clear()
@@ -71,18 +88,37 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
         while (out.hasRemaining()) process(out.get())
     }
 
-    /** Scrolled-off history followed by the screen, without trailing blank lines. */
-    fun text(): String {
-        val lines = ArrayList<String>(history.size + rows)
-        lines.addAll(history)
-        grid.mapTo(lines) { String(it).trimEnd() }
+    /** Scrolled-off history followed by the screen, as plain text. */
+    fun text(): String = styledLines().joinToString("\n") { line -> line.joinToString("") { it.text } }
+
+    /** History then screen, each line split into style runs, without trailing blank lines. */
+    fun styledLines(): List<List<StyledSpan>> {
+        val lines = ArrayList<List<StyledSpan>>(history.size + rows)
+        history.mapTo(lines, ::spans)
+        grid.mapTo(lines, ::spans)
         while (lines.isNotEmpty() && lines.last().isEmpty()) lines.removeAt(lines.lastIndex)
-        return lines.joinToString("\n")
+        return lines
     }
 
-    private fun blankGrid() = Array(rows) { blankLine() }
+    private fun spans(line: Line): List<StyledSpan> {
+        // Trailing blanks only matter when they are painted with a background color.
+        var end = line.chars.size
+        while (end > 0 && line.chars[end - 1] == ' ' && CellStyle.bg(line.styles[end - 1]) == CellStyle.DEFAULT_COLOR) end--
+        val spans = ArrayList<StyledSpan>()
+        var start = 0
+        while (start < end) {
+            var stop = start + 1
+            while (stop < end && line.styles[stop] == line.styles[start]) stop++
+            spans.add(StyledSpan(String(line.chars, start, stop - start), line.styles[start]))
+            start = stop
+        }
+        return spans
+    }
 
-    private fun blankLine() = CharArray(cols) { ' ' }
+    private fun blankGrid() = Array(rows) { Line(cols, CellStyle.DEFAULT) }
+
+    /** Erased and scrolled-in cells take the current background, as in xterm. */
+    private fun blankLine() = Line(cols, CellStyle.eraseStyle(style))
 
     private fun process(c: Char) {
         when (state) {
@@ -93,7 +129,7 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
                 if (c in '@'..'~') {
                     state = State.GROUND
                     csi(sequence.toString(), c)
-                } else if (sequence.length < 64) {
+                } else if (sequence.length < 128) {
                     sequence.append(c)
                 }
             }
@@ -149,7 +185,8 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
             carriageReturn()
             lineFeed()
         }
-        grid[row][col] = c
+        grid[row].chars[col] = c
+        grid[row].styles[col] = style
         if (col == cols - 1) wrapPending = true else col++
     }
 
@@ -170,9 +207,9 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
 
     private fun scrollUp(n: Int) {
         repeat(n.coerceAtMost(scrollBottom - scrollTop + 1)) {
-            // Only full-screen scrolls of the main screen move lines into history.
+            // Only full-screen scrolls of the main screen move lines into history, as in xterm.
             if (scrollTop == 0 && scrollBottom == rows - 1 && savedMainGrid == null) {
-                history.addLast(String(grid[0]).trimEnd())
+                history.addLast(grid[0])
                 if (history.size > MAX_HISTORY) history.removeFirst()
             }
             for (r in scrollTop until scrollBottom) grid[r] = grid[r + 1]
@@ -190,10 +227,12 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     private fun saveCursor() {
         savedRow = row
         savedCol = col
+        savedStyle = style
     }
 
     private fun restoreCursor() {
         moveTo(savedRow, savedCol)
+        style = savedStyle
     }
 
     private fun moveTo(r: Int, c: Int) {
@@ -203,6 +242,10 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     }
 
     private fun csi(body: String, final: Char) {
+        if (final == 'm' && !body.startsWith('?') && !body.startsWith('>')) {
+            style = CellStyle.applySgr(style, body)
+            return
+        }
         val private = body.startsWith('?')
         val params = body.trimStart('?', '>', '<', '=')
             .takeWhile { it.isDigit() || it == ';' }
@@ -215,6 +258,8 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
             if (final == 'h' || final == 'l') params.forEach { setMode(it, final == 'h') }
             return
         }
+        val line = grid[row]
+        val erase = CellStyle.eraseStyle(style)
         when (final) {
             'A' -> moveTo(maxOf(row - arg(0), if (row >= scrollTop) scrollTop else 0), col)
             'B' -> moveTo(minOf(row + arg(0), if (row <= scrollBottom) scrollBottom else rows - 1), col)
@@ -230,18 +275,22 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
             'L' -> if (row in scrollTop..scrollBottom) insertLines(arg(0))
             'M' -> if (row in scrollTop..scrollBottom) deleteLines(arg(0))
             '@' -> {
-                val line = grid[row]
                 val n = arg(0).coerceAtMost(cols - col)
-                for (c in cols - 1 downTo col + n) line[c] = line[c - n]
-                line.fill(' ', col, col + n)
+                for (c in cols - 1 downTo col + n) {
+                    line.chars[c] = line.chars[c - n]
+                    line.styles[c] = line.styles[c - n]
+                }
+                line.fill(col, col + n, erase)
             }
             'P' -> {
-                val line = grid[row]
                 val n = arg(0).coerceAtMost(cols - col)
-                for (c in col until cols - n) line[c] = line[c + n]
-                line.fill(' ', cols - n, cols)
+                for (c in col until cols - n) {
+                    line.chars[c] = line.chars[c + n]
+                    line.styles[c] = line.styles[c + n]
+                }
+                line.fill(cols - n, cols, erase)
             }
-            'X' -> grid[row].fill(' ', col, minOf(cols, col + arg(0)))
+            'X' -> line.fill(col, minOf(cols, col + arg(0)), erase)
             'S' -> scrollUp(arg(0))
             'T' -> scrollDown(arg(0))
             'r' -> {
@@ -285,17 +334,17 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
                 eraseInLine(1)
                 for (r in 0 until row) grid[r] = blankLine()
             }
-            2 -> grid = blankGrid()
+            2 -> for (r in 0 until rows) grid[r] = blankLine()
             3 -> history.clear()
         }
     }
 
     private fun eraseInLine(mode: Int) {
-        val line = grid[row]
+        val erase = CellStyle.eraseStyle(style)
         when (mode) {
-            0 -> line.fill(' ', col, cols)
-            1 -> line.fill(' ', 0, col + 1)
-            2 -> line.fill(' ')
+            0 -> grid[row].fill(col, cols, erase)
+            1 -> grid[row].fill(0, col + 1, erase)
+            2 -> grid[row].fill(0, cols, erase)
         }
     }
 
