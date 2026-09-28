@@ -103,6 +103,7 @@ const ALLOWED_CHANNELS = new Set([
   'mcp_publish_tour_request',
   'remote_get_notes_request',
   'remote_set_notes_request',
+  'remote_get_usage_request',
   'remote_update_task_status',
   'remote_renderer_reply',
   'plan_content',
