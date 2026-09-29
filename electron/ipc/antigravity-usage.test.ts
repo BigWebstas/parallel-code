@@ -324,6 +324,24 @@ describe('fetchAntigravityUsage', () => {
     });
   });
 
+  it('dates an untimestamped statusline payload by when the file was written', async () => {
+    const cacheFile = path.join(tempDir(), 'quota_cache.json');
+    fs.writeFileSync(
+      cacheFile,
+      JSON.stringify({
+        quota: { 'gemini-weekly': { remaining_fraction: 0.03, reset_in_seconds: 3600 } },
+      }),
+    );
+    const writtenAt = new Date('2026-09-29T23:04:38Z');
+    fs.utimesSync(cacheFile, writtenAt, writtenAt);
+    const result = await fetchAntigravityUsage(cacheFile, {});
+    expect(result).toMatchObject({
+      status: 'ok',
+      sevenDay: { usedPercent: 97, resetsAt: writtenAt.getTime() + 3_600_000 },
+      fetchedAt: writtenAt.getTime(),
+    });
+  });
+
   it('fills the weekly window from the cache when the language server has none', async () => {
     const http = await import('node:http');
     const server = http.createServer((_req, res) => {

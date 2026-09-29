@@ -376,7 +376,7 @@ export type DiscoverCredentialsFn = () =>
 async function readQuotaCacheFile(
   primaryPath: string,
   env: NodeJS.ProcessEnv,
-): Promise<string | null> {
+): Promise<{ json: string; mtimeMs: number } | null> {
   const isCustomPath = primaryPath !== antigravityQuotaCachePath(env);
   const candidates = isCustomPath
     ? [primaryPath]
@@ -395,9 +395,9 @@ async function readQuotaCacheFile(
   // Prioritize the newest file by mtime
   existingFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
 
-  for (const { filePath } of existingFiles) {
+  for (const { filePath, mtimeMs } of existingFiles) {
     try {
-      return await fs.promises.readFile(filePath, 'utf8');
+      return { json: await fs.promises.readFile(filePath, 'utf8'), mtimeMs };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         logWarn('antigravity-usage', 'quota cache unreadable', {
@@ -480,19 +480,22 @@ async function queryLiveUsage(credentials: {
 }
 
 async function readCachedUsage(cachePath: string, env: NodeJS.ProcessEnv): Promise<UsageResult> {
-  const json = await readQuotaCacheFile(cachePath, env);
-  if (!json) {
+  const file = await readQuotaCacheFile(cachePath, env);
+  if (!file) {
     return { status: 'unavailable', reason: 'No Antigravity quota found' };
   }
 
   let data: unknown;
   try {
-    data = JSON.parse(json);
+    data = JSON.parse(file.json);
   } catch {
     return { status: 'error', message: 'Antigravity quota cache contains invalid JSON' };
   }
 
-  const result = parseAntigravityUsageResponse(data);
+  // Antigravity only rewrites these files while a CLI session runs, and most payloads carry no
+  // timestamp. Date the snapshot by the file's write time so a stale quota does not read as current
+  // and relative reset times count from when they were written.
+  const result = parseAntigravityUsageResponse(data, file.mtimeMs);
   if (!result) {
     return { status: 'unavailable', reason: 'No rate-limit windows in response' };
   }
