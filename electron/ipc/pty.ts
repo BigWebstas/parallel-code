@@ -385,7 +385,7 @@ export function validateCommand(command: string): void {
     throw new Error('Command must not be empty.');
   }
   // Absolute paths: check directly via filesystem
-  if (command.startsWith('/')) {
+  if (path.isAbsolute(command)) {
     try {
       fs.accessSync(command, fs.constants.X_OK);
       return;
@@ -395,13 +395,38 @@ export function validateCommand(command: string): void {
       );
     }
   }
-  // Bare names: resolve via `which` (execFileSync — no shell interpolation)
+  // Bare names: resolve via `which` on POSIX or `where` on Windows (execFileSync —
+  // no shell interpolation). `where` also matches PATHEXT, so it finds the .cmd
+  // shims npm installs on Windows.
+  const resolver = process.platform === 'win32' ? 'where' : 'which';
   try {
-    execFileSync('which', [command], { encoding: 'utf8', timeout: 3000 });
+    execFileSync(resolver, [command], { encoding: 'utf8', timeout: 3000 });
   } catch {
     throw new Error(
       `Command '${command}' not found in PATH. Make sure it is installed and available in your terminal.`,
     );
+  }
+}
+
+/**
+ * Resolve a bare command name to an absolute path for node-pty on Windows.
+ * Unlike POSIX (where node-pty's spawn relies on execvp's own PATH search),
+ * node-pty's Windows/conpty backend calls CreateProcess directly and cannot
+ * resolve bare names itself, failing with "File not found" for e.g. `claude`
+ * even though `where`/`validateCommand` finds it. POSIX and already-absolute
+ * paths pass through unchanged.
+ */
+export function resolveSpawnCommand(command: string): string {
+  if (process.platform !== 'win32' || path.isAbsolute(command)) return command;
+  try {
+    const output = execFileSync('where', [command], { encoding: 'utf8', timeout: 3000 });
+    const resolved = output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean);
+    return resolved ?? command;
+  } catch {
+    return command;
   }
 }
 
@@ -832,7 +857,7 @@ export async function spawnAgent(
   registerAgentLaunch(args.agentId, args.taskId, launchId);
   let proc: pty.IPty;
   try {
-    proc = pty.spawn(spawnSpec.spawnCommand, spawnSpec.spawnArgs, {
+    proc = pty.spawn(resolveSpawnCommand(spawnSpec.spawnCommand), spawnSpec.spawnArgs, {
       name: 'xterm-256color',
       cols: args.cols,
       rows: args.rows,

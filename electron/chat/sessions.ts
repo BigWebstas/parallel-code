@@ -1,5 +1,5 @@
 import { spawn, execFile } from 'node:child_process';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ClaudeChat } from './claude.js';
 import { CodexChat } from '../ipc/codex-chat.js';
@@ -30,14 +30,17 @@ function notifyListChanged(): void {
 
 /** Use the user's unmodified executable and its own authentication flow. */
 async function resolveExecutable(opts: ChatStartOptions): Promise<string> {
-  if (opts.command.includes('/')) return resolve(opts.cwd, opts.command);
+  if (opts.command.includes('/') || isAbsolute(opts.command)) {
+    return resolve(opts.cwd, opts.command);
+  }
   try {
-    const { stdout } = await promisify(execFile)('which', [opts.command], {
+    const resolver = process.platform === 'win32' ? 'where' : 'which';
+    const { stdout } = await promisify(execFile)(resolver, [opts.command], {
       env: opts.env,
       encoding: 'utf8',
       timeout: 3000,
     });
-    const found = stdout.split('\n')[0]?.trim();
+    const found = stdout.split(/\r?\n/)[0]?.trim();
     if (found) return found;
   } catch (error) {
     throw new Error(

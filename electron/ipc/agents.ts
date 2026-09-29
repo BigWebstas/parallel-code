@@ -81,14 +81,15 @@ const DEFAULT_AGENTS: AgentDef[] = [
 
 async function isCommandAvailable(command: string): Promise<boolean> {
   try {
-    await execFileAsync('which', [command], { encoding: 'utf8', timeout: 3000 });
+    const resolver = process.platform === 'win32' ? 'where' : 'which';
+    await execFileAsync(resolver, [command], { encoding: 'utf8', timeout: 3000 });
     return true;
   } catch {
     return false;
   }
 }
 
-// TTL cache to avoid repeated `which` calls
+// TTL cache to avoid repeated `which`/`where` calls
 let cachedAgents: AgentDef[] | null = null;
 let cacheTime = 0;
 const AGENT_CACHE_TTL = 30_000;

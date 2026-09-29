@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 const { mockExecFileSync, mockExecFile, mockChildProcessSpawn, mockPtySpawn, mockLogDebug } =
   vi.hoisted(() => {
     const mockExecFileSync = vi.fn((command: string, args?: string[]) => {
-      if (command === 'which' && args?.[0] === 'nonexistent-binary-xyz') {
+      if ((command === 'which' || command === 'where') && args?.[0] === 'nonexistent-binary-xyz') {
         throw new Error('not found');
       }
       return '';
@@ -109,6 +109,7 @@ import {
   projectImageTag,
   resizeAgent,
   resolveProjectDockerfile,
+  resolveSpawnCommand,
   spawnAgent,
   setAgentHookRuntime,
   subscribeToAgent,
@@ -1444,7 +1445,8 @@ describe('peer prompt delivery', () => {
 
 describe('validateCommand', () => {
   it('does not throw for a command found in PATH', () => {
-    expect(() => validateCommand('/bin/sh')).not.toThrow();
+    // An absolute path guaranteed to exist and be executable on every platform.
+    expect(() => validateCommand(process.execPath)).not.toThrow();
   });
 
   it('throws a descriptive error for a missing command', () => {
@@ -1471,6 +1473,49 @@ describe('validateCommand', () => {
 
   it('throws for a whitespace-only command string', () => {
     expect(() => validateCommand('   ')).toThrow(/must not be empty/);
+  });
+});
+
+describe('resolveSpawnCommand', () => {
+  it('returns an already-absolute path unchanged', () => {
+    expect(resolveSpawnCommand('C:\\tools\\claude.exe')).toBe('C:\\tools\\claude.exe');
+  });
+
+  it('leaves bare commands unresolved on POSIX (execvp handles PATH itself)', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    try {
+      expect(resolveSpawnCommand('claude')).toBe('claude');
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
+  it('resolves a bare command to its `where`-reported path on Windows', () => {
+    // node-pty's conpty backend calls CreateProcess directly and cannot
+    // resolve bare names the way POSIX execvp does, so a name that
+    // `validateCommand` accepts still fails to launch unless resolved first.
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    mockExecFileSync.mockImplementationOnce(() => 'C:\\Users\\me\\.local\\bin\\claude.exe\r\n');
+    try {
+      expect(resolveSpawnCommand('claude')).toBe('C:\\Users\\me\\.local\\bin\\claude.exe');
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform);
+    }
+  });
+
+  it('falls back to the bare command on Windows when resolution fails', () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    mockExecFileSync.mockImplementationOnce(() => {
+      throw new Error('not found');
+    });
+    try {
+      expect(resolveSpawnCommand('claude')).toBe('claude');
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform);
+    }
   });
 });
 
