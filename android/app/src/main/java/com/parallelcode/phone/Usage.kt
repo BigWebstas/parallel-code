@@ -120,8 +120,8 @@ fun parseUsage(json: JSONObject): List<ProviderUsage> {
 }
 
 private fun parseWindow(w: JSONObject) = UsageWindow(
-    usedPercent = w.getDouble("usedPercent"),
-    resetsAt = if (w.isNull("resetsAt")) null else w.getLong("resetsAt"),
+    usedPercent = w.optDouble("usedPercent", 0.0),
+    resetsAt = if (w.isNull("resetsAt")) null else w.optLong("resetsAt").takeIf { it > 0 },
 )
 
 /** "resets 14:30" today, "resets Thu 09:00" otherwise, "reset due" once passed, "" when unknown. */

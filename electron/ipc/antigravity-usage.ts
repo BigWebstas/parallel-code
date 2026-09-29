@@ -1,265 +1,452 @@
 import fs from 'fs';
+import http from 'node:http';
+import https from 'node:https';
 import os from 'os';
 import path from 'path';
 import type { UsageResult, UsageWindow } from './shared-types.js';
-import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
+import { warn as logWarn, debug as logDebug, errMessage } from '../log.js';
 import { clampPercent, finite, parseResetsAt } from './usage-shared.js';
 
-export interface AntigravityModelQuota {
-  remainingFraction: number;
-  resetTime?: string | null;
-}
-
-export interface AntigravityCredentials {
-  address: string;
-  token: string;
-}
-
-export function defaultQuotaCachePath(env: NodeJS.ProcessEnv = process.env): string {
-  return (
-    env.AGY_HUD_QUOTA_CACHE ||
-    path.join(
-      env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'),
-      'agy-hud',
-      'quota_cache.json',
-    )
-  );
-}
-
 /**
- * Searches process.env or Linux /proc for running Antigravity Language Server credentials.
+ * Reads rate-limit windows for Google Antigravity CLI.
+ *
+ * Supports live loopback queries to the Antigravity language server service
+ * (via HTTP/HTTPS and `X-Codeium-Csrf-Token`), active process discovery on Linux,
+ * and reading local cache/statusline files (e.g. `quota_cache.json` or `statusline_payload.json`).
  */
-export function findAntigravityCredentials(
-  env: NodeJS.ProcessEnv = process.env,
-  platform: string = process.platform,
-): AntigravityCredentials | null {
-  if (env.ANTIGRAVITY_LS_ADDRESS && env.ANTIGRAVITY_CSRF_TOKEN) {
-    return {
-      address: env.ANTIGRAVITY_LS_ADDRESS,
-      token: env.ANTIGRAVITY_CSRF_TOKEN,
-    };
+
+export function antigravityQuotaCachePath(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.ANTIGRAVITY_QUOTA_CACHE) return env.ANTIGRAVITY_QUOTA_CACHE;
+  const cacheHome = env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
+  return path.join(cacheHome, 'agy-hud', 'quota_cache.json');
+}
+
+export function antigravityFallbackCachePaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const cacheHome =
+    env.XDG_CACHE_HOME ||
+    (env.HOME
+      ? path.join(env.HOME, '.cache')
+      : env === process.env
+        ? path.join(os.homedir(), '.cache')
+        : '');
+  const home = env.HOME || (env === process.env ? os.homedir() : '');
+  const paths: string[] = [];
+  if (cacheHome) {
+    paths.push(path.join(cacheHome, 'agy-hud', 'statusline_payload.json'));
+    paths.push(path.join(cacheHome, 'agy-hud', 'quota_cache.json'));
+  }
+  if (home) {
+    paths.push(
+      path.join(
+        home,
+        '.gemini',
+        'antigravity-cli',
+        'scratch',
+        'agy-hud',
+        'statusline_payload.json',
+      ),
+    );
+    paths.push(
+      path.join(home, '.gemini', 'antigravity-cli', 'scratch', 'agy-hud', 'quota_cache.json'),
+    );
+    paths.push(path.join(home, '.gemini', 'antigravity-cli', 'statusline_payload.json'));
+    paths.push(path.join(home, '.gemini', 'antigravity-cli', 'quota_cache.json'));
+  }
+  return paths;
+}
+
+interface RawQuotaWindow {
+  remainingFraction?: unknown;
+  remaining_fraction?: unknown;
+  resetTime?: unknown;
+  reset_time?: unknown;
+  reset_after_seconds?: unknown;
+  reset_in_seconds?: unknown;
+  usedPercent?: unknown;
+  used_percent?: unknown;
+  resetsAt?: unknown;
+  resets_at?: unknown;
+}
+
+export function parseQuotaWindow(value: unknown, now = Date.now()): UsageWindow | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const raw = value as RawQuotaWindow;
+
+  // Direct used percent
+  const directUsed = finite(raw.usedPercent) ?? finite(raw.used_percent);
+  if (directUsed !== null) {
+    const rawReset = raw.resetsAt ?? raw.resets_at ?? raw.resetTime ?? raw.reset_time;
+    const resetsAt = parseResetsAt(rawReset);
+    return { usedPercent: clampPercent(directUsed), resetsAt };
   }
 
-  if (platform === 'linux') {
-    try {
-      const pids = fs.readdirSync('/proc');
-      for (const pid of pids) {
-        if (!/^\d+$/.test(pid)) continue;
-        try {
-          const environ = fs.readFileSync(`/proc/${pid}/environ`, 'utf8');
-          if (environ.includes('ANTIGRAVITY_CSRF_TOKEN=')) {
-            const lines = environ.split('\0');
-            let token: string | null = null;
-            let address: string | null = null;
-            for (const l of lines) {
-              if (l.startsWith('ANTIGRAVITY_CSRF_TOKEN=')) token = l.slice(23);
-              if (l.startsWith('ANTIGRAVITY_LS_ADDRESS=')) address = l.slice(23);
-            }
-            if (token && address) {
-              return { address, token };
-            }
-          }
-        } catch {
-          // Process exited or permission denied; continue scanning.
-        }
-      }
-    } catch {
-      // /proc unreadable
-    }
+  // Remaining fraction (0.0 to 1.0)
+  const remaining = finite(raw.remainingFraction) ?? finite(raw.remaining_fraction);
+  if (remaining !== null) {
+    const clampedRemaining = Math.max(0, Math.min(1, remaining));
+    const usedPercent = clampPercent(Math.round((1 - clampedRemaining) * 100));
+    const rawReset = raw.resetsAt ?? raw.resets_at ?? raw.resetTime ?? raw.reset_time;
+    const resetSeconds = finite(raw.reset_in_seconds) ?? finite(raw.reset_after_seconds);
+    const resetsAt =
+      parseResetsAt(rawReset) ?? (resetSeconds !== null ? now + resetSeconds * 1000 : null);
+    return { usedPercent, resetsAt };
   }
 
   return null;
 }
 
-/**
- * Selects the best model quota to track (prioritizing Pro models, or the model
- * with the lowest remaining fraction) and maps it to a standard UsageResult.
- */
-export function parseModelQuotas(
-  models: Record<string, AntigravityModelQuota>,
-  now = Date.now(),
-): UsageResult | null {
-  const entries = Object.entries(models).filter(
-    ([, q]) => q && typeof q.remainingFraction === 'number' && Number.isFinite(q.remainingFraction),
-  );
+function selectPrimaryModelWindow(
+  models: Record<string, unknown>,
+  now: number,
+): UsageWindow | null {
+  const entries = Object.entries(models);
   if (entries.length === 0) return null;
 
-  // Prefer Pro models, or pick the model with minimum remaining quota
-  let chosen = entries.find(([label]) => label.toLowerCase().includes('pro'));
-  if (!chosen) {
-    chosen = entries.reduce((min, cur) =>
-      cur[1].remainingFraction < min[1].remainingFraction ? cur : min,
+  const parsedModels: Array<{ label: string; window: UsageWindow }> = [];
+  for (const [label, val] of entries) {
+    const win = parseQuotaWindow(val, now);
+    if (win) parsedModels.push({ label, window: win });
+  }
+  if (parsedModels.length === 0) return null;
+
+  // Prioritize Gemini models first
+  const geminiModels = parsedModels.filter((m) => /gemini/i.test(m.label));
+  const pool = geminiModels.length > 0 ? geminiModels : parsedModels;
+
+  // Pick the most constrained window (highest usedPercent)
+  let best = pool[0];
+  for (let i = 1; i < pool.length; i++) {
+    if (pool[i].window.usedPercent > best.window.usedPercent) {
+      best = pool[i];
+    }
+  }
+  return best.window;
+}
+
+/** Parses Antigravity quota payload from cache, statusline, or local server. */
+type UsageSnapshot = Extract<UsageResult, { status: 'ok' }>;
+
+export function parseAntigravityUsageResponse(
+  body: unknown,
+  now = Date.now(),
+): UsageSnapshot | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const raw = body as Record<string, unknown>;
+  const quotaObj =
+    raw.quota && typeof raw.quota === 'object' ? (raw.quota as Record<string, unknown>) : raw;
+
+  let fiveHour: UsageWindow | null = null;
+  let sevenDay: UsageWindow | null = null;
+  let fetchedAt = now;
+
+  if (raw.timestamp) {
+    const ts = parseResetsAt(raw.timestamp);
+    if (ts !== null) fetchedAt = ts;
+  } else if (finite(raw.fetchedAt)) {
+    fetchedAt = raw.fetchedAt as number;
+  }
+
+  // Format 1: direct fiveHour / sevenDay
+  if (
+    raw.fiveHour ||
+    raw.five_hour ||
+    raw.sevenDay ||
+    raw.seven_day ||
+    quotaObj.fiveHour ||
+    quotaObj.five_hour ||
+    quotaObj.sevenDay ||
+    quotaObj.seven_day
+  ) {
+    fiveHour = parseQuotaWindow(
+      raw.fiveHour ?? raw.five_hour ?? quotaObj.fiveHour ?? quotaObj.five_hour,
+      now,
+    );
+    sevenDay = parseQuotaWindow(
+      raw.sevenDay ?? raw.seven_day ?? quotaObj.sevenDay ?? quotaObj.seven_day,
+      now,
     );
   }
 
-  const [, quota] = chosen;
-  const remaining = Math.max(0, Math.min(1, quota.remainingFraction));
-  const usedPercent = clampPercent(Math.round((1 - remaining) * 100));
-  const resetsAt = parseResetsAt(quota.resetTime);
+  // Format 2: official bucket format (e.g. gemini-5h, gemini-weekly, 3p-5h, 3p-weekly)
+  if (
+    !fiveHour &&
+    (raw['gemini-5h'] || raw['3p-5h'] || quotaObj['gemini-5h'] || quotaObj['3p-5h'])
+  ) {
+    fiveHour = parseQuotaWindow(
+      raw['gemini-5h'] ?? raw['3p-5h'] ?? quotaObj['gemini-5h'] ?? quotaObj['3p-5h'],
+      now,
+    );
+  }
+  if (
+    !sevenDay &&
+    (raw['gemini-weekly'] ||
+      raw['3p-weekly'] ||
+      raw.weekly ||
+      quotaObj['gemini-weekly'] ||
+      quotaObj['3p-weekly'] ||
+      quotaObj.weekly)
+  ) {
+    sevenDay = parseQuotaWindow(
+      raw['gemini-weekly'] ??
+        raw['3p-weekly'] ??
+        raw.weekly ??
+        quotaObj['gemini-weekly'] ??
+        quotaObj['3p-weekly'] ??
+        quotaObj.weekly,
+      now,
+    );
+  }
 
-  const fiveHour: UsageWindow = { usedPercent, resetsAt };
-  return {
-    status: 'ok',
-    fiveHour,
-    sevenDay: null,
-    fetchedAt: now,
-  };
-}
-
-/**
- * Parses the GetUserStatus JSON returned by the Antigravity Language Server.
- */
-export function parseLanguageServerResponse(body: unknown, now = Date.now()): UsageResult | null {
-  if (typeof body !== 'object' || body === null) return null;
-  const raw = body as {
-    userStatus?: {
-      cascadeModelConfigData?: {
-        clientModelConfigs?: Array<{
-          label?: unknown;
-          quotaInfo?: {
-            remainingFraction?: unknown;
-            resetTime?: unknown;
-          };
-        }>;
-      };
-    };
-  };
-
-  const configs = raw.userStatus?.cascadeModelConfigData?.clientModelConfigs;
-  if (!Array.isArray(configs)) return null;
-
-  const models: Record<string, AntigravityModelQuota> = {};
-  for (const c of configs) {
-    if (typeof c.label === 'string' && c.quotaInfo) {
-      const remaining = finite(c.quotaInfo.remainingFraction);
-      if (remaining !== null) {
-        models[c.label] = {
-          remainingFraction: remaining,
-          resetTime: typeof c.quotaInfo.resetTime === 'string' ? c.quotaInfo.resetTime : null,
-        };
+  // Format 3: language server userStatus payload: userStatus.cascadeModelConfigData.clientModelConfigs
+  let modelsObj: Record<string, unknown> | null = null;
+  if (raw.models && typeof raw.models === 'object') {
+    modelsObj = raw.models as Record<string, unknown>;
+  } else if (quotaObj.models && typeof quotaObj.models === 'object') {
+    modelsObj = quotaObj.models as Record<string, unknown>;
+  } else if (raw.userStatus && typeof raw.userStatus === 'object') {
+    const userStatus = raw.userStatus as Record<string, unknown>;
+    const cascade = userStatus.cascadeModelConfigData as Record<string, unknown> | undefined;
+    const configs = cascade?.clientModelConfigs;
+    if (Array.isArray(configs)) {
+      modelsObj = {};
+      for (const item of configs) {
+        if (
+          typeof item === 'object' &&
+          item !== null &&
+          typeof item.label === 'string' &&
+          item.quotaInfo
+        ) {
+          modelsObj[item.label] = item.quotaInfo;
+        }
       }
     }
   }
 
-  return parseModelQuotas(models, now);
+  // Extract from models if fiveHour not yet found
+  if (!fiveHour && modelsObj) {
+    fiveHour = selectPrimaryModelWindow(modelsObj, now);
+  }
+
+  if (!fiveHour && !sevenDay) return null;
+
+  return {
+    status: 'ok',
+    fiveHour,
+    sevenDay,
+    fetchedAt,
+  };
 }
 
-/**
- * Parses the quota cache file written by agy-hud or Antigravity tools.
- */
-export function parseQuotaCacheJson(json: string, now = Date.now()): UsageResult | null {
-  try {
-    const parsed = JSON.parse(json) as {
-      models?: Record<string, { remainingFraction?: unknown; resetTime?: unknown }>;
-    };
-    if (!parsed || typeof parsed.models !== 'object' || parsed.models === null) return null;
+export async function queryAntigravityLanguageServer(
+  address: string,
+  csrfToken: string,
+  timeoutMs = 2_000,
+): Promise<unknown | null> {
+  let initialProto = 'http:';
+  let host = '127.0.0.1';
+  let port = 0;
 
-    const models: Record<string, AntigravityModelQuota> = {};
-    for (const [label, q] of Object.entries(parsed.models)) {
-      if (q && typeof q === 'object') {
-        const remaining = finite(q.remainingFraction);
-        if (remaining !== null) {
-          models[label] = {
-            remainingFraction: remaining,
-            resetTime: typeof q.resetTime === 'string' ? q.resetTime : null,
-          };
+  if (address.startsWith('http://') || address.startsWith('https://')) {
+    try {
+      const url = new URL(address);
+      initialProto = url.protocol;
+      host = url.hostname;
+      port = Number(url.port);
+    } catch {
+      return null;
+    }
+  } else {
+    const [h, p] = address.split(':');
+    host = h === 'localhost' ? '127.0.0.1' : h;
+    port = Number(p);
+  }
+
+  if (!host || !port) return null;
+
+  const tryRequest = (protocol: string): Promise<unknown | null> =>
+    new Promise((resolve) => {
+      const mod = protocol === 'https:' ? https : http;
+      const req = mod.request(
+        {
+          protocol,
+          hostname: host,
+          port,
+          path: '/exa.language_server_pb.LanguageServerService/GetUserStatus',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Connect-Protocol-Version': '1',
+            'X-Codeium-Csrf-Token': csrfToken,
+          },
+          rejectUnauthorized: false,
+          timeout: timeoutMs,
+        },
+        (res) => {
+          if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+            resolve(null);
+            return;
+          }
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk) =>
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)),
+          );
+          res.on('end', () => {
+            try {
+              resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+            } catch {
+              resolve(null);
+            }
+          });
+        },
+      );
+
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(null);
+      });
+      req.on('error', () => resolve(null));
+      req.write('{}');
+      req.end();
+    });
+
+  let res = await tryRequest(initialProto);
+  if (!res && initialProto === 'http:') {
+    res = await tryRequest('https:');
+  }
+  return res;
+}
+
+/** Discovers active Language Server address and CSRF token from running processes on Linux. */
+export function discoverLanguageServerCredentials(): { address: string; token: string } | null {
+  if (process.platform !== 'linux') return null;
+  try {
+    const entries = fs.readdirSync('/proc');
+    for (const entry of entries) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const envBuf = fs.readFileSync(`/proc/${entry}/environ`);
+        if (envBuf.includes(Buffer.from('ANTIGRAVITY_CSRF_TOKEN='))) {
+          const str = envBuf.toString('utf8');
+          const addrMatch = str.match(/ANTIGRAVITY_LS_ADDRESS=([^\0]+)/);
+          const csrfMatch = str.match(/ANTIGRAVITY_CSRF_TOKEN=([^\0]+)/);
+          if (addrMatch && csrfMatch) {
+            return { address: addrMatch[1], token: csrfMatch[1] };
+          }
         }
+      } catch {
+        // Skip unreadable processes or processes that exit during iteration
       }
     }
-
-    return parseModelQuotas(models, now);
   } catch {
+    // /proc unreadable
+  }
+  return null;
+}
+
+export type DiscoverCredentialsFn = () => { address: string; token: string } | null;
+
+async function readQuotaCacheFile(
+  primaryPath: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | null> {
+  const isCustomPath = primaryPath !== antigravityQuotaCachePath(env);
+  const candidates = isCustomPath
+    ? [primaryPath]
+    : [primaryPath, ...antigravityFallbackCachePaths(env)];
+  const existingFiles: Array<{ filePath: string; mtimeMs: number }> = [];
+
+  for (const filePath of candidates) {
+    try {
+      const stat = await fs.promises.stat(filePath);
+      existingFiles.push({ filePath, mtimeMs: stat.mtimeMs });
+    } catch {
+      // File does not exist
+    }
+  }
+
+  // Prioritize the newest file by mtime
+  existingFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  for (const { filePath } of existingFiles) {
+    try {
+      return await fs.promises.readFile(filePath, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logWarn('antigravity-usage', 'quota cache unreadable', {
+          file: filePath,
+          err: errMessage(err),
+        });
+      }
+    }
+  }
+  return null;
+}
+
+export async function fetchAntigravityUsage(
+  cachePath = antigravityQuotaCachePath(),
+  env = process.env,
+  discoverCredentials?: DiscoverCredentialsFn,
+): Promise<UsageResult> {
+  const lsAddress = env.ANTIGRAVITY_LS_ADDRESS;
+  const csrfToken = env.ANTIGRAVITY_CSRF_TOKEN;
+
+  let credentials = lsAddress && csrfToken ? { address: lsAddress, token: csrfToken } : null;
+
+  if (!credentials) {
+    if (discoverCredentials) {
+      credentials = discoverCredentials();
+    } else if (env === process.env && !env.ANTIGRAVITY_DISABLE_DISCOVERY) {
+      credentials = discoverLanguageServerCredentials();
+    }
+  }
+
+  // The language server reports per-model quota only, so the weekly window comes from the
+  // agy-hud cache, which Antigravity owns and this reader never writes.
+  const live = credentials ? await queryLiveUsage(credentials) : null;
+  const cached = await readCachedUsage(cachePath, env);
+  if (!live) return cached;
+  if (cached.status !== 'ok') return live;
+  return {
+    ...live,
+    fiveHour: live.fiveHour ?? cached.fiveHour,
+    sevenDay: live.sevenDay ?? cached.sevenDay,
+  };
+}
+
+async function queryLiveUsage(credentials: {
+  address: string;
+  token: string;
+}): Promise<UsageSnapshot | null> {
+  try {
+    const serverResponse = await queryAntigravityLanguageServer(
+      credentials.address,
+      credentials.token,
+    );
+    return serverResponse ? parseAntigravityUsageResponse(serverResponse) : null;
+  } catch (err) {
+    logDebug('antigravity-usage', 'language server query failed, falling back to cache', {
+      err: errMessage(err),
+    });
     return null;
   }
 }
 
-/**
- * Reads Antigravity quota from the local Language Server or the agy-hud quota cache.
- */
-export async function fetchAntigravityUsage(
-  creds = findAntigravityCredentials(),
-  cachePath = defaultQuotaCachePath(),
-  now = Date.now(),
-): Promise<UsageResult> {
-  // 1. Try querying the language server if credentials are found
-  if (creds) {
-    try {
-      const url = `http://${creds.address}/exa.language_server_pb.LanguageServerService/GetUserStatus`;
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Connect-Protocol-Version': '1',
-          'x-codeium-csrf-token': creds.token,
-        },
-        body: '{}',
-        signal: AbortSignal.timeout(3000),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const result = parseLanguageServerResponse(data, now);
-        if (result && result.status === 'ok') {
-          // Sync with cache file so agy-hud / other tools stay updated
-          try {
-            const raw = data as {
-              userStatus?: {
-                planStatus?: { planInfo?: { planName?: string } };
-                cascadeModelConfigData?: {
-                  clientModelConfigs?: Array<{ label?: string; quotaInfo?: unknown }>;
-                };
-              };
-            };
-            const configs = raw.userStatus?.cascadeModelConfigData?.clientModelConfigs;
-            if (Array.isArray(configs)) {
-              const cacheModels: Record<string, unknown> = {};
-              for (const c of configs) {
-                if (c.label && c.quotaInfo) cacheModels[c.label] = c.quotaInfo;
-              }
-              const planName = raw.userStatus?.planStatus?.planInfo?.planName ?? 'Pro';
-              const cacheDir = path.dirname(cachePath);
-              if (fs.existsSync(cacheDir)) {
-                fs.writeFileSync(
-                  cachePath,
-                  JSON.stringify(
-                    {
-                      timestamp: new Date(now).toISOString(),
-                      plan_name: planName,
-                      models: cacheModels,
-                    },
-                    null,
-                    2,
-                  ),
-                  { encoding: 'utf8', mode: 0o600 },
-                );
-              }
-            }
-          } catch {
-            // Non-critical cache write failure
-          }
-          return result;
-        }
-      }
-    } catch (err) {
-      logDebug('antigravity-usage', 'language server fetch failed, trying cache', {
-        err: errMessage(err),
-      });
-    }
+async function readCachedUsage(cachePath: string, env: NodeJS.ProcessEnv): Promise<UsageResult> {
+  const json = await readQuotaCacheFile(cachePath, env);
+  if (!json) {
+    return { status: 'unavailable', reason: 'No Antigravity quota found' };
   }
 
-  // 2. Fall back to reading the cached quota file
+  let data: unknown;
   try {
-    if (fs.existsSync(cachePath)) {
-      const content = await fs.promises.readFile(cachePath, 'utf8');
-      const result = parseQuotaCacheJson(content, now);
-      if (result) return result;
-    }
-  } catch (err) {
-    logWarn('antigravity-usage', 'failed to read quota cache', {
-      file: cachePath,
-      err: errMessage(err),
-    });
+    data = JSON.parse(json);
+  } catch {
+    return { status: 'error', message: 'Antigravity quota cache contains invalid JSON' };
   }
 
-  return { status: 'unavailable', reason: 'No Antigravity quota found' };
+  const result = parseAntigravityUsageResponse(data);
+  if (!result) {
+    return { status: 'unavailable', reason: 'No rate-limit windows in response' };
+  }
+  return result;
 }

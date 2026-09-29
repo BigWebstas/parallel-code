@@ -32,20 +32,21 @@ it('shows the providers the desktop has a snapshot for', async () => {
     },
     codex: { fiveHour: null, sevenDay: null, fetchedAt: null, status: 'unavailable', error: 'x' },
     antigravity: {
-      fiveHour: null,
+      fiveHour: { usedPercent: 30, resetsAt: null },
       sevenDay: null,
-      fetchedAt: null,
-      status: 'unavailable',
-      error: 'x',
+      fetchedAt: 1,
+      status: 'ok',
+      error: null,
     },
   });
   const host = await mount();
   await vi.waitFor(() => expect(host.querySelector('.mobile-usage')).not.toBeNull());
   expect(host.textContent).toContain('Claude');
+  expect(host.textContent).toContain('Antigravity');
   expect(host.textContent).not.toContain('Codex');
-  expect(host.textContent).not.toContain('Antigravity');
   expect(host.textContent).toContain('15% left');
   expect(host.textContent).toContain('80% left');
+  expect(host.textContent).toContain('70% left');
   expect(host.querySelector('.usage-meter.warn')).not.toBeNull();
 });
 
@@ -53,7 +54,13 @@ it('stays hidden when no subscription usage is readable', async () => {
   vi.mocked(fetchUsage).mockResolvedValue({
     claude: { fiveHour: null, sevenDay: null, fetchedAt: null, status: 'unavailable', error: 'x' },
     codex: { fiveHour: null, sevenDay: null, fetchedAt: null, status: 'idle', error: null },
-    antigravity: { fiveHour: null, sevenDay: null, fetchedAt: null, status: 'idle', error: null },
+    antigravity: {
+      fiveHour: null,
+      sevenDay: null,
+      fetchedAt: null,
+      status: 'unavailable',
+      error: null,
+    },
   });
   const host = await mount();
   expect(host.querySelector('.mobile-usage')).toBeNull();

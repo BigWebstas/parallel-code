@@ -44,7 +44,7 @@ function Meter(props: { label: string; window: UsageWindow }) {
 }
 
 /**
- * The desktop status bar's agent-subscription meters (Claude Code, Codex).
+ * The desktop status bar's agent-subscription meters (Claude Code, Codex, Antigravity).
  * Hidden until the desktop has a snapshot, like the bar itself; tap to re-read.
  */
 export function UsageStrip() {
