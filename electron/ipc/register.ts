@@ -70,7 +70,7 @@ import { readCoverageSummary } from './coverage.js';
 import { loadEslintQualityFindings } from './eslint-quality-findings.js';
 import { buildVerifyEnv, validateVerifyCommand, verificationRunner } from './verify.js';
 import { startRemoteServer, getMCPLogs, type RemoteProject } from '../remote/server.js';
-import type { RemoteAttentionState, RemoteAgent } from '../remote/protocol.js';
+import type { RemoteAttentionState, RemoteTaskContext } from '../remote/protocol.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { getUserDataDir } from '../user-data-dir.js';
 import {
@@ -578,10 +578,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   // the same richer status as the desktop. The renderer owns this computation
   // (it depends on reactive terminal/git/steps state), so main just caches it.
   const taskAttention = new Map<string, RemoteAttentionState>();
-  const taskContext = new Map<
-    string,
-    Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'>
-  >();
+  const taskContext = new Map<string, RemoteTaskContext>();
 
   // --- MCP coordinator (lazy — only loaded when coordinator mode is enabled) ---
   let coordinatorHandlersRegistered = false;
@@ -1668,6 +1665,13 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<{ ok: boolean }>(IPC.Remote_SetNotesRequest, { taskId, notes }).then(() => {}),
     getTaskAttention: (taskId: string): RemoteAttentionState => taskAttention.get(taskId) ?? 'idle',
     getTaskContext: (taskId: string) => taskContext.get(taskId),
+    getCollapsedTaskIds: (): string[] => {
+      const result: string[] = [];
+      for (const [taskId, ctx] of taskContext.entries()) {
+        if (ctx.collapsed) result.push(taskId);
+      }
+      return result;
+    },
   };
 
   const remoteServerOptions = (): Omit<
@@ -1711,7 +1715,14 @@ export function registerAllHandlers(win: BrowserWindow): void {
         statuses?: Record<string, string>;
         contexts?: Record<
           string,
-          { projectName?: unknown; projectColor?: unknown; agentName?: unknown; lastLine?: unknown }
+          {
+            projectName?: unknown;
+            projectColor?: unknown;
+            agentName?: unknown;
+            lastLine?: unknown;
+            taskName?: unknown;
+            collapsed?: unknown;
+          }
         >;
       },
     ) => {
@@ -1722,7 +1733,12 @@ export function registerAllHandlers(win: BrowserWindow): void {
       if (args.contexts && typeof args.contexts === 'object') {
         for (const [taskId, context] of Object.entries(args.contexts)) {
           if (!context || typeof context !== 'object') continue;
+          const taskName =
+            typeof context.taskName === 'string' ? context.taskName.slice(0, 200) : undefined;
+          if (taskName) taskNames.set(taskId, taskName);
           taskContext.set(taskId, {
+            taskName,
+            collapsed: Boolean(context.collapsed),
             projectName:
               typeof context.projectName === 'string' ? context.projectName.slice(0, 200) : '',
             projectColor:

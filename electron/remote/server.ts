@@ -26,6 +26,7 @@ import {
   type ServerMessage,
   type RemoteAgent,
   type RemoteAttentionState,
+  type RemoteTaskContext,
 } from './protocol.js';
 import {
   createChatSubscriptions,
@@ -311,7 +312,7 @@ function getNetworkIps(): { wifi: string | null; tailscale: string | null } {
 }
 
 /** Build the agent list, deduplicated by taskId (keeps main agent per task). */
-function buildAgentList(
+export function buildAgentList(
   getTaskName: (taskId: string) => string,
   getAgentStatus: (agentId: string) => {
     status: 'running' | 'exited';
@@ -319,9 +320,8 @@ function buildAgentList(
     lastLine: string;
   },
   getTaskAttention: (taskId: string) => RemoteAttentionState,
-  getTaskContext?: (
-    taskId: string,
-  ) => Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'> | undefined,
+  getTaskContext?: (taskId: string) => RemoteTaskContext | undefined,
+  getCollapsedTaskIds?: () => string[],
 ): RemoteAgent[] {
   const byTask = new Map<string, RemoteAgent>();
   for (const agentId of getActiveAgentIds()) {
@@ -346,6 +346,29 @@ function buildAgentList(
       byTask.set(meta.taskId, agent);
     }
   }
+
+  if (getCollapsedTaskIds) {
+    for (const taskId of getCollapsedTaskIds()) {
+      const existing = byTask.get(taskId);
+      if (existing) {
+        existing.collapsed = true;
+      } else {
+        const ctx = getTaskContext?.(taskId);
+        byTask.set(taskId, {
+          agentId: `collapsed:${taskId}`,
+          taskId,
+          taskName: ctx?.taskName || getTaskName(taskId),
+          status: 'exited',
+          exitCode: null,
+          lastLine: ctx?.lastLine ?? '',
+          attention: getTaskAttention(taskId),
+          collapsed: true,
+          ...ctx,
+        });
+      }
+    }
+  }
+
   return Array.from(byTask.values());
 }
 
@@ -936,9 +959,8 @@ export function startRemoteServer(opts: {
   setTaskNotes?: (taskId: string, notes: string) => Promise<void>;
   /** Renderer-derived task attention state (needs input, working, ready, …). */
   getTaskAttention?: (taskId: string) => RemoteAttentionState;
-  getTaskContext?: (
-    taskId: string,
-  ) => Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'> | undefined;
+  getTaskContext?: (taskId: string) => RemoteTaskContext | undefined;
+  getCollapsedTaskIds?: () => string[];
   /** The desktop's built-in chats; without it phones only see terminals. */
   chats?: RemoteChatSource;
 }): Promise<RemoteServer> {
@@ -949,7 +971,13 @@ export function startRemoteServer(opts: {
     opts.getTaskAttention ?? (() => 'idle');
   const agentList = (): RemoteAgent[] =>
     withChatAgents(
-      buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention, opts.getTaskContext),
+      buildAgentList(
+        opts.getTaskName,
+        opts.getAgentStatus,
+        getTaskAttention,
+        opts.getTaskContext,
+        opts.getCollapsedTaskIds,
+      ),
       opts.chats?.list() ?? [],
       (taskId) => ({
         taskName: opts.getTaskName(taskId),

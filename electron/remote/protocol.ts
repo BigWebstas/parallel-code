@@ -30,7 +30,18 @@ export interface RemoteAgent {
   attention: RemoteAttentionState;
   /** Set for the app's built-in chat, which has no terminal to stream. */
   kind?: 'chat';
+  /** True when the task is collapsed / minimized on the desktop. */
+  collapsed?: boolean;
 }
+
+/** Metadata attached to a task's remote agent entry. */
+export type RemoteTaskContext = Pick<
+  RemoteAgent,
+  'projectName' | 'projectColor' | 'agentName' | 'lastLine'
+> & {
+  taskName?: string;
+  collapsed?: boolean;
+};
 
 /** Conversation actions a paired phone may take on a running chat. */
 export const REMOTE_CHAT_ACTIONS = [
