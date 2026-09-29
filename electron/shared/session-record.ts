@@ -4,6 +4,8 @@
  * CLI lookup — no Node or Electron imports, so `src/` may import it.
  */
 
+import { commandName } from './command-name.js';
+
 export type SessionAgent = 'claude' | 'codex';
 
 /**
@@ -53,7 +55,7 @@ export interface SessionRecord {
  * launch rather than politely.
  */
 export function sessionAgentForCommand(command: string): SessionAgent | null {
-  const name = command.split('/').pop() ?? command;
+  const name = commandName(command);
   if (name === 'claude') return 'claude';
   if (name.includes('codex')) return 'codex';
   return null;

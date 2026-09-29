@@ -1,3 +1,4 @@
+import { commandName } from '../../electron/shared/command-name';
 import type { AgentDef } from '../ipc/types';
 import type { Task } from '../store/types';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
@@ -5,15 +6,15 @@ import { newSessionArgs, resumeSessionArgs } from '../../electron/shared/session
 import { isDocumentAgentTaskId } from '../documents/task-id';
 
 function isCodexCommand(command: string): boolean {
-  return command.split('/').pop()?.includes('codex') === true;
+  return commandName(command).includes('codex');
 }
 
 function isAntigravityCommand(command: string): boolean {
-  return command.split('/').pop() === 'agy';
+  return commandName(command) === 'agy';
 }
 
 function isCopilotCommand(command: string): boolean {
-  return command.split('/').pop() === 'copilot';
+  return commandName(command) === 'copilot';
 }
 
 /**
@@ -36,7 +37,7 @@ const RESUME_FAILURE_PATTERNS: Record<string, string[]> = {
 };
 
 export function isResumeArgsFailure(command: string, lastOutput: string[]): boolean {
-  const base = command.split('/').pop() ?? command;
+  const base = commandName(command);
   const patterns = RESUME_FAILURE_PATTERNS[base];
   if (!patterns || lastOutput.length === 0) return false;
   const text = lastOutput.join('\n');
@@ -122,7 +123,7 @@ function positionalAgentArgs(
   if (
     resumed &&
     task.claudeChatSessionId &&
-    agentDef.command.split('/').pop() === 'claude' &&
+    commandName(agentDef.command) === 'claude' &&
     args.join(' ') === '--continue'
   ) {
     args = ['--resume'];
@@ -130,7 +131,7 @@ function positionalAgentArgs(
   if (resumed && isDocumentAgentTaskId(task.id ?? null)) {
     // Document terminals share a checkout. "Latest" may belong to another
     // terminal: use a picker, without rewriting explicit IDs or custom flags.
-    const command = agentDef.command.split('/').pop();
+    const command = commandName(agentDef.command);
     const resume = args.join(' ');
     if (command === 'codex' && resume === 'resume --last') args = ['resume'];
     if ((command === 'claude' || command === 'copilot') && resume === '--continue') {

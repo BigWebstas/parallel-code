@@ -13,11 +13,8 @@
  * because a wrong flag does not degrade the launch, it breaks it.
  */
 
+import { commandName } from './command-name.js';
 import { isSessionId } from './session-record.js';
-
-function commandName(command: string): string {
-  return command.split('/').pop() ?? command;
-}
 
 function isClaude(command: string): boolean {
   return commandName(command) === 'claude';

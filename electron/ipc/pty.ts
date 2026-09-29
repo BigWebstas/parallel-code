@@ -5,6 +5,7 @@ import { stopAgentChat, stopAllAgentChats, runningAgentChatIds } from '../chat/s
 import { execFileSync, execFile, spawn as cpSpawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Notify } from './notify.js';
@@ -768,7 +769,7 @@ export async function spawnAgent(
   if (handingOff.has(args.agentId)) throw new Error('Wait for the view switch to finish.');
   const channelId = args.onOutput.__CHANNEL_ID__;
   const command = args.command || resolveUserShell();
-  const cwd = args.cwd || process.env.HOME || '/';
+  const cwd = args.cwd || os.homedir();
 
   // Renderer reloads should reattach to still-running PTYs before validating
   // the launch command. The process already exists; a missing binary after
@@ -1315,8 +1316,7 @@ function buildDockerCredentialMounts(
   containerHome: string,
 ): string[] {
   const mounts: string[] = [];
-  const home = process.env.HOME;
-  if (!home) return mounts;
+  const home = os.homedir();
 
   /** Mount a host path read-only into the container home. Skips if absent. */
   const mountIfExists = (hostPath: string, containerPath: string): void => {
