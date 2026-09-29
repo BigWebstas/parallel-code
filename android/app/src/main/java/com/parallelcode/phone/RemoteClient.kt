@@ -48,7 +48,8 @@ interface TerminalListener {
 }
 
 /** A REST call the desktop refused or could not answer; `status` is 0 when it was unreachable. */
-class ApiException(message: String, val status: Int = 0) : IOException(message)
+/** [json] is the error reply's body, for routes that explain a refusal (e.g. close warnings). */
+class ApiException(message: String, val status: Int = 0, val json: JSONObject? = null) : IOException(message)
 
 data class MobileProject(val id: String, val name: String, val agentName: String?)
 
@@ -68,6 +69,10 @@ class RemoteClient(private val credentials: CredentialStore) {
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
     private val _agents = MutableStateFlow<List<RemoteAgent>>(emptyList())
     val agents: StateFlow<List<RemoteAgent>> = _agents.asStateFlow()
+    private val _computers = MutableStateFlow(credentials.computers)
+
+    /** Every desktop this phone has linked to; [ConnectionState.link] is the one in use. */
+    val computers: StateFlow<List<SavedComputer>> = _computers.asStateFlow()
     private val _latencyMs = MutableStateFlow<Long?>(null)
     val latencyMs: StateFlow<Long?> = _latencyMs.asStateFlow()
 
@@ -80,6 +85,11 @@ class RemoteClient(private val credentials: CredentialStore) {
     private var handshakeJob: Job? = null
     private val terminalBuffers = mutableMapOf<String, TerminalBuffer>()
     private val subscribedAgents = mutableSetOf<String>()
+    private val chats = mutableMapOf<String, MutableStateFlow<ChatState?>>()
+    private val chatWatchers = mutableMapOf<String, Int>()
+    /** The agent whose PTY takes this phone's terminal size, and that size (see [setViewSize]). */
+    private var viewSize: Triple<String, Int, Int>? = null
+    private var viewSizeSent = false
     private val terminalListeners = mutableMapOf<String, MutableSet<TerminalListener>>()
     private val pending = mutableMapOf<String, CompletableDeferred<Unit>>()
     private var nextRequestId = 0
@@ -87,46 +97,73 @@ class RemoteClient(private val credentials: CredentialStore) {
     private enum class TokenKind { MOBILE, PAIRED }
 
     /** Keep a socket open while the app is in the foreground. */
-    fun start() {
+    private val holders = mutableSetOf<String>()
+
+    /**
+     * Keep the connection open for [holder] (the visible app, the background notification service);
+     * it closes once no holder remains.
+     */
+    fun start(holder: String) {
+        holders.add(holder)
         started = true
         connect()
     }
 
-    fun stop() {
+    fun stop(holder: String) {
+        holders.remove(holder)
+        if (holders.isNotEmpty()) return
         started = false
         closeSocket()
     }
 
     fun link(link: ConnectionLink) {
         credentials.saveLink(link)
-        _state.value = ConnectionState(link = link)
-        _agents.value = emptyList()
-        terminalBuffers.clear()
-        subscribedAgents.clear()
-        terminalListeners.clear()
+        useActiveComputer()
+    }
+
+    /** Switch to another saved computer. */
+    fun switchTo(baseUrl: String) {
+        if (baseUrl == credentials.link?.baseUrl) return
+        credentials.select(baseUrl)
+        useActiveComputer()
+    }
+
+    /** Forget a saved computer; forgetting the one in use leaves the phone unlinked. */
+    fun forget(baseUrl: String? = credentials.link?.baseUrl) {
+        if (baseUrl == null) return
+        val inUse = baseUrl == credentials.link?.baseUrl
+        credentials.remove(baseUrl)
+        _computers.value = credentials.computers
+        if (!inUse) return
+        closeSocket()
+        resetSession()
+        _state.value = ConnectionState()
+    }
+
+    /** Drop everything from the previous computer and connect to the one now selected. */
+    private fun useActiveComputer() {
+        closeSocket()
+        resetSession()
+        _computers.value = credentials.computers
+        _state.value = ConnectionState(link = credentials.link)
         reconnect()
     }
 
-    fun forget() {
-        closeSocket()
-        credentials.clear()
+    private fun resetSession() {
         _agents.value = emptyList()
         _latencyMs.value = null
-        _state.value = ConnectionState()
+        _usage.value = emptyList()
         terminalBuffers.clear()
         subscribedAgents.clear()
         terminalListeners.clear()
+        chats.values.forEach { it.value = null }
+        viewSize = null
+        viewSizeSent = false
     }
 
     fun reconnect() {
         closeSocket()
         if (started) connect()
-    }
-
-    fun dispose() {
-        stop()
-        scope.cancel()
-        http.dispatcher.executorService.shutdown()
     }
 
     /** Trade the desktop's six-digit PIN for a paired token, then reconnect with it. */
@@ -140,6 +177,7 @@ class RemoteClient(private val credentials: CredentialStore) {
         val token = reply.optString("token").takeIf { it.isNotEmpty() }
             ?: throw ApiException("Your computer sent an unexpected reply.")
         credentials.savePairedToken(token)
+        _computers.value = credentials.computers
         reconnect()
     }
 
@@ -167,7 +205,38 @@ class RemoteClient(private val credentials: CredentialStore) {
         api("PUT", notesPath(taskId), JSONObject().put("notes", notes), pairedTokenOrThrow())
     }
 
-    private fun notesPath(taskId: String) = "/api/mobile/notes/" + URLEncoder.encode(taskId, "UTF-8").replace("+", "%20")
+    /** The task's changes against its base branch; readable with the view-only token. */
+    suspend fun fetchDiff(taskId: String): Pair<String, Boolean> {
+        val json = api("GET", "/api/mobile/tasks/${encodePath(taskId)}/diff", null, credentials.pairedToken ?: credentials.link?.token)
+        return json.optString("diff") to json.optBoolean("truncated")
+    }
+
+    /** The desktop status bar's subscription usage; readable with the view-only token. */
+    suspend fun fetchUsage(): List<ProviderUsage> =
+        parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
+            .also { _usage.value = it }
+
+    private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
+
+    /** The last usage snapshot fetched, for the widget. */
+    val usage: StateFlow<List<ProviderUsage>> = _usage.asStateFlow()
+
+    /**
+     * Close a task on the desktop: stops its agents and removes its worktree. Unless [force], the
+     * desktop refuses when work would be lost and this returns its warnings; empty means closed.
+     */
+    suspend fun closeTask(taskId: String, force: Boolean): List<String> = try {
+        api("POST", "/api/mobile/tasks/${encodePath(taskId)}/close", JSONObject().put("force", force), pairedTokenOrThrow())
+        emptyList()
+    } catch (e: ApiException) {
+        val warnings = e.json?.optJSONArray("warnings")
+        if (e.status != 409 || warnings == null || warnings.length() == 0) throw e
+        List(warnings.length()) { warnings.optString(it) }
+    }
+
+    private fun notesPath(taskId: String) = "/api/mobile/notes/" + encodePath(taskId)
+
+    private fun encodePath(segment: String) = URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
 
     private fun pairedTokenOrThrow(): String =
         credentials.pairedToken ?: throw ApiException("Pair this phone first.", 401)
@@ -199,21 +268,24 @@ class RemoteClient(private val credentials: CredentialStore) {
         val elapsed = System.currentTimeMillis() - start
         _latencyMs.value = elapsed
         if (code in 200..299) return text
-        val error = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotEmpty() }
+        val json = runCatching { JSONObject(text) }.getOrNull()
+        val error = json?.optString("error")?.takeIf { it.isNotEmpty() }
         // 401 means the desktop no longer knows this token, so drop to view-only like a 4001 close.
         // 403 only means this route is not open to the token (or to an older desktop), so the
         // pairing stays.
         if (code == 401 && token == credentials.pairedToken && path != "/api/pair/verify") {
             credentials.clearPairedToken()
+            _computers.value = credentials.computers
             reconnect()
             throw ApiException("This phone is no longer paired. Pair again to continue.", code)
         }
-        throw ApiException(error ?: "Request failed ($code).", code)
+        throw ApiException(error ?: "Request failed ($code).", code, json)
     }
 
     /**
-     * Get or create a persistent TerminalBuffer for an agent.
-     * Subscribes to the desktop server so output streams and buffers in the background.
+     * Stream an agent's terminal while it is on screen. Only viewed terminals stream: opening one
+     * starts from the desktop's rendered snapshot, so nothing needs buffering in the background.
+     * Pair with [releaseTerminal].
      */
     fun getTerminalBuffer(agentId: String): TerminalBuffer {
         val buffer = terminalBuffers.getOrPut(agentId) { TerminalBuffer(agentId) }
@@ -221,10 +293,63 @@ class RemoteClient(private val credentials: CredentialStore) {
         return buffer
     }
 
+    /** Stop streaming a terminal that left the screen. */
+    fun releaseTerminal(agentId: String) {
+        terminalBuffers.remove(agentId)
+        if (subscribedAgents.remove(agentId) && socketOpen) {
+            send(JSONObject().put("type", "unsubscribe").put("agentId", agentId))
+        }
+    }
+
     private fun subscribeAgent(agentId: String) {
         if (subscribedAgents.add(agentId) && socketOpen) {
             send(JSONObject().put("type", "subscribe").put("agentId", agentId))
         }
+    }
+
+    /**
+     * Size an agent's PTY to this phone's terminal view, so full-screen TUIs such as Claude Code fill
+     * the phone. Needs pairing. The desktop gets its size back on [releaseViewSize] or disconnect.
+     */
+    fun setViewSize(agentId: String, cols: Int, rows: Int) {
+        viewSize?.let { if (it.first != agentId) releaseViewSize(it.first) }
+        if (viewSize == Triple(agentId, cols, rows)) return
+        viewSize = Triple(agentId, cols, rows)
+        viewSizeSent = false
+        sendViewSize()
+    }
+
+    fun releaseViewSize(agentId: String) {
+        if (viewSize?.first != agentId) return
+        viewSize = null
+        if (!socketOpen) return
+        send(JSONObject().put("type", "view-size").put("agentId", agentId))
+        // Resubscribe for a fresh snapshot, which carries the desktop's size again.
+        if (agentId in subscribedAgents) {
+            send(JSONObject().put("type", "unsubscribe").put("agentId", agentId))
+            send(JSONObject().put("type", "subscribe").put("agentId", agentId))
+        }
+    }
+
+    /**
+     * The app left the screen but the socket stays open for notifications: give the desktop its
+     * size back until [resumeViewSize].
+     */
+    fun pauseViewSize() {
+        val agentId = viewSize?.first ?: return
+        if (socketOpen && viewSizeSent) send(JSONObject().put("type", "view-size").put("agentId", agentId))
+        viewSizeSent = false
+    }
+
+    fun resumeViewSize() = sendViewSize()
+
+    /** Only paired sockets may size a PTY; the server closes a view-only one that tries. */
+    private fun sendViewSize() {
+        val (agentId, cols, rows) = viewSize ?: return
+        if (viewSizeSent || !socketOpen || !_state.value.canControl) return
+        send(JSONObject().put("type", "view-size").put("agentId", agentId).put("cols", cols).put("rows", rows))
+        viewSizeSent = true
+        terminalBuffers[agentId]?.resize(cols, rows)
     }
 
     /** Stream an agent's terminal. Retained for backwards compatibility. */
@@ -245,6 +370,54 @@ class RemoteClient(private val credentials: CredentialStore) {
         if (data.length > MAX_INPUT_LENGTH) {
             throw IOException("This message is too long. Shorten it and try again.")
         }
+        request(
+            JSONObject()
+                .put("type", "input")
+                .put("agentId", agentId)
+                .put("data", data)
+                .put("submit", submit),
+        )
+    }
+
+    /**
+     * Follow a built-in chat's conversation, as the phone web UI does. Call [unwatchChat] when done;
+     * the state stays null until the desktop sends the first frame.
+     */
+    fun watchChat(agentId: String): StateFlow<ChatState?> {
+        val flow = chats.getOrPut(agentId) { MutableStateFlow(null) }
+        val watchers = chatWatchers[agentId] ?: 0
+        chatWatchers[agentId] = watchers + 1
+        if (watchers == 0 && socketOpen) send(JSONObject().put("type", "chat-subscribe").put("agentId", agentId))
+        return flow.asStateFlow()
+    }
+
+    fun unwatchChat(agentId: String) {
+        val watchers = (chatWatchers[agentId] ?: return) - 1
+        if (watchers > 0) {
+            chatWatchers[agentId] = watchers
+            return
+        }
+        chatWatchers.remove(agentId)
+        chats.remove(agentId)
+        if (socketOpen) send(JSONObject().put("type", "chat-unsubscribe").put("agentId", agentId))
+    }
+
+    /** One of the desktop's chat actions (send, interrupt, respond, …); needs pairing. */
+    suspend fun sendChatAction(agentId: String, action: String, params: JSONObject = JSONObject()) {
+        if (params.toString().toByteArray().size > MAX_CHAT_MESSAGE_LENGTH) {
+            throw IOException("This message is too long to send from a phone.")
+        }
+        request(
+            JSONObject()
+                .put("type", "chat-action")
+                .put("agentId", agentId)
+                .put("action", action)
+                .put("params", params),
+        )
+    }
+
+    /** Send a message the server confirms with an input-result for its requestId. */
+    private suspend fun request(msg: JSONObject) {
         val ws = socket
         if (!_state.value.canControl || ws == null) {
             throw IOException("Reconnect before sending. Your draft has been kept.")
@@ -252,12 +425,7 @@ class RemoteClient(private val credentials: CredentialStore) {
         val requestId = (++nextRequestId).toString()
         val result = CompletableDeferred<Unit>()
         pending[requestId] = result
-        val msg = JSONObject()
-            .put("type", "input")
-            .put("agentId", agentId)
-            .put("data", data)
-            .put("submit", submit)
-            .put("requestId", requestId)
+        msg.put("requestId", requestId)
         if (!ws.send(msg.toString())) {
             pending.remove(requestId)
             throw IOException("Could not send. Your draft has been kept.")
@@ -291,8 +459,12 @@ class RemoteClient(private val credentials: CredentialStore) {
                 scope.launch {
                     if (socket !== ws) return@launch
                     socketOpen = true
+                    viewSizeSent = false
                     subscribedAgents.forEach {
                         send(JSONObject().put("type", "subscribe").put("agentId", it))
+                    }
+                    chatWatchers.keys.forEach {
+                        send(JSONObject().put("type", "chat-subscribe").put("agentId", it))
                     }
                 }
             }
@@ -329,13 +501,7 @@ class RemoteClient(private val credentials: CredentialStore) {
                     it.copy(status = ConnectionStatus.CONNECTED, canControl = authKind == TokenKind.PAIRED)
                 }
                 _agents.value = msg.list
-
-                // Buffer active running agents in the background
-                msg.list.forEach { agent ->
-                    if (agent.running && !agent.isChat) {
-                        getTerminalBuffer(agent.agentId)
-                    }
-                }
+                sendViewSize()
 
                 // Clean up deleted agents that no longer exist on the desktop
                 val activeIds = msg.list.map { it.agentId }.toSet()
@@ -360,12 +526,15 @@ class RemoteClient(private val credentials: CredentialStore) {
             is ServerMessage.Scrollback -> {
                 val buffer = terminalBuffers.getOrPut(msg.agentId) { TerminalBuffer(msg.agentId) }
                 buffer.onScrollback(msg.data, msg.cols, msg.rows)
+                // A snapshot sent before the server applied this phone's size carries the desktop's.
+                viewSize?.let { (agentId, cols, rows) -> if (agentId == msg.agentId && viewSizeSent) buffer.resize(cols, rows) }
                 terminalListeners[msg.agentId]?.toList()?.forEach { it.onScrollback(msg.data, msg.cols, msg.rows) }
             }
             is ServerMessage.Output -> {
                 terminalBuffers[msg.agentId]?.onOutput(msg.data)
                 terminalListeners[msg.agentId]?.toList()?.forEach { it.onOutput(msg.data) }
             }
+            is ServerMessage.Chat -> chats[msg.agentId]?.value = msg.state
             is ServerMessage.InputResult -> {
                 val result = pending.remove(msg.requestId) ?: return
                 if (msg.ok) {
@@ -384,12 +553,14 @@ class RemoteClient(private val credentials: CredentialStore) {
         when {
             code == CLOSE_UNAUTHORIZED && authKind == TokenKind.MOBILE -> {
                 credentials.clear()
+                _computers.value = credentials.computers
                 _agents.value = emptyList()
                 _state.value = ConnectionState(linkExpired = true)
                 return
             }
             code == CLOSE_UNAUTHORIZED || code == CLOSE_FORBIDDEN -> {
                 credentials.clearPairedToken()
+                _computers.value = credentials.computers
                 if (code == CLOSE_UNAUTHORIZED) {
                     if (started) connect()
                     return
@@ -432,6 +603,9 @@ class RemoteClient(private val credentials: CredentialStore) {
         const val HANDSHAKE_TIMEOUT_MS = 10_000L
         const val RECONNECT_DELAY_MS = 3_000L
         const val REQUEST_TIMEOUT_MS = 10_000L
+
+        // The server drops a socket message past 64 KiB; leave room for the envelope.
+        const val MAX_CHAT_MESSAGE_LENGTH = 60_000
         const val MAX_INPUT_LENGTH = 4096
     }
 }

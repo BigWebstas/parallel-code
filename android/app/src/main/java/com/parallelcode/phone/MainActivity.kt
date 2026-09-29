@@ -1,13 +1,26 @@
 package com.parallelcode.phone
-
+import android.Manifest
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.Modifier
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.activity.compose.PredictiveBackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
@@ -17,28 +30,55 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/** Which agent changes notify, from Settings (see [AgentWatchService]). */
+data class NotificationPrefs(
+    val enabled: Boolean,
+    val needsInput: Boolean,
+    val errors: Boolean,
+    val finished: Boolean,
+)
+
 class PhoneViewModel(application: Application) : AndroidViewModel(application) {
-    val client = RemoteClient(
-        CredentialStore(application.getSharedPreferences("desktop", Context.MODE_PRIVATE)),
+    private val phoneApp = application as PhoneApplication
+    val client = phoneApp.client
+    val settingsStore = phoneApp.settings
+
+    /** An agent to open, from a tapped notification. */
+    val openAgentRequest = MutableStateFlow<String?>(null)
+
+    private val _notifications = MutableStateFlow(readNotificationPrefs())
+    val notifications: StateFlow<NotificationPrefs> = _notifications.asStateFlow()
+
+    private fun readNotificationPrefs() = NotificationPrefs(
+        enabled = settingsStore.notificationsEnabled,
+        needsInput = settingsStore.notifyNeedsInput,
+        errors = settingsStore.notifyErrors,
+        finished = settingsStore.notifyFinished,
     )
-    val settingsStore = SettingsStore(
-        application.getSharedPreferences(SettingsStore.PREFS_NAME, Context.MODE_PRIVATE),
-    )
+
+    fun setNotifications(prefs: NotificationPrefs) {
+        settingsStore.notificationsEnabled = prefs.enabled
+        settingsStore.notifyNeedsInput = prefs.needsInput
+        settingsStore.notifyErrors = prefs.errors
+        settingsStore.notifyFinished = prefs.finished
+        _notifications.value = prefs
+        AgentWatchService.sync(getApplication())
+    }
     private val _keepScreenOn = MutableStateFlow(settingsStore.keepScreenOn)
     val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
 
@@ -50,6 +90,22 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _showMinimizedTasks = MutableStateFlow(settingsStore.showMinimizedTasks)
     val showMinimizedTasks: StateFlow<Boolean> = _showMinimizedTasks.asStateFlow()
+
+    private val _quickReplies = MutableStateFlow(settingsStore.quickReplies)
+    val quickReplies: StateFlow<List<String>> = _quickReplies.asStateFlow()
+
+    fun setQuickReplies(value: List<String>) {
+        settingsStore.quickReplies = value
+        _quickReplies.value = settingsStore.quickReplies
+    }
+
+    private val _alwaysFollowOutput = MutableStateFlow(settingsStore.alwaysFollowOutput)
+    val alwaysFollowOutput: StateFlow<Boolean> = _alwaysFollowOutput.asStateFlow()
+
+    fun setAlwaysFollowOutput(value: Boolean) {
+        settingsStore.alwaysFollowOutput = value
+        _alwaysFollowOutput.value = value
+    }
 
     fun setKeepScreenOn(value: Boolean) {
         settingsStore.keepScreenOn = value
@@ -70,10 +126,6 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.showMinimizedTasks = value
         _showMinimizedTasks.value = value
     }
-
-    override fun onCleared() {
-        client.dispose()
-    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -81,6 +133,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        openAgentFrom(intent)
         enableEdgeToEdge()
         setContent {
             val keepScreenOn by model.keepScreenOn.collectAsState()
@@ -114,15 +167,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // The socket only stays open while the app is visible, like the phone web UI's tab.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        openAgentFrom(intent)
+    }
+
+    private fun openAgentFrom(intent: Intent?) {
+        intent?.getStringExtra(EXTRA_AGENT_ID)?.let { model.openAgentRequest.value = it }
+    }
+
+    // The socket stays open while the app is visible, like the phone web UI's tab, and in the
+    // background only while agent notifications are on.
     override fun onStart() {
         super.onStart()
-        model.client.start()
+        (application as PhoneApplication).inForeground = true
+        model.client.start(HOLDER)
+        model.client.resumeViewSize()
+        AgentWatchService.sync(this)
     }
 
     override fun onStop() {
-        model.client.stop()
+        model.client.pauseViewSize()
+        model.client.stop(HOLDER)
+        (application as PhoneApplication).inForeground = false
         super.onStop()
+    }
+
+    companion object {
+        const val EXTRA_AGENT_ID = "agentId"
+        private const val HOLDER = "app"
     }
 }
 
@@ -147,14 +220,58 @@ private fun PhoneApp(model: PhoneViewModel) {
         else -> Screen.Agents
     }
     val link = state.link
+    val openAgentRequest by model.openAgentRequest.collectAsState()
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(openAgentRequest) {
+        val agentId = openAgentRequest ?: return@LaunchedEffect
+        haptic.performHapticFeedback(HapticFeedbackType.Confirm)
+        screenKey = "agent:$agentId"
+        model.openAgentRequest.value = null
+    }
 
+    val computers by model.client.computers.collectAsState()
     if (link == null) {
-        ConnectScreen(expired = state.linkExpired, onLink = { model.client.link(it) })
+        ConnectScreen(
+            expired = state.linkExpired,
+            onLink = { model.client.link(it) },
+            saved = computers,
+            onSelectSaved = { model.client.switchTo(it) },
+        )
         return
     }
-    if (screen != Screen.Agents) BackHandler { screenKey = "agents" }
+    if (screenKey == "add-computer") {
+        BackHandler { screenKey = "settings" }
+        ConnectScreen(
+            expired = false,
+            onLink = {
+                model.client.link(it)
+                screenKey = "agents"
+            },
+            onCancel = { screenKey = "settings" },
+        )
+        return
+    }
+    // Predictive back: the screen shrinks and slides with the swipe, and only leaves on release.
+    var backProgress by remember { mutableFloatStateOf(0f) }
+    if (screen != Screen.Agents) {
+        PredictiveBackHandler { events ->
+            try {
+                events.collect { backProgress = it.progress }
+                screenKey = "agents"
+            } finally {
+                backProgress = 0f
+            }
+        }
+    }
     AnimatedContent(
         targetState = screen,
+        modifier = Modifier.graphicsLayer {
+            val p = backProgress
+            scaleX = 1f - 0.08f * p
+            scaleY = 1f - 0.08f * p
+            translationX = p * 48.dp.toPx()
+            alpha = 1f - 0.25f * p
+        },
         transitionSpec = {
             if (initialState == Screen.Agents) {
                 (slideInHorizontally(animationSpec = tween(280)) { width -> (width * 0.15f).toInt() } + fadeIn(tween(250)))
@@ -189,6 +306,13 @@ private fun PhoneApp(model: PhoneViewModel) {
                 val themeMode by model.themeMode.collectAsState()
                 val showMinimizedTasks by model.showMinimizedTasks.collectAsState()
                 val latencyMs by model.client.latencyMs.collectAsState()
+                val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
+                val notifications by model.notifications.collectAsState()
+                val quickReplies by model.quickReplies.collectAsState()
+                val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                    model.setNotifications(notifications.copy(enabled = granted))
+                }
+                val context = LocalContext.current
                 SettingsScreen(
                     keepScreenOn = keepScreenOn,
                     onKeepScreenOnChange = model::setKeepScreenOn,
@@ -198,11 +322,32 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onThemeModeChange = model::setThemeMode,
                     showMinimizedTasks = showMinimizedTasks,
                     onShowMinimizedTasksChange = model::setShowMinimizedTasks,
+                    alwaysFollowOutput = alwaysFollowOutput,
+                    onAlwaysFollowOutputChange = model::setAlwaysFollowOutput,
+                    quickReplies = quickReplies,
+                    onQuickRepliesChange = model::setQuickReplies,
+                    notifications = notifications,
+                    onNotificationsChange = { prefs ->
+                        val needsPermission = prefs.enabled && !notifications.enabled &&
+                            Build.VERSION.SDK_INT >= 33 &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                            PackageManager.PERMISSION_GRANTED
+                        if (needsPermission) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        else model.setNotifications(prefs)
+                    },
                     latencyMs = latencyMs,
                     state = state,
+                    computers = computers,
+                    onSwitchComputer = {
+                        model.client.switchTo(it)
+                        screenKey = "agents"
+                    },
+                    onForgetComputer = { model.client.forget(it) },
+                    onAddComputer = { screenKey = "add-computer" },
                     onPair = { screenKey = "pair" },
                     onForget = {
                         model.client.forget()
+                        AgentWatchService.sync(context)
                         screenKey = "agents"
                     },
                     onBack = { screenKey = "agents" },
@@ -219,11 +364,25 @@ private fun PhoneApp(model: PhoneViewModel) {
             )
             is Screen.Agent -> {
                 val agent = agents.firstOrNull { it.agentId == currentScreen.agentId }
-                AgentScreen(
+                val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
+                val quickReplies by model.quickReplies.collectAsState()
+                if (agent?.isChat == true) {
+                    ChatScreen(
+                        agent = agent,
+                        agentId = currentScreen.agentId,
+                        state = state,
+                        client = model.client,
+                        quickReplies = quickReplies,
+                        onBack = { screenKey = "agents" },
+                        onPair = { screenKey = "pair" },
+                    )
+                } else AgentScreen(
                     agent = agent,
                     agentId = currentScreen.agentId,
                     state = state,
                     client = model.client,
+                    alwaysFollowOutput = alwaysFollowOutput,
+                    quickReplies = quickReplies,
                     onBack = { screenKey = "agents" },
                     onPair = { screenKey = "pair" },
                 )

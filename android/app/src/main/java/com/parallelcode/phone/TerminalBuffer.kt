@@ -21,6 +21,11 @@ class TerminalBuffer(
         _version.value++
     }
 
+    fun resize(cols: Int, rows: Int) {
+        screen.resize(cols, rows)
+        _version.value++
+    }
+
     override fun onOutput(data: ByteArray) {
         screen.feed(data)
         _version.value++

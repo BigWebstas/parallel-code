@@ -143,12 +143,12 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
                 else -> loaded.forEach { project ->
                     val isSelected = project.id == projectId
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
+                        shape = MaterialTheme.shapes.large,
                         color = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface,
                         border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else AppTheme.extra.border),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(MaterialTheme.shapes.large)
                             .selectable(
                                 selected = isSelected,
                                 enabled = !busy,
@@ -193,7 +193,7 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
                     .heightIn(min = 140.dp),
                 label = { Text("What should the agent work on?") },
                 enabled = !busy,
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.large,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = AppTheme.extra.inputBg,
                     unfocusedContainerColor = AppTheme.extra.inputBg,
@@ -209,7 +209,7 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
                 placeholder = { Text(title, color = AppTheme.extra.textSubtle) },
                 singleLine = true,
                 enabled = !busy,
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.large,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = AppTheme.extra.inputBg,
                     unfocusedContainerColor = AppTheme.extra.inputBg,
@@ -240,7 +240,7 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
                         scaleY = createScale
                     },
                 enabled = !busy && projectId.isNotEmpty() && prompt.isNotBlank(),
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.large,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -304,7 +304,7 @@ fun NotesPane(taskId: String, canEdit: Boolean, client: RemoteClient, modifier: 
                 .weight(1f),
             placeholder = { Text(if (loaded) "No notes yet" else "Loading notes…", color = AppTheme.extra.textSubtle) },
             readOnly = !canEdit || !loaded,
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.large,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = AppTheme.extra.inputBg,
                 unfocusedContainerColor = AppTheme.extra.inputBg,
@@ -362,7 +362,7 @@ fun NotesPane(taskId: String, canEdit: Boolean, client: RemoteClient, modifier: 
                         scaleY = saveScale
                     },
                     enabled = loaded && dirty && !saving,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,

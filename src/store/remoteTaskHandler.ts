@@ -9,12 +9,16 @@ import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } f
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { store } from './core';
 import { codeProjects } from './projects';
-import { createTask, updateTaskNotes } from './tasks';
+import { closeTask, createTask, getCoordinatorCloseWarning, updateTaskNotes } from './tasks';
 import { invoke } from '../lib/ipc';
 import { errMessage } from '../lib/log';
 import { IPC } from '../../electron/ipc/channels';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
-import type { AgentDef, GitIgnoredEntry } from '../ipc/types';
+import type { AgentDef, GitIgnoredEntry, WorktreeStatus } from '../ipc/types';
+import type { Task } from './types';
+import type { RemoteCloseResult, RemoteTaskDiff } from '../../electron/remote/protocol';
+import { getTaskDiffBaseBranch, loadTaskDiff } from '../lib/load-task-diff';
+import { getProjectPath } from './projects';
 
 interface RendererRequest {
   reqId: string;
@@ -33,6 +37,11 @@ interface GetNotesRequest extends RendererRequest {
 interface SetNotesRequest extends RendererRequest {
   taskId: string;
   notes: string;
+}
+
+interface CloseTaskRequest extends RendererRequest {
+  taskId: string;
+  force: boolean;
 }
 
 function reply(reqId: string, ok: boolean, data?: unknown, error?: string): void {
@@ -140,6 +149,66 @@ function handleGetNotes(req: GetNotesRequest): void {
   reply(req.reqId, true, { notes: store.tasks[req.taskId].notes ?? '' });
 }
 
+/** What closing would lose, worded like the desktop Close Task dialog. */
+async function closeTaskWarnings(task: Task): Promise<string[]> {
+  const warnings: string[] = [];
+  const coordinatorWarning = getCoordinatorCloseWarning(task.id);
+  if (coordinatorWarning) warnings.push(coordinatorWarning);
+  if (task.gitIsolation === 'worktree' && !task.externalWorktree) {
+    const status = await invoke<WorktreeStatus>(IPC.GetWorktreeStatus, {
+      worktreePath: task.worktreePath,
+    });
+    if (status.has_uncommitted_changes)
+      warnings.push('There are uncommitted changes that will be permanently lost.');
+    if (status.has_committed_changes)
+      warnings.push('This branch has commits that have not been merged into main.');
+  }
+  return warnings;
+}
+
+async function handleCloseTask(req: CloseTaskRequest): Promise<void> {
+  try {
+    if (!isKnownTask(store.tasks, req.taskId)) throw new Error('Task not found');
+    if (!req.force) {
+      const warnings = await closeTaskWarnings(store.tasks[req.taskId]);
+      if (warnings.length > 0) {
+        reply(req.reqId, true, { closed: false, warnings } satisfies RemoteCloseResult);
+        return;
+      }
+    }
+    await closeTask(req.taskId);
+    // closeTask records backend failures on the task instead of throwing.
+    const after = store.tasks[req.taskId];
+    if (after?.closingStatus === 'error') throw new Error(after.closingError ?? 'Close failed');
+    reply(req.reqId, true, { closed: true } satisfies RemoteCloseResult);
+  } catch (err) {
+    reply(req.reqId, false, undefined, errMessage(err));
+  }
+}
+
+/** Past this, a phone gets the start of the diff; the desktop shows all of it. */
+const MAX_REMOTE_DIFF_CHARS = 1_000_000;
+
+async function handleGetDiff(req: GetNotesRequest): Promise<void> {
+  try {
+    if (!isKnownTask(store.tasks, req.taskId)) throw new Error('Task not found');
+    const task = store.tasks[req.taskId];
+    const { rawDiff } = await loadTaskDiff({
+      worktreePath: task.worktreePath,
+      projectRoot: getProjectPath(task.projectId),
+      branchName: task.branchName,
+      baseBranch: getTaskDiffBaseBranch(task.gitIsolation, task.baseBranch),
+    });
+    const truncated = rawDiff.length > MAX_REMOTE_DIFF_CHARS;
+    reply(req.reqId, true, {
+      diff: truncated ? rawDiff.slice(0, MAX_REMOTE_DIFF_CHARS) : rawDiff,
+      truncated,
+    } satisfies RemoteTaskDiff);
+  } catch (err) {
+    reply(req.reqId, false, undefined, errMessage(err));
+  }
+}
+
 function handleSetNotes(req: SetNotesRequest): void {
   if (!isKnownTask(store.tasks, req.taskId)) {
     reply(req.reqId, false, undefined, 'Task not found');
@@ -197,6 +266,12 @@ export function startRemoteTaskHandlers(): () => void {
       if (data && typeof data === 'object') handleSetNotes(data as SetNotesRequest);
     },
   );
+  const offDiff = window.electron.ipcRenderer.on(IPC.Remote_GetDiffRequest, (data: unknown) => {
+    if (data && typeof data === 'object') void handleGetDiff(data as GetNotesRequest);
+  });
+  const offClose = window.electron.ipcRenderer.on(IPC.Remote_CloseTaskRequest, (data: unknown) => {
+    if (data && typeof data === 'object') void handleCloseTask(data as CloseTaskRequest);
+  });
   const offReadMap = window.electron.ipcRenderer.on(IPC.MCP_ReadMindMapRequest, (data: unknown) => {
     if (!data || typeof data !== 'object') return;
     const req = data as GetNotesRequest;
@@ -254,5 +329,7 @@ export function startRemoteTaskHandlers(): () => void {
     offCreate();
     offGetNotes();
     offSetNotes();
+    offClose();
+    offDiff();
   };
 }
