@@ -12,6 +12,8 @@ export default [
       'dist-electron/**',
       'dist-remote/**',
       'release/**',
+      'android/.gradle/**',
+      'android/**/build/**',
       'node_modules/**',
       '.worktrees/**',
       '.claude/**',
