@@ -14,6 +14,14 @@ function makeTempDir(): string {
   return dir;
 }
 
+function symlinkDir(target: string, link: string): void {
+  if (process.platform === 'win32') {
+    fs.symlinkSync(path.resolve(target), link, 'junction');
+  } else {
+    fs.symlinkSync(target, link);
+  }
+}
+
 /** Build a fake main-checkout node_modules with the given entries. */
 function makeSource(entries: Record<string, string | null>): string {
   const source = path.join(makeTempDir(), 'node_modules');
@@ -64,7 +72,11 @@ describe('ensureNodeModulesEntryLinks', () => {
 
     ensureNodeModulesEntryLinks(source, target);
 
-    expect(path.isAbsolute(fs.readlinkSync(path.join(target, 'pkg')))).toBe(false);
+    if (process.platform !== 'win32') {
+      expect(path.isAbsolute(fs.readlinkSync(path.join(target, 'pkg')))).toBe(false);
+    } else {
+      expect(fs.lstatSync(path.join(target, 'pkg')).isSymbolicLink()).toBe(true);
+    }
   });
 
   it('links package-manager metadata dot-entries but not tool caches', () => {
@@ -81,7 +93,11 @@ describe('ensureNodeModulesEntryLinks', () => {
     ensureNodeModulesEntryLinks(source, target);
 
     expect(fs.lstatSync(path.join(target, '.bin')).isSymbolicLink()).toBe(true);
-    expect(fs.lstatSync(path.join(target, '.package-lock.json')).isSymbolicLink()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(fs.lstatSync(path.join(target, '.package-lock.json')).isSymbolicLink()).toBe(true);
+    } else {
+      expect(fs.existsSync(path.join(target, '.package-lock.json'))).toBe(true);
+    }
     expect(fs.lstatSync(path.join(target, '.pnpm')).isSymbolicLink()).toBe(true);
     expect(fs.existsSync(path.join(target, '.vite'))).toBe(false);
     expect(fs.existsSync(path.join(target, '.vite-temp'))).toBe(false);
@@ -91,7 +107,7 @@ describe('ensureNodeModulesEntryLinks', () => {
   it('replaces a legacy whole-dir symlink with per-entry links', () => {
     const source = makeSource({ 'pkg/index.js': 'x\n' });
     const target = makeTarget();
-    fs.symlinkSync(source, target);
+    symlinkDir(source, target);
 
     ensureNodeModulesEntryLinks(source, target);
 
@@ -147,7 +163,7 @@ describe('ensureNodeModulesEntryLinks', () => {
     const source = makeSource({ 'pkg/index.js': 'x\n' });
     const target = makeTarget();
     ensureNodeModulesEntryLinks(source, target);
-    fs.symlinkSync('/nonexistent-user-dest', path.join(target, 'user-link'));
+    symlinkDir('/nonexistent-user-dest', path.join(target, 'user-link'));
 
     ensureNodeModulesEntryLinks(source, target);
 
@@ -158,7 +174,7 @@ describe('ensureNodeModulesEntryLinks', () => {
     const source = makeSource({ 'pkg/index.js': 'x\n' });
     // A dangling symlink in the source itself — the worktree link must mirror
     // it, not churn through prune-and-recreate on every refresh.
-    fs.symlinkSync('/nonexistent-source-dest', path.join(source, 'flaky'));
+    symlinkDir('/nonexistent-source-dest', path.join(source, 'flaky'));
     const target = makeTarget();
     ensureNodeModulesEntryLinks(source, target);
     const before = fs.lstatSync(path.join(target, 'flaky'));
@@ -183,7 +199,7 @@ describe('ensureNodeModulesEntryLinks', () => {
   it('prunes across a symlinked source-path alias', () => {
     const base = makeTempDir();
     fs.mkdirSync(path.join(base, 'real', 'node_modules', 'pkg'), { recursive: true });
-    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'alias'));
+    symlinkDir(path.join(base, 'real'), path.join(base, 'alias'));
     const aliasSource = path.join(base, 'alias', 'node_modules');
     const canonicalSource = path.join(fs.realpathSync(path.join(base, 'real')), 'node_modules');
     const target = makeTarget();
@@ -201,7 +217,7 @@ describe('isManagedNodeModules', () => {
   it('recognizes the legacy whole-dir symlink to the source', () => {
     const source = makeSource({ 'pkg/index.js': 'x\n' });
     const target = makeTarget();
-    fs.symlinkSync(source, target);
+    symlinkDir(source, target);
 
     expect(isManagedNodeModules(source, target)).toBe(true);
   });
@@ -210,7 +226,7 @@ describe('isManagedNodeModules', () => {
     const source = makeSource({ 'pkg/index.js': 'x\n' });
     const other = makeSource({ 'pkg/index.js': 'y\n' });
     const target = makeTarget();
-    fs.symlinkSync(other, target);
+    symlinkDir(other, target);
 
     expect(isManagedNodeModules(source, target)).toBe(false);
   });
@@ -228,14 +244,14 @@ describe('isManagedNodeModules', () => {
     // while `git rev-parse` reports the canonical root at refresh time.
     const base = makeTempDir();
     fs.mkdirSync(path.join(base, 'real', 'node_modules', 'pkg'), { recursive: true });
-    fs.symlinkSync(path.join(base, 'real'), path.join(base, 'alias'));
+    symlinkDir(path.join(base, 'real'), path.join(base, 'alias'));
     const aliasSource = path.join(base, 'alias', 'node_modules');
     const canonicalSource = path.join(fs.realpathSync(path.join(base, 'real')), 'node_modules');
 
     const entryTree = makeTarget();
     ensureNodeModulesEntryLinks(aliasSource, entryTree);
     const legacyLink = makeTarget();
-    fs.symlinkSync(aliasSource, legacyLink);
+    symlinkDir(aliasSource, legacyLink);
 
     expect(isManagedNodeModules(canonicalSource, entryTree)).toBe(true);
     expect(isManagedNodeModules(canonicalSource, legacyLink)).toBe(true);
@@ -257,8 +273,8 @@ describe('isManagedNodeModules', () => {
     // be classified as managed — this is the backstop that keeps the refresh
     // from ever touching a real install.
     const source = makeSource({ '.pnpm/pkg@1.0.0/node_modules/pkg/index.js': 'x\n' });
-    fs.symlinkSync(
-      path.join('.pnpm', 'pkg@1.0.0', 'node_modules', 'pkg'),
+    symlinkDir(
+      path.join(source, '.pnpm', 'pkg@1.0.0', 'node_modules', 'pkg'),
       path.join(source, 'pkg'),
     );
 

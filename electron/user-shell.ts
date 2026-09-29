@@ -39,5 +39,5 @@ export function resolveUserShell(deps: ResolveUserShellDeps = {}): string {
   const envShell = normalizeShell(env.SHELL);
   if (envShell && canUseShell(envShell)) return envShell;
 
-  return platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+  return platform === 'win32' ? env.COMSPEC || 'cmd.exe' : '/bin/sh';
 }

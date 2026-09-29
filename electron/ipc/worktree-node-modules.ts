@@ -66,6 +66,13 @@ export function realpathOrNull(p: string): string | null {
   }
 }
 
+function pathsEqual(a: string, b: string): boolean {
+  if (process.platform === 'win32') {
+    return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  }
+  return path.resolve(a) === path.resolve(b);
+}
+
 /**
  * Whether the symlink at `linkPath` is one of ours: a link to the entry
  * `name` inside the source `node_modules`. Compares lexically first, then via
@@ -85,8 +92,14 @@ function isEntryLinkInto(
   if (dest === null) return false;
   const resolved = resolveLinkDest(linkPath, dest);
   if (path.basename(resolved) !== name) return false;
-  if (path.dirname(resolved) === lexicalSource) return true;
-  return canonicalSource !== null && realpathOrNull(path.dirname(resolved)) === canonicalSource;
+  const resolvedDir = path.dirname(resolved);
+  if (pathsEqual(resolvedDir, lexicalSource)) return true;
+  if (canonicalSource !== null) {
+    if (pathsEqual(resolvedDir, canonicalSource)) return true;
+    const realDir = realpathOrNull(resolvedDir);
+    if (realDir !== null && pathsEqual(realDir, canonicalSource)) return true;
+  }
+  return false;
 }
 
 /**
@@ -146,10 +159,38 @@ export function ensureNodeModulesEntryLinks(sourceDir: string, targetDir: string
     if (!isLinkableEntry(name)) continue;
     if (present.has(name)) continue;
     try {
-      // Relative links survive the repo being moved or reached through a
-      // different path alias.
-      const dest = path.relative(targetDir, path.join(sourceDir, name));
-      fs.symlinkSync(dest, path.join(targetDir, name));
+      const sourceEntry = path.join(sourceDir, name);
+      const targetEntry = path.join(targetDir, name);
+      if (process.platform === 'win32') {
+        const lstat = lstatOrNull(sourceEntry);
+        const isSymlink = lstat?.isSymbolicLink() ?? false;
+        let isDir = false;
+        try {
+          isDir = fs.statSync(sourceEntry).isDirectory();
+        } catch {
+          // If stat fails (e.g. dangling symlink), treat as junction if symlink
+          if (isSymlink) isDir = true;
+        }
+        if (isDir) {
+          const dest = isSymlink
+            ? (readlinkOrNull(sourceEntry) ?? path.resolve(sourceEntry))
+            : path.resolve(sourceEntry);
+          fs.symlinkSync(dest, targetEntry, 'junction');
+        } else {
+          try {
+            fs.symlinkSync(path.relative(targetDir, sourceEntry), targetEntry, 'file');
+          } catch {
+            try {
+              fs.linkSync(sourceEntry, targetEntry);
+            } catch {
+              fs.copyFileSync(sourceEntry, targetEntry);
+            }
+          }
+        }
+      } else {
+        const dest = path.relative(targetDir, sourceEntry);
+        fs.symlinkSync(dest, targetEntry);
+      }
     } catch (err) {
       console.warn(`Failed to link node_modules entry '${name}':`, err);
     }
@@ -207,8 +248,13 @@ export function isManagedNodeModules(sourceDir: string, targetDir: string): bool
     const dest = readlinkOrNull(targetDir);
     if (dest === null) return false;
     const resolved = resolveLinkDest(targetDir, dest);
-    if (resolved === lexicalSource) return true;
-    return canonicalSource !== null && realpathOrNull(resolved) === canonicalSource;
+    if (pathsEqual(resolved, lexicalSource)) return true;
+    if (canonicalSource !== null) {
+      if (pathsEqual(resolved, canonicalSource)) return true;
+      const real = realpathOrNull(resolved);
+      if (real !== null && pathsEqual(real, canonicalSource)) return true;
+    }
+    return false;
   }
   if (!stat.isDirectory()) return false;
 

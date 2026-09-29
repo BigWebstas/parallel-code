@@ -1,7 +1,9 @@
 import { execFile, spawn } from 'child_process';
 import { existsSync } from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 import { resolveUserShell } from '../user-shell.js';
+import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
 import { pendingVerificationRun } from '../shared/verification-run.js';
 import type { VerificationRun, VerificationRunStatus } from './shared-types.js';
@@ -106,18 +108,30 @@ function appendTail(tail: string, chunk: string): string {
   return next.length > VERIFY_OUTPUT_TAIL_CHARS ? next.slice(-VERIFY_OUTPUT_TAIL_CHARS) : next;
 }
 
+function shellCommandArgs(shell: string, command: string): string[] {
+  const base = path.basename(shell).toLowerCase();
+  if (base.startsWith('cmd')) {
+    return ['/d', '/s', '/c', command];
+  }
+  if (base.startsWith('powershell') || base.startsWith('pwsh')) {
+    return ['-NoProfile', '-NonInteractive', '-Command', command];
+  }
+  return ['-c', command];
+}
+
 function killProcessTree(child: Child): void {
-  const pid = child.pid;
-  const signalGroup = (signal: NodeJS.Signals) => {
+  try {
+    signalProcessGroup(child, 'SIGTERM');
+  } catch {
+    /* already gone */
+  }
+  const hardKill = setTimeout(() => {
     try {
-      if (pid && process.platform !== 'win32') process.kill(-pid, signal);
-      else child.kill(signal);
+      signalProcessGroup(child, 'SIGKILL');
     } catch {
       /* already gone */
     }
-  };
-  signalGroup('SIGTERM');
-  const hardKill = setTimeout(() => signalGroup('SIGKILL'), KILL_GRACE_MS);
+  }, KILL_GRACE_MS);
   hardKill.unref?.();
   child.once('close', () => clearTimeout(hardKill));
 }
@@ -132,12 +146,11 @@ function exitOutcome(code: number | null, signal: NodeJS.Signals | null): EndRea
 }
 
 function spawnCommand(request: VerifyRequest, deps: SpawnDeps): Child {
-  return deps.spawnImpl(deps.shell, ['-c', request.command], {
+  return deps.spawnImpl(deps.shell, shellCommandArgs(deps.shell, request.command), {
     cwd: request.worktreePath,
     env: { ...process.env, ...request.env, NO_COLOR: '1', FORCE_COLOR: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
-    // Own process group so `npm test` and every child it forks die together.
-    detached: process.platform !== 'win32',
+    detached: OWN_PROCESS_GROUP,
   });
 }
 

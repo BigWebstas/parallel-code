@@ -82,4 +82,18 @@ describe('resolveUserShell', () => {
 
     expect(shell).toBe('/bin/sh');
   });
+
+  it('falls back to COMSPEC on Windows when neither OS nor env provides a usable shell', () => {
+    const shell = resolveUserShell({
+      userInfo: () => ({
+        ...mockUserInfo,
+        shell: '',
+      }),
+      env: { COMSPEC: 'C:\\Windows\\system32\\cmd.exe' },
+      platform: 'win32',
+      canUseShell: allowShells(),
+    });
+
+    expect(shell).toBe('C:\\Windows\\system32\\cmd.exe');
+  });
 });

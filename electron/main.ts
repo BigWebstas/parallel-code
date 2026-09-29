@@ -102,7 +102,13 @@ let mainWindow: BrowserWindow | null = null;
 let quittingForUpdate = false;
 
 function getIconPath(): string | undefined {
-  if (process.platform !== 'linux') return undefined;
+  if (process.platform === 'darwin') return undefined;
+  if (process.platform === 'win32') {
+    if (app.isPackaged) {
+      return path.join(process.resourcesPath, 'icon.ico');
+    }
+    return path.join(__dirname, '..', 'build', 'icon.ico');
+  }
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'icon.png');
   }
@@ -139,6 +145,7 @@ function createWindow() {
     icon: getIconPath(),
     frame: process.platform === 'darwin',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
+    thickFrame: true,
     resizable: true,
     // Paints until the renderer loads, avoiding a white flash. Matches the
     // default Obsidian background. shortcut: fixed colour, so light-theme users
@@ -247,6 +254,10 @@ if (shouldStartApp) {
   });
 
   app.whenReady().then(async () => {
+    if (process.platform === 'win32') {
+      app.setAppUserModelId('com.parallel-code.app');
+    }
+
     // Grant microphone and clipboard access (deny camera/video)
     session.defaultSession.setPermissionRequestHandler(
       (_webContents, permission, callback, details) => {

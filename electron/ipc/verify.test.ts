@@ -36,7 +36,14 @@ afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const runner = () => createVerificationRunner({ shell: '/bin/sh' });
+const defaultShell =
+  process.platform === 'win32'
+    ? fs.existsSync('C:\\Program Files\\Git\\bin\\bash.exe')
+      ? 'C:\\Program Files\\Git\\bin\\bash.exe'
+      : process.env.COMSPEC || 'cmd.exe'
+    : '/bin/sh';
+
+const runner = () => createVerificationRunner({ shell: defaultShell });
 
 describe('verification runner', () => {
   it('reports a passing command with its output and no git pin outside a checkout', async () => {
@@ -121,7 +128,7 @@ describe('verification runner', () => {
   });
 
   it('queues runs beyond the concurrency cap in FIFO order', async () => {
-    const r = createVerificationRunner({ shell: '/bin/sh', maxConcurrent: 1 });
+    const r = createVerificationRunner({ shell: defaultShell, maxConcurrent: 1 });
     const order: string[] = [];
     const a = r.start({
       key: 'a',
@@ -141,7 +148,7 @@ describe('verification runner', () => {
   });
 
   it('cancelling a queued run settles it at once, not when a slot frees up', async () => {
-    const r = createVerificationRunner({ shell: '/bin/sh', maxConcurrent: 1 });
+    const r = createVerificationRunner({ shell: defaultShell, maxConcurrent: 1 });
     const blocker = r.start({ key: 'a', worktreePath: tmpDir(), command: 'sleep 30' });
     const queued = r.start({ key: 'b', worktreePath: tmpDir(), command: 'echo never' });
     expect(r.cancel('b')).toBe(true);
@@ -154,7 +161,7 @@ describe('verification runner', () => {
   });
 
   it('cancelAll stops running and queued runs', async () => {
-    const r = createVerificationRunner({ shell: '/bin/sh', maxConcurrent: 1 });
+    const r = createVerificationRunner({ shell: defaultShell, maxConcurrent: 1 });
     const a = r.start({ key: 'a', worktreePath: tmpDir(), command: 'sleep 30' });
     const b = r.start({ key: 'b', worktreePath: tmpDir(), command: 'echo never' });
     await sleep(100);

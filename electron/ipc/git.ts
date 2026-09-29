@@ -38,13 +38,21 @@ const _exec = promisify(execFile);
  * execution so verbose logs can reconstruct the command stream.
  */
 const exec: typeof _exec = ((cmd: string, args: string[], options?: unknown) => {
-  if (cmd === 'git') logDebug('git', args.join(' '));
-  return (_exec as unknown as (...a: unknown[]) => unknown)(cmd, args, options);
+  let effectiveArgs = args;
+  if (cmd === 'git' && process.platform === 'win32') {
+    effectiveArgs = ['-c', 'core.longpaths=true', ...args];
+  }
+  if (cmd === 'git') logDebug('git', effectiveArgs.join(' '));
+  return (_exec as unknown as (...a: unknown[]) => unknown)(cmd, effectiveArgs, options);
 }) as typeof _exec;
 
 const execFileSync: typeof _execFileSync = ((cmd: string, args: string[], options?: unknown) => {
-  if (cmd === 'git') logDebug('git', args.join(' '));
-  return (_execFileSync as unknown as (...a: unknown[]) => unknown)(cmd, args, options);
+  let effectiveArgs = args;
+  if (cmd === 'git' && process.platform === 'win32') {
+    effectiveArgs = ['-c', 'core.longpaths=true', ...args];
+  }
+  if (cmd === 'git') logDebug('git', effectiveArgs.join(' '));
+  return (_execFileSync as unknown as (...a: unknown[]) => unknown)(cmd, effectiveArgs, options);
 }) as typeof _execFileSync;
 
 // --- TTL Caches ---
@@ -957,6 +965,8 @@ async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promis
   const rmError = await removeDirWithRetries(worktreePath);
   if (!rmError) return;
 
+  if (process.platform === 'win32') throw rmError;
+
   const uid = process.getuid?.() ?? -1;
   const gid = process.getgid?.() ?? -1;
   const foreign = findForeignOwnedEntries(worktreePath, uid);
@@ -1085,6 +1095,22 @@ export async function createWorktree(
         // (vite's `.vite-temp`/`.vite`, `.cache`) land inside the worktree —
         // the only path agent sandboxes allow writes to.
         if (!ensureNodeModulesEntryLinks(source, target)) continue;
+      } else if (process.platform === 'win32') {
+        let isDir = false;
+        try {
+          isDir = fs.statSync(source).isDirectory();
+        } catch {
+          // If stat fails, leave as false
+        }
+        if (isDir) {
+          fs.symlinkSync(path.resolve(source), target, 'junction');
+        } else {
+          try {
+            fs.linkSync(source, target);
+          } catch {
+            fs.copyFileSync(source, target);
+          }
+        }
       } else {
         fs.symlinkSync(source, target);
       }
