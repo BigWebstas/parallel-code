@@ -71,6 +71,8 @@ fun SettingsScreen(
     onShowMinimizedTasksChange: (Boolean) -> Unit,
     alwaysFollowOutput: Boolean,
     onAlwaysFollowOutputChange: (Boolean) -> Unit,
+    fitTerminalToPhone: Boolean,
+    onFitTerminalToPhoneChange: (Boolean) -> Unit,
     quickReplies: List<String>,
     onQuickRepliesChange: (List<String>) -> Unit,
     notifications: NotificationPrefs,
@@ -362,6 +364,13 @@ fun SettingsScreen(
                             description = "Jump to new output even after scrolling up. Off, the terminal follows output only while you are at the bottom.",
                             checked = alwaysFollowOutput,
                             onCheckedChange = onAlwaysFollowOutputChange,
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(vertical = 14.dp))
+                        SettingSwitchRow(
+                            title = "Fit the terminal to this phone",
+                            description = "Full-screen agents such as Claude Code fill the phone while you view them. Your computer's terminal is redrawn for the phone meanwhile and shifts until you leave.",
+                            checked = fitTerminalToPhone,
+                            onCheckedChange = onFitTerminalToPhoneChange,
                         )
                     }
                 }

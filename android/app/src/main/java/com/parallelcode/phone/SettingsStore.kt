@@ -36,6 +36,14 @@ class SettingsStore(private val prefs: SharedPreferences) {
             prefs.edit { putBoolean(KEY_ALWAYS_FOLLOW_OUTPUT, value) }
         }
 
+    /**
+     * Give a viewed terminal the phone's size, so full-screen agents fill the phone. Off by default:
+     * while on, the desktop pane shows output drawn for the phone and shifts until you leave.
+     */
+    var fitTerminalToPhone: Boolean
+        get() = prefs.getBoolean(KEY_FIT_TERMINAL, false)
+        set(value) = prefs.edit { putBoolean(KEY_FIT_TERMINAL, value) }
+
     /** Replies offered above the reply box, one per line. */
     var quickReplies: List<String>
         get() = (prefs.getString(KEY_QUICK_REPLIES, null) ?: DEFAULT_QUICK_REPLIES.joinToString("\n"))
@@ -72,6 +80,7 @@ class SettingsStore(private val prefs: SharedPreferences) {
         const val KEY_THEME_MODE = "themeMode"
         const val KEY_SHOW_MINIMIZED_TASKS = "showMinimizedTasks"
         const val KEY_ALWAYS_FOLLOW_OUTPUT = "alwaysFollowOutput"
+        const val KEY_FIT_TERMINAL = "fitTerminalToPhone"
         const val KEY_QUICK_REPLIES = "quickReplies"
         val DEFAULT_QUICK_REPLIES = listOf("continue", "yes", "run the tests", "commit this")
         const val KEY_NOTIFICATIONS = "notifications"

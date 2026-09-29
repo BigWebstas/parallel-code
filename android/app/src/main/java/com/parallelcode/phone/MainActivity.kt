@@ -99,6 +99,14 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
         _quickReplies.value = settingsStore.quickReplies
     }
 
+    private val _fitTerminalToPhone = MutableStateFlow(settingsStore.fitTerminalToPhone)
+    val fitTerminalToPhone: StateFlow<Boolean> = _fitTerminalToPhone.asStateFlow()
+
+    fun setFitTerminalToPhone(value: Boolean) {
+        settingsStore.fitTerminalToPhone = value
+        _fitTerminalToPhone.value = value
+    }
+
     private val _alwaysFollowOutput = MutableStateFlow(settingsStore.alwaysFollowOutput)
     val alwaysFollowOutput: StateFlow<Boolean> = _alwaysFollowOutput.asStateFlow()
 
@@ -324,6 +332,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onShowMinimizedTasksChange = model::setShowMinimizedTasks,
                     alwaysFollowOutput = alwaysFollowOutput,
                     onAlwaysFollowOutputChange = model::setAlwaysFollowOutput,
+                    fitTerminalToPhone = model.fitTerminalToPhone.collectAsState().value,
+                    onFitTerminalToPhoneChange = model::setFitTerminalToPhone,
                     quickReplies = quickReplies,
                     onQuickRepliesChange = model::setQuickReplies,
                     notifications = notifications,
@@ -382,6 +392,7 @@ private fun PhoneApp(model: PhoneViewModel) {
                     state = state,
                     client = model.client,
                     alwaysFollowOutput = alwaysFollowOutput,
+                    fitTerminalToPhone = model.fitTerminalToPhone.collectAsState().value,
                     quickReplies = quickReplies,
                     onBack = { screenKey = "agents" },
                     onPair = { screenKey = "pair" },

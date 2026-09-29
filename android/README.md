@@ -10,7 +10,7 @@ Native companion app for the desktop's **Connect Phone** (Remote Access) feature
 - **Agents:** live list with each agent's status and last line, under the desktop's Claude, Codex, and Antigravity 5-hour and weekly usage meters (hidden on desktops without `/api/mobile/usage`).
 - **Minimized tasks:** tasks minimized on the desktop are pinned below the live list; a setting hides them.
 - **Settings:** theme (follow system, Obsidian Dark, Light), keep the screen on, connection status, and forget this computer.
-- **Terminal:** an agent's terminal in the desktop's default Obsidian colors (light or dark with the phone). Once paired: a reply box and keys a phone keyboard lacks (Enter, Esc, Tab, arrows, Ctrl+C). Once paired, the terminal takes the phone's size while open, so full-screen agents such as Claude Code fill it; the desktop gets its size back when you leave.
+- **Terminal:** an agent's terminal in the desktop's default Obsidian colors (light or dark with the phone). Once paired: a reply box and keys a phone keyboard lacks (Enter, Esc, Tab, arrows, Ctrl+C). With "Fit the terminal to this phone" on (Settings, off by default), the terminal takes the phone's size while open so full-screen agents such as Claude Code fill it; the computer's own terminal shifts meanwhile and gets its size back when you leave.
 - **Changes:** the task's diff against its base branch, file by file with added and removed lines.
 - **Quick replies and voice:** saved replies above the reply box (edit them in Settings) and a mic button that dictates with Android's speech recognizer.
 - **Widget:** a home-screen widget with the agents that need you and the usage meters, updated while the app is connected.

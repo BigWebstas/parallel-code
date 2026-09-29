@@ -820,6 +820,7 @@ fun AgentScreen(
     state: ConnectionState,
     client: RemoteClient,
     alwaysFollowOutput: Boolean,
+    fitTerminalToPhone: Boolean,
     quickReplies: List<String>,
     onBack: () -> Unit,
     onPair: () -> Unit,
@@ -832,9 +833,10 @@ fun AgentScreen(
     var closing by remember { mutableStateOf(false) }
     var viewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
-    // Once paired, the PTY takes this screen's size so full-screen TUIs fill the phone; leaving
-    // the screen hands it back to the desktop. Settle first: the keyboard animates the height.
-    val sizeTerminal = state.canControl && agent != null && agent.running && agent.collapsed != true
+    // With "Fit the terminal to this phone" on and paired, the PTY takes this screen's size so
+    // full-screen TUIs fill the phone; leaving the screen hands it back to the desktop. Settle
+    // first: the keyboard animates the height.
+    val sizeTerminal = fitTerminalToPhone && state.canControl && agent != null && agent.running && agent.collapsed != true
     LaunchedEffect(sizeTerminal, viewSize) {
         val (cols, rows) = viewSize ?: return@LaunchedEffect
         if (!sizeTerminal) {
