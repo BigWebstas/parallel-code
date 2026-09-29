@@ -23,6 +23,7 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
         error: null,
       } satisfies UsageState,
       codex: idle,
+      antigravity: idle,
     },
   };
 });
@@ -30,7 +31,7 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
 vi.mock('../store/store', () => ({
   store: { usage },
   refreshUsage: mockRefreshUsage,
-  USAGE_PROVIDERS: ['claude', 'codex'],
+  USAGE_PROVIDERS: ['claude', 'codex', 'antigravity'],
 }));
 
 const disposers: Array<() => void> = [];

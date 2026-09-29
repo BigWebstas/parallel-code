@@ -31,9 +31,31 @@ class UsageTest {
     }
 
     @Test
+    fun showsAntigravityUsageWhenAvailable() {
+        val usage = parseUsage(
+            JSONObject(
+                """{
+                "antigravity": {
+                    "fiveHour": {"usedPercent": 40.0, "resetsAt": 1700000000000},
+                    "sevenDay": {"usedPercent": 15.0, "resetsAt": null},
+                    "fetchedAt": 1,
+                    "status": "ok",
+                    "error": null
+                }
+                }""",
+            ),
+        )
+        assertEquals(1, usage.size)
+        val agy = usage.first()
+        assertEquals("Antigravity", agy.label)
+        assertEquals(60, agy.fiveHour?.remainingPercent)
+        assertEquals(85, agy.sevenDay?.remainingPercent)
+    }
+
+    @Test
     fun hidesProvidersWithoutASubscription() {
         val none = """{"fiveHour": null, "sevenDay": null, "fetchedAt": null, "status": "unavailable", "error": null}"""
-        assertEquals(emptyList<ProviderUsage>(), parseUsage(JSONObject("""{"claude": $none, "codex": $none}""")))
+        assertEquals(emptyList<ProviderUsage>(), parseUsage(JSONObject("""{"claude": $none, "codex": $none, "antigravity": $none}""")))
     }
 
     @Test

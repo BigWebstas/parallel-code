@@ -34,10 +34,35 @@ class TerminalScreenTest {
     }
 
     @Test
-    fun keepsScrollRegionRedrawsOutOfHistory() {
-        // Status line pinned at the bottom; the region above scrolls.
+    fun preservesHistoryWhenScrollRegionStartsAtTop() {
+        // Status line pinned at the bottom; lines scrolling off the top go to history.
         val s = screen(rows = 3, data = "\u001b[3;1Hstatus\u001b[1;2r\u001b[1;1Ha\r\nb\r\nc")
-        assertEquals("b\nc\nstatus", s.text())
+        assertEquals("a\nb\nc\nstatus", s.text())
+    }
+
+    @Test
+    fun keepsSubRegionRedrawsOutOfHistoryWhenHeaderPinned() {
+        // Header pinned at row 1; only rows 2-3 scroll.
+        val s = screen(rows = 3, data = "\u001b[1;1Hheader\u001b[2;3r\u001b[2;1Ha\r\nb\r\nc")
+        assertEquals("header\nb\nc", s.text())
+    }
+
+    @Test
+    fun preservesHistoryAcrossMultipleScrollsWithPinnedFooter() {
+        // TUI with 4 rows: row 4 is a pinned status footer, rows 1-3 scroll.
+        // Print 10 lines through the scrolling region.
+        val input = StringBuilder("\u001b[4;1Hfooter\u001b[1;3r\u001b[1;1H")
+        for (i in 1..10) {
+            input.append("line $i\r\n")
+        }
+        val s = screen(rows = 4, data = input.toString())
+        val text = s.text()
+        assertTrue(text.contains("line 1"))
+        assertTrue(text.contains("line 10"))
+        assertTrue(text.contains("footer"))
+        // 7 lines scrolled into history + 4 lines on grid (including trailing lines)
+        val lines = s.styledLines()
+        assertTrue(lines.size >= 10)
     }
 
     @Test
@@ -80,5 +105,22 @@ class TerminalScreenTest {
         val spans = s.styledLines().single()
         assertEquals(listOf("x", "   "), spans.map { it.text })
         assertEquals(4, CellStyle.bg(spans[1].style))
+    }
+
+    @Test
+    fun retainsUpTo5000LinesOfHistory() {
+        val s = screen(rows = 2)
+        // Feed 5,050 lines
+        for (i in 1..5050) {
+            s.feed("L$i\r\n".toByteArray())
+        }
+        val lines = s.styledLines()
+        // Should keep 5000 history lines + 1 non-empty grid row (trailing blank row is trimmed)
+        assertEquals(5001, lines.size)
+        // Earliest line should be L50, since 1-49 were pruned past 5000
+        val text = s.text()
+        assertTrue(text.contains("L5050"))
+        assertTrue(text.contains("L52"))
+        assertEquals(false, text.contains("L40\n"))
     }
 }

@@ -201,7 +201,7 @@ export interface StepEntry {
 }
 
 /** Agents whose subscription rate limits the app can read. */
-export type UsageProvider = 'claude' | 'codex';
+export type UsageProvider = 'claude' | 'codex' | 'antigravity';
 
 export interface UsageWindow {
   /** Percent of the window consumed, 0–100. */

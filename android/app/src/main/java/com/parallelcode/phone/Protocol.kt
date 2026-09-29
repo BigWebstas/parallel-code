@@ -17,6 +17,7 @@ data class RemoteAgent(
     val attention: String,
     /** The desktop's built-in chat has no terminal to stream. */
     val isChat: Boolean,
+    val collapsed: Boolean = false,
 )
 
 sealed interface ServerMessage {
@@ -79,6 +80,7 @@ private fun parseAgent(a: JSONObject) = RemoteAgent(
     agentName = a.optStringOrNull("agentName"),
     attention = a.optString("attention", "idle"),
     isChat = a.optString("kind") == "chat",
+    collapsed = a.optBoolean("collapsed", false),
 )
 
 /**

@@ -207,8 +207,8 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
 
     private fun scrollUp(n: Int) {
         repeat(n.coerceAtMost(scrollBottom - scrollTop + 1)) {
-            // Only full-screen scrolls of the main screen move lines into history, as in xterm.
-            if (scrollTop == 0 && scrollBottom == rows - 1 && savedMainGrid == null) {
+            // Lines scrolling off the top row move into history so agent TUIs with pinned status bars can be scrolled.
+            if (scrollTop == 0 && savedMainGrid == null) {
                 history.addLast(grid[0])
                 if (history.size > MAX_HISTORY) history.removeFirst()
             }
@@ -365,6 +365,6 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     }
 
     private companion object {
-        const val MAX_HISTORY = 2000
+        const val MAX_HISTORY = 5000
     }
 }
