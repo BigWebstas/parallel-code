@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   antigravityFallbackCachePaths,
   antigravityQuotaCachePath,
+  discoverAllLanguageServerCredentials,
+  discoverLanguageServerCredentials,
   fetchAntigravityUsage,
   parseAntigravityUsageResponse,
   parseQuotaWindow,
@@ -413,5 +415,56 @@ describe('fetchAntigravityUsage', () => {
     const result = await fetchAntigravityUsage(missing, {}, mockDiscover);
     expect(mockDiscover).toHaveBeenCalled();
     expect(result.status).toBe('unavailable');
+  });
+
+  it('tries candidate credentials in order until an active language server responds', async () => {
+    const http = await import('node:http');
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          userStatus: {
+            cascadeModelConfigData: {
+              clientModelConfigs: [
+                {
+                  label: 'Gemini 3.8 Flash (High)',
+                  quotaInfo: { remainingFraction: 0.7, resetTime: '2026-09-29T03:00:00Z' },
+                },
+              ],
+            },
+          },
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+
+    try {
+      const mockDiscover = vi.fn().mockReturnValue([
+        { address: '127.0.0.1:1', token: 'dead-token' },
+        { address: `127.0.0.1:${port}`, token: 'live-token' },
+      ]);
+      const missing = path.join(tempDir(), 'quota_cache.json');
+      const result = await fetchAntigravityUsage(missing, {}, mockDiscover);
+
+      expect(result).toMatchObject({
+        status: 'ok',
+        fiveHour: { usedPercent: 30 },
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('discoverAllLanguageServerCredentials returns empty array when /proc does not exist', () => {
+    const origPlatform = process.platform;
+    try {
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      expect(discoverAllLanguageServerCredentials()).toEqual([]);
+      expect(discoverLanguageServerCredentials()).toBeNull();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: origPlatform });
+    }
   });
 });

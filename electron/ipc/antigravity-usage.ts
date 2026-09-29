@@ -325,20 +325,32 @@ export async function queryAntigravityLanguageServer(
 }
 
 /** Discovers active Language Server address and CSRF token from running processes on Linux. */
-export function discoverLanguageServerCredentials(): { address: string; token: string } | null {
-  if (process.platform !== 'linux') return null;
+export function discoverAllLanguageServerCredentials(): Array<{ address: string; token: string }> {
+  if (process.platform !== 'linux') return [];
+  const credentials: Array<{ address: string; token: string }> = [];
+  const seenAddresses = new Set<string>();
+
   try {
-    const entries = fs.readdirSync('/proc');
-    for (const entry of entries) {
-      if (!/^\d+$/.test(entry)) continue;
+    const entries = fs
+      .readdirSync('/proc')
+      .filter((entry) => /^\d+$/.test(entry))
+      .map(Number)
+      .sort((a, b) => b - a);
+
+    for (const pid of entries) {
       try {
-        const envBuf = fs.readFileSync(`/proc/${entry}/environ`);
+        const envBuf = fs.readFileSync(`/proc/${pid}/environ`);
         if (envBuf.includes(Buffer.from('ANTIGRAVITY_CSRF_TOKEN='))) {
           const str = envBuf.toString('utf8');
           const addrMatch = str.match(/ANTIGRAVITY_LS_ADDRESS=([^\0]+)/);
           const csrfMatch = str.match(/ANTIGRAVITY_CSRF_TOKEN=([^\0]+)/);
           if (addrMatch && csrfMatch) {
-            return { address: addrMatch[1], token: csrfMatch[1] };
+            const address = addrMatch[1];
+            const token = csrfMatch[1];
+            if (!seenAddresses.has(address)) {
+              seenAddresses.add(address);
+              credentials.push({ address, token });
+            }
           }
         }
       } catch {
@@ -348,10 +360,18 @@ export function discoverLanguageServerCredentials(): { address: string; token: s
   } catch {
     // /proc unreadable
   }
-  return null;
+  return credentials;
 }
 
-export type DiscoverCredentialsFn = () => { address: string; token: string } | null;
+export function discoverLanguageServerCredentials(): { address: string; token: string } | null {
+  const all = discoverAllLanguageServerCredentials();
+  return all.length > 0 ? all[0] : null;
+}
+
+export type DiscoverCredentialsFn = () =>
+  | { address: string; token: string }
+  | Array<{ address: string; token: string }>
+  | null;
 
 async function readQuotaCacheFile(
   primaryPath: string,
@@ -398,19 +418,25 @@ export async function fetchAntigravityUsage(
   const lsAddress = env.ANTIGRAVITY_LS_ADDRESS;
   const csrfToken = env.ANTIGRAVITY_CSRF_TOKEN;
 
-  let credentials = lsAddress && csrfToken ? { address: lsAddress, token: csrfToken } : null;
+  let candidateList: Array<{ address: string; token: string }> = [];
 
-  if (!credentials) {
-    if (discoverCredentials) {
-      credentials = discoverCredentials();
-    } else if (env === process.env && !env.ANTIGRAVITY_DISABLE_DISCOVERY) {
-      credentials = discoverLanguageServerCredentials();
+  if (lsAddress && csrfToken) {
+    candidateList = [{ address: lsAddress, token: csrfToken }];
+  } else if (discoverCredentials) {
+    const discovered = discoverCredentials();
+    if (discovered) {
+      candidateList = Array.isArray(discovered) ? discovered : [discovered];
     }
+  } else if (env === process.env && !env.ANTIGRAVITY_DISABLE_DISCOVERY) {
+    candidateList = discoverAllLanguageServerCredentials();
   }
 
-  // The language server reports per-model quota only, so the weekly window comes from the
-  // agy-hud cache, which Antigravity owns and this reader never writes.
-  const live = credentials ? await queryLiveUsage(credentials) : null;
+  // Query discovered candidates in order until an active language server responds
+  let live: UsageSnapshot | null = null;
+  for (const cred of candidateList) {
+    live = await queryLiveUsage(cred);
+    if (live) break;
+  }
   const cached = await readCachedUsage(cachePath, env);
   if (!live) return cached;
   if (cached.status !== 'ok') return live;
