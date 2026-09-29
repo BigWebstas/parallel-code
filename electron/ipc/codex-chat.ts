@@ -1,3 +1,4 @@
+import { signalProcessGroup } from '../process-group.js';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readContextUsage } from '../shared/agent-chat-types.js';
@@ -393,11 +394,9 @@ export class CodexChat {
     this.stopped = true;
     this.fail('Codex chat stopped.');
     // Own process group includes commands launched by the agent.
-    const pid = this.proc.pid;
     const signalGroup = (signal: NodeJS.Signals) => {
       try {
-        if (pid) process.kill(-pid, signal);
-        else this.proc.kill(signal);
+        signalProcessGroup(this.proc, signal);
       } catch {
         /* The process group has already exited. */
       }

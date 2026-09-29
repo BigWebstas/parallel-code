@@ -1,5 +1,6 @@
 import { spawn, execFile } from 'node:child_process';
 import { isAbsolute, resolve } from 'node:path';
+import { OWN_PROCESS_GROUP } from '../process-group.js';
 import { promisify } from 'node:util';
 import { ClaudeChat } from './claude.js';
 import { CodexChat } from '../ipc/codex-chat.js';
@@ -101,7 +102,7 @@ export async function startAgentChat(
           cwd: opts.cwd,
           env: opts.env,
           stdio: 'pipe',
-          detached: true,
+          detached: OWN_PROCESS_GROUP,
         });
         const codex = new CodexChat(proc, publish);
         chat = codex;

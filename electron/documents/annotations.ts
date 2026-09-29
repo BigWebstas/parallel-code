@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../ipc/channels.js';
 import { errMessage } from '../log.js';
+import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
@@ -331,11 +332,9 @@ export function buildAnnotationPrompt(
 }
 
 function killAsk(entry: ActiveAsk): void {
-  const pid = entry.proc.pid;
   const signal = (sig: NodeJS.Signals) => {
     try {
-      if (pid) process.kill(-pid, sig);
-      else entry.proc.kill(sig);
+      signalProcessGroup(entry.proc, sig);
     } catch {
       // Already gone.
     }
@@ -399,7 +398,7 @@ export async function askAnnotation(
     cwd: projectRoot,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
+    detached: OWN_PROCESS_GROUP,
   });
   proc.stdout?.setEncoding('utf8');
   proc.stderr?.setEncoding('utf8');

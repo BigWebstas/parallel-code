@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto';
 import type { BrowserWindow } from 'electron';
 import { IPC } from '../ipc/channels.js';
 import { errMessage } from '../log.js';
+import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
@@ -492,8 +493,8 @@ function killCandidate(entry: ActiveCandidate): void {
   if (!pid || entry.proc.exitCode !== null || entry.proc.signalCode !== null) return;
   const signal = (sig: NodeJS.Signals) => {
     try {
-      // Negative pid: the process group created by `detached: true`.
-      process.kill(-pid, sig);
+      // The process group created by `detached`, or the taskkill tree on Windows.
+      signalProcessGroup(entry.proc, sig);
     } catch {
       try {
         entry.proc.kill(sig);
@@ -943,7 +944,7 @@ function spawnCandidate(
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
     // Own process group, so cancelling reaches the CLI's children too.
-    detached: true,
+    detached: OWN_PROCESS_GROUP,
   });
   proc.stdout?.setEncoding('utf8');
   proc.stderr?.setEncoding('utf8');
