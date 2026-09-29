@@ -409,6 +409,7 @@ fun AgentsScreen(
                 refreshing = true
                 scope.launch {
                     client.reconnect()
+                    try { client.fetchUsage() } catch (_: Exception) {}
                     delay(600)
                     refreshing = false
                 }
@@ -422,6 +423,7 @@ fun AgentsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(vertical = 12.dp),
             ) {
+                item { UsageStrip(client, connected = state.status == ConnectionStatus.CONNECTED) }
                 if (state.status == ConnectionStatus.CONNECTED && !state.canControl) {
                     item { PairBanner(onPair) }
                 }

@@ -158,6 +158,10 @@ class RemoteClient(private val credentials: CredentialStore) {
         return api("POST", "/api/mobile/tasks", body, pairedTokenOrThrow()).getString("taskId")
     }
 
+    /** The desktop status bar's subscription usage; readable with the view-only token. */
+    suspend fun fetchUsage(): List<ProviderUsage> =
+        parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
+
     /** The task's notes panel; readable with the view-only token. */
     suspend fun fetchNotes(taskId: String): String =
         api("GET", notesPath(taskId), null, credentials.pairedToken ?: credentials.link?.token)
