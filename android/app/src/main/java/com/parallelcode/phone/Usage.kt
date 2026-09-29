@@ -245,7 +245,7 @@ private fun UsageMeter(label: String, window: UsageWindow, stale: Boolean) {
                 fontWeight = FontWeight.Medium,
                 color = textColor,
             )
-            val reset = formatReset(window.resetsAt)
+            val reset = if (window.remainingPercent == 100) "" else formatReset(window.resetsAt)
             if (reset.isNotEmpty()) {
                 Text(
                     " · $reset",
