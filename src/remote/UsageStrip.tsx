@@ -21,7 +21,7 @@ const PROVIDER_LABELS: Record<UsageProvider, string> = {
 
 function Meter(props: { label: string; window: UsageWindow }) {
   const left = () => remainingPercent(props.window);
-  const reset = () => formatReset(props.window.resetsAt);
+  const reset = () => (left() === 100 ? '' : formatReset(props.window.resetsAt));
   return (
     <div class="usage-meter" classList={{ warn: props.window.usedPercent >= USAGE_WARN_PERCENT }}>
       <span class="usage-label">{props.label}</span>

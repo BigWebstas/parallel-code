@@ -76,7 +76,9 @@ export function parseQuotaWindow(value: unknown, now = Date.now()): UsageWindow 
   const directUsed = finite(raw.usedPercent) ?? finite(raw.used_percent);
   if (directUsed !== null) {
     const rawReset = raw.resetsAt ?? raw.resets_at ?? raw.resetTime ?? raw.reset_time;
-    const resetsAt = parseResetsAt(rawReset);
+    const resetSeconds = finite(raw.reset_in_seconds) ?? finite(raw.reset_after_seconds);
+    const resetsAt =
+      parseResetsAt(rawReset) ?? (resetSeconds !== null ? now + resetSeconds * 1000 : null);
     return { usedPercent: clampPercent(directUsed), resetsAt };
   }
 
@@ -168,33 +170,39 @@ export function parseAntigravityUsageResponse(
   }
 
   // Format 2: official bucket format (e.g. gemini-5h, gemini-weekly, 3p-5h, 3p-weekly)
-  if (
-    !fiveHour &&
-    (raw['gemini-5h'] || raw['3p-5h'] || quotaObj['gemini-5h'] || quotaObj['3p-5h'])
-  ) {
-    fiveHour = parseQuotaWindow(
-      raw['gemini-5h'] ?? raw['3p-5h'] ?? quotaObj['gemini-5h'] ?? quotaObj['3p-5h'],
-      now,
-    );
+  const modelId =
+    (typeof raw.model === 'object' &&
+    raw.model !== null &&
+    typeof (raw.model as Record<string, unknown>).id === 'string'
+      ? ((raw.model as Record<string, unknown>).id as string)
+      : '') || (typeof raw.model === 'string' ? raw.model : '');
+  const is3pModel = /claude|gpt|oss/i.test(modelId);
+
+  if (!fiveHour) {
+    const first5h = is3pModel
+      ? (raw['3p-5h'] ?? quotaObj['3p-5h'] ?? raw['gemini-5h'] ?? quotaObj['gemini-5h'])
+      : (raw['gemini-5h'] ?? quotaObj['gemini-5h'] ?? raw['3p-5h'] ?? quotaObj['3p-5h']);
+    if (first5h) {
+      fiveHour = parseQuotaWindow(first5h, now);
+    }
   }
-  if (
-    !sevenDay &&
-    (raw['gemini-weekly'] ||
-      raw['3p-weekly'] ||
-      raw.weekly ||
-      quotaObj['gemini-weekly'] ||
-      quotaObj['3p-weekly'] ||
-      quotaObj.weekly)
-  ) {
-    sevenDay = parseQuotaWindow(
-      raw['gemini-weekly'] ??
-        raw['3p-weekly'] ??
-        raw.weekly ??
-        quotaObj['gemini-weekly'] ??
+  if (!sevenDay) {
+    const firstWeekly = is3pModel
+      ? (raw['3p-weekly'] ??
         quotaObj['3p-weekly'] ??
-        quotaObj.weekly,
-      now,
-    );
+        raw['gemini-weekly'] ??
+        quotaObj['gemini-weekly'] ??
+        raw.weekly ??
+        quotaObj.weekly)
+      : (raw['gemini-weekly'] ??
+        quotaObj['gemini-weekly'] ??
+        raw['3p-weekly'] ??
+        quotaObj['3p-weekly'] ??
+        raw.weekly ??
+        quotaObj.weekly);
+    if (firstWeekly) {
+      sevenDay = parseQuotaWindow(firstWeekly, now);
+    }
   }
 
   // Format 3: language server userStatus payload: userStatus.cascadeModelConfigData.clientModelConfigs
@@ -406,10 +414,24 @@ export async function fetchAntigravityUsage(
   const cached = await readCachedUsage(cachePath, env);
   if (!live) return cached;
   if (cached.status !== 'ok') return live;
+
+  // The Antigravity language server reports weekly quota for Gemini models in clientModelConfigs.
+  // If the live parsed "fiveHour" window has the same reset timestamp as the weekly window,
+  // it is actually the weekly window and must not overwrite the real five-hour window from cache.
+  const isLiveWeekly =
+    Boolean(live.fiveHour?.resetsAt) &&
+    (live.fiveHour?.resetsAt === cached.sevenDay?.resetsAt ||
+      live.fiveHour?.resetsAt === live.sevenDay?.resetsAt);
+
+  const fiveHour = isLiveWeekly ? (cached.fiveHour ?? null) : (live.fiveHour ?? cached.fiveHour);
+  const sevenDay = isLiveWeekly
+    ? (live.fiveHour ?? cached.sevenDay)
+    : (live.sevenDay ?? cached.sevenDay);
+
   return {
     ...live,
-    fiveHour: live.fiveHour ?? cached.fiveHour,
-    sevenDay: live.sevenDay ?? cached.sevenDay,
+    fiveHour,
+    sevenDay,
   };
 }
 
