@@ -48,6 +48,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,8 +69,20 @@ fun SettingsScreen(
     onThemeModeChange: (String) -> Unit,
     showMinimizedTasks: Boolean,
     onShowMinimizedTasksChange: (Boolean) -> Unit,
+    alwaysFollowOutput: Boolean,
+    onAlwaysFollowOutputChange: (Boolean) -> Unit,
+    fitTerminalToPhone: Boolean,
+    onFitTerminalToPhoneChange: (Boolean) -> Unit,
+    quickReplies: List<String>,
+    onQuickRepliesChange: (List<String>) -> Unit,
+    notifications: NotificationPrefs,
+    onNotificationsChange: (NotificationPrefs) -> Unit,
     latencyMs: Long?,
     state: ConnectionState,
+    computers: List<SavedComputer>,
+    onSwitchComputer: (String) -> Unit,
+    onForgetComputer: (String) -> Unit,
+    onAddComputer: () -> Unit,
     onPair: () -> Unit,
     onForget: () -> Unit,
     onBack: () -> Unit,
@@ -107,7 +127,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
@@ -210,7 +230,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
@@ -227,8 +247,8 @@ fun SettingsScreen(
                         )
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(horizontal = 8.dp))
                         ThemeOptionRow(
-                            title = "Deep Space Dark",
-                            subtitle = "Signature obsidian and cyan theme",
+                            title = "Obsidian Dark",
+                            subtitle = "Flat charcoal with an amber accent, like the desktop",
                             selected = themeMode == SettingsStore.THEME_DARK,
                             onClick = { onThemeModeChange(SettingsStore.THEME_DARK) },
                         )
@@ -249,7 +269,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
@@ -259,41 +279,99 @@ fun SettingsScreen(
                             .padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                        SettingSwitchRow(
+                            title = "Show minimized tasks",
+                            description = "Pin collapsed and minimized tasks to the bottom of the overview.",
+                            checked = showMinimizedTasks,
+                            onCheckedChange = onShowMinimizedTasksChange,
+                        )
+                    }
+                }
+            }
+
+            // NOTIFICATIONS SECTION
+            item {
+                SectionHeader("NOTIFICATIONS")
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, AppTheme.extra.border),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        SettingSwitchRow(
+                            title = "Notify me about agents",
+                            description = "Keeps the connection open in the background, with a quiet ongoing notification. Uses some battery.",
+                            checked = notifications.enabled,
+                            onCheckedChange = { onNotificationsChange(notifications.copy(enabled = it)) },
+                        )
+                        AnimatedVisibility(
+                            visible = notifications.enabled,
+                            enter = expandVertically(animationSpec = tween(280, easing = FastOutSlowInEasing)) + fadeIn(tween(220)),
+                            exit = shrinkVertically(animationSpec = tween(240, easing = FastOutSlowInEasing)) + fadeOut(tween(180)),
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 16.dp),
-                            ) {
-                                Text(
-                                    "Show minimized tasks",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
+                            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle)
+                                SettingSwitchRow(
+                                    title = "Needs input",
+                                    description = "An agent is waiting for an answer or approval.",
+                                    checked = notifications.needsInput,
+                                    onCheckedChange = { onNotificationsChange(notifications.copy(needsInput = it)) },
                                 )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    "Pin collapsed and minimized tasks to the bottom of the overview.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = AppTheme.extra.textMuted,
+                                SettingSwitchRow(
+                                    title = "Errors",
+                                    description = "An agent stopped on an error.",
+                                    checked = notifications.errors,
+                                    onCheckedChange = { onNotificationsChange(notifications.copy(errors = it)) },
+                                )
+                                SettingSwitchRow(
+                                    title = "Finished",
+                                    description = "An agent finished working or exited.",
+                                    checked = notifications.finished,
+                                    onCheckedChange = { onNotificationsChange(notifications.copy(finished = it)) },
                                 )
                             }
-                            Switch(
-                                checked = showMinimizedTasks,
-                                onCheckedChange = onShowMinimizedTasksChange,
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                                    uncheckedThumbColor = AppTheme.extra.textMuted,
-                                    uncheckedTrackColor = AppTheme.extra.inputBg,
-                                    uncheckedBorderColor = AppTheme.extra.border,
-                                ),
-                            )
                         }
+                    }
+                }
+            }
+
+            // TERMINAL SECTION
+            item {
+                SectionHeader("TERMINAL")
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, AppTheme.extra.border),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                    ) {
+                        QuickRepliesEditor(quickReplies, onQuickRepliesChange)
+                        HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(vertical = 14.dp))
+                        SettingSwitchRow(
+                            title = "Always scroll to latest output",
+                            description = "Jump to new output even after scrolling up. Off, the terminal follows output only while you are at the bottom.",
+                            checked = alwaysFollowOutput,
+                            onCheckedChange = onAlwaysFollowOutputChange,
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(vertical = 14.dp))
+                        SettingSwitchRow(
+                            title = "Fit the terminal to this phone",
+                            description = "Full-screen agents such as Claude Code fill the phone while you view them. Your computer's terminal is redrawn for the phone meanwhile and shifts until you leave.",
+                            checked = fitTerminalToPhone,
+                            onCheckedChange = onFitTerminalToPhoneChange,
+                        )
                     }
                 }
             }
@@ -304,7 +382,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
@@ -387,7 +465,7 @@ fun SettingsScreen(
                             Button(
                                 onClick = onPair,
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
+                                shape = MaterialTheme.shapes.small,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary,
                                     contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -402,11 +480,38 @@ fun SettingsScreen(
                         OutlinedButton(
                             onClick = onForget,
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
+                            shape = MaterialTheme.shapes.small,
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                         ) {
                             Text("Forget this computer", fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+
+            // COMPUTERS SECTION
+            item {
+                SectionHeader("COMPUTERS")
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, AppTheme.extra.border),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                        computers.forEach { computer ->
+                            ComputerRow(
+                                computer = computer,
+                                inUse = computer.baseUrl == state.link?.baseUrl,
+                                onSelect = { onSwitchComputer(computer.baseUrl) },
+                                onForget = { onForgetComputer(computer.baseUrl) },
+                            )
+                            HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(horizontal = 8.dp))
+                        }
+                        TextButton(onClick = onAddComputer, modifier = Modifier.fillMaxWidth()) {
+                            Text("Add another computer", fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -418,7 +523,7 @@ fun SettingsScreen(
                 Spacer(Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
@@ -458,7 +563,7 @@ private fun ThemeOptionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(MaterialTheme.shapes.small)
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -498,3 +603,109 @@ private fun SectionHeader(title: String) {
         modifier = Modifier.padding(start = 4.dp),
     )
 }
+
+@Composable
+private fun SettingSwitchRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 16.dp),
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = AppTheme.extra.textMuted,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = AppTheme.extra.textMuted,
+                uncheckedTrackColor = AppTheme.extra.inputBg,
+                uncheckedBorderColor = AppTheme.extra.border,
+            ),
+        )
+    }
+}
+
+/** One reply per line; saved when the field loses focus or the screen closes. */
+@Composable
+private fun QuickRepliesEditor(replies: List<String>, onChange: (List<String>) -> Unit) {
+    var text by remember(replies) { mutableStateOf(replies.joinToString("\n")) }
+    val latest by rememberUpdatedState(text)
+    DisposableEffect(Unit) { onDispose { if (latest.lines() != replies) onChange(latest.lines()) } }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "Quick replies",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            "Shown above the reply box; tap one to add it to your message. One per line.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = AppTheme.extra.textMuted,
+        )
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { if (!it.isFocused) onChange(text.lines()) },
+            minLines = 3,
+            maxLines = 8,
+        )
+    }
+}
+
+/** A saved computer: tap to switch to it; the one in use is marked and cannot be forgotten here. */
+@Composable
+private fun ComputerRow(computer: SavedComputer, inUse: Boolean, onSelect: () -> Unit, onForget: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !inUse, onClick = onSelect)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = inUse, onClick = if (inUse) null else onSelect)
+        Column(Modifier.weight(1f).padding(start = 4.dp)) {
+            Text(
+                computer.label,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                (if (inUse) "In use · " else "") + if (computer.pairedToken != null) "Paired" else "View only",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppTheme.extra.textMuted,
+            )
+        }
+        if (!inUse) {
+            TextButton(onClick = onForget) { Text("Forget", color = MaterialTheme.colorScheme.error) }
+        }
+    }
+}
+

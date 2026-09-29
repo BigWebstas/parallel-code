@@ -104,6 +104,8 @@ const ALLOWED_CHANNELS = new Set([
   'remote_get_notes_request',
   'remote_set_notes_request',
   'remote_get_usage_request',
+  'remote_close_task_request',
+  'remote_get_diff_request',
   'remote_update_task_status',
   'remote_renderer_reply',
   'plan_content',

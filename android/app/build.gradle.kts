@@ -17,7 +17,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 drops unused code and resources; the libraries ship their own keep rules.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
 
@@ -36,6 +39,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
+    // Installs the baseline profiles Compose ships, so a sideloaded APK starts and scrolls
+    // compiled rather than interpreted.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // Scanner UI comes from Google Play services, so the app needs no camera permission.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
 

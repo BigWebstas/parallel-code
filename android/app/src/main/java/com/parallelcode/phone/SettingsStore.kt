@@ -29,12 +29,64 @@ class SettingsStore(private val prefs: SharedPreferences) {
             prefs.edit { putBoolean(KEY_SHOW_MINIMIZED_TASKS, value) }
         }
 
+    /** Jump to new terminal output even when scrolled up; off, output is followed only at the bottom. */
+    var alwaysFollowOutput: Boolean
+        get() = prefs.getBoolean(KEY_ALWAYS_FOLLOW_OUTPUT, false)
+        set(value) {
+            prefs.edit { putBoolean(KEY_ALWAYS_FOLLOW_OUTPUT, value) }
+        }
+
+    /**
+     * Give a viewed terminal the phone's size, so full-screen agents fill the phone. Off by default:
+     * while on, the desktop pane shows output drawn for the phone and shifts until you leave.
+     */
+    var fitTerminalToPhone: Boolean
+        get() = prefs.getBoolean(KEY_FIT_TERMINAL, false)
+        set(value) = prefs.edit { putBoolean(KEY_FIT_TERMINAL, value) }
+
+    /** Replies offered above the reply box, one per line. */
+    var quickReplies: List<String>
+        get() = (prefs.getString(KEY_QUICK_REPLIES, null) ?: DEFAULT_QUICK_REPLIES.joinToString("\n"))
+            .lines().map { it.trim() }.filter { it.isNotEmpty() }
+        set(value) = prefs.edit { putString(KEY_QUICK_REPLIES, value.joinToString("\n")) }
+
+    /** Keep watching in the background and notify about agents (see [AgentWatchService]). */
+    var notificationsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFICATIONS, false)
+        set(value) = prefs.edit { putBoolean(KEY_NOTIFICATIONS, value) }
+
+    var notifyNeedsInput: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_NEEDS_INPUT, true)
+        set(value) = prefs.edit { putBoolean(KEY_NOTIFY_NEEDS_INPUT, value) }
+
+    var notifyErrors: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_ERRORS, true)
+        set(value) = prefs.edit { putBoolean(KEY_NOTIFY_ERRORS, value) }
+
+    var notifyFinished: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_FINISHED, false)
+        set(value) = prefs.edit { putBoolean(KEY_NOTIFY_FINISHED, value) }
+
+    fun notifiesFor(event: AgentEvent): Boolean = when (event) {
+        AgentEvent.NEEDS_INPUT -> notifyNeedsInput
+        AgentEvent.ERROR -> notifyErrors
+        AgentEvent.FINISHED -> notifyFinished
+    }
+
     companion object {
         const val PREFS_NAME = "settings"
         const val KEY_KEEP_SCREEN_ON = "keepScreenOn"
         const val KEY_KEEP_SCREEN_ON_ONLY_ACTIVE = "keepScreenOnOnlyActive"
         const val KEY_THEME_MODE = "themeMode"
         const val KEY_SHOW_MINIMIZED_TASKS = "showMinimizedTasks"
+        const val KEY_ALWAYS_FOLLOW_OUTPUT = "alwaysFollowOutput"
+        const val KEY_FIT_TERMINAL = "fitTerminalToPhone"
+        const val KEY_QUICK_REPLIES = "quickReplies"
+        val DEFAULT_QUICK_REPLIES = listOf("continue", "yes", "run the tests", "commit this")
+        const val KEY_NOTIFICATIONS = "notifications"
+        const val KEY_NOTIFY_NEEDS_INPUT = "notifyNeedsInput"
+        const val KEY_NOTIFY_ERRORS = "notifyErrors"
+        const val KEY_NOTIFY_FINISHED = "notifyFinished"
 
         const val THEME_SYSTEM = "system"
         const val THEME_DARK = "dark"

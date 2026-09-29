@@ -13,37 +13,40 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
-// Deep Space dark palette matching Parallel Code desktop and phone web UI
-val ColorBackgroundDark = Color(0xFF0B0F14)
-val ColorSurfaceDark = Color(0xFF121A23)
-val ColorSurfaceVariantDark = Color(0xFF1A2633)
-val ColorInputBgDark = Color(0xFF101720)
-val ColorCardBgDark = Color(0xFF101821)
-val ColorCardBgAttentionDark = Color(0xFF1B1711)
-val ColorBorderDark = Color(0xFF253443)
-val ColorBorderSubtleDark = Color(0xFF1A2530)
-val ColorAttentionBorderDark = Color(0xFF766037)
-val ColorAttentionBgDark = Color(0x66241E12)
-val ColorWarningBannerBgDark = Color(0xFF302711)
-val ColorWarningTextDark = Color(0xFFFFDD98)
-val ColorAccentCyan = Color(0xFF65D5FF)
-val ColorOnAccentCyan = Color(0xFF06202D)
-val ColorPrimaryContainerDark = Color(0xFF183344)
-val ColorOnPrimaryContainerDark = Color(0xFFBDEAFF)
-val ColorInfoBlue = Color(0xFF60A5FA)
-val ColorInfoContainerDark = Color(0xFF132838)
-val ColorOnInfoContainerDark = Color(0xFFB3E6FF)
-val ColorSuccessTeal = Color(0xFF79E2B7)
-val ColorReviewPurple = Color(0xFFC084FC)
-val ColorErrorRed = Color(0xFFFF5F73)
-val ColorErrorContainerDark = Color(0xFF311B23)
-val ColorOnErrorContainerDark = Color(0xFFFFB0BB)
-val ColorTextPrimaryDark = Color(0xFFE0EAF3)
-val ColorTextMutedDark = Color(0xFF9BB0C3)
-val ColorTextSubtleDark = Color(0xFF678197)
+// Obsidian dark palette: the desktop's default look (html[data-look='obsidian'] in src/styles.css).
+// Flat charcoal neutrals with an amber accent; "needs you" uses the distinct orange warning.
+val ColorBackgroundDark = Color(0xFF171717) // --bg
+val ColorSurfaceDark = Color(0xFF1E1E1E) // --task-panel-bg
+val ColorSurfaceVariantDark = Color(0xFF242424) // --bg-elevated
+val ColorInputBgDark = Color(0xFF262626) // --bg-input
+val ColorCardBgDark = Color(0xFF1E1E1E) // --island-bg
+val ColorCardBgAttentionDark = Color(0xFF2F2825) // --warning 8% over --island-bg
+val ColorBorderDark = Color(0xFF333333) // --border
+val ColorBorderSubtleDark = Color(0xFF292929) // --border-subtle
+val ColorAttentionBorderDark = Color(0xFF885C47) // --warning 50% over --island-bg
+val ColorAttentionBgDark = Color(0x33F29B70)
+val ColorWarningBannerBgDark = Color(0xFF372D28) // --warning 12% over --island-bg
+val ColorWarningTextDark = Color(0xFFF29B70) // --warning
+val ColorAccentAmber = Color(0xFFC4A77D) // --accent
+val ColorOnAccentAmber = Color(0xFF1E1B16) // --accent-text
+val ColorPrimaryContainerDark = Color(0xFF39342D) // --accent 16% over --island-bg
+val ColorOnPrimaryContainerDark = Color(0xFFD6BD96) // --accent-hover
+val ColorInfoGrey = Color(0xFFC9C9C9) // --info
+val ColorInfoContainerDark = Color(0xFF303030) // --bg-hover
+val ColorOnInfoContainerDark = Color(0xFFEDEDED)
+val ColorSuccessGreen = Color(0xFF98C9AE) // --success
+val ColorReviewPurple = Color(0xFFC1B0E8) // --review
+val ColorErrorRed = Color(0xFFEAA0AA) // --error
+val ColorErrorContainerDark = Color(0xFF362E2F) // --error 12% over --island-bg
+val ColorOnErrorContainerDark = Color(0xFFF5C6CC)
+val ColorTextPrimaryDark = Color(0xFFEDEDED) // --fg
+val ColorTextMutedDark = Color(0xFFB5B5B5) // --fg-muted
+val ColorTextSubtleDark = Color(0xFF919191) // --fg-subtle
 
 @Immutable
 data class ExtendedColors(
+    /** The app's own dark/light choice, which can differ from the phone's. */
+    val dark: Boolean,
     val border: Color,
     val borderSubtle: Color,
     val inputBg: Color,
@@ -61,6 +64,7 @@ data class ExtendedColors(
 )
 
 val DarkExtendedColors = ExtendedColors(
+    dark = true,
     border = ColorBorderDark,
     borderSubtle = ColorBorderSubtleDark,
     inputBg = ColorInputBgDark,
@@ -70,43 +74,46 @@ val DarkExtendedColors = ExtendedColors(
     attentionBg = ColorAttentionBgDark,
     warningBannerBg = ColorWarningBannerBgDark,
     warningText = ColorWarningTextDark,
-    success = ColorSuccessTeal,
+    success = ColorSuccessGreen,
     review = ColorReviewPurple,
     textPrimary = ColorTextPrimaryDark,
     textMuted = ColorTextMutedDark,
     textSubtle = ColorTextSubtleDark,
 )
 
+// Obsidian Light palette: html[data-look='obsidian-light'] in src/styles.css. Warm paper neutrals,
+// bronze accent; status hues darkened for AA contrast on white.
 val LightExtendedColors = ExtendedColors(
-    border = Color(0xFFD0DCE7),
-    borderSubtle = Color(0xFFE2EAF1),
-    inputBg = Color(0xFFF7F9FB),
-    cardBg = Color(0xFFFFFFFF),
-    cardBgAttention = Color(0xFFFFF9EE),
-    attentionBorder = Color(0xFFE0A030),
-    attentionBg = Color(0x33FFE8B3),
-    warningBannerBg = Color(0xFFFFF3D6),
-    warningText = Color(0xFF7A4B00),
-    success = Color(0xFF1B8754),
-    review = Color(0xFF6F42C1),
-    textPrimary = Color(0xFF151D26),
-    textMuted = Color(0xFF53677A),
-    textSubtle = Color(0xFF7F95A8),
+    dark = false,
+    border = Color(0xFFDDDCD8), // --border
+    borderSubtle = Color(0xFFE9E8E4), // --border-subtle
+    inputBg = Color(0xFFF2F2F0), // --bg-input
+    cardBg = Color(0xFFFFFFFF), // --island-bg
+    cardBgAttention = Color(0xFFFBF3ED), // --warning 6% over white
+    attentionBorder = Color(0xFFD9A57F), // --warning 45% over white
+    attentionBg = Color(0x22AD4E00),
+    warningBannerBg = Color(0xFFFAEFE6), // --warning 10% over white
+    warningText = Color(0xFFAD4E00), // --warning
+    success = Color(0xFF2F7D4F), // --success
+    review = Color(0xFF6D4FC2), // --review
+    textPrimary = Color(0xFF1F1F1F), // --fg
+    textMuted = Color(0xFF555555), // --fg-muted
+    textSubtle = Color(0xFF6E6E6E), // --fg-subtle
 )
 
 val LocalExtendedColors = staticCompositionLocalOf { DarkExtendedColors }
 
 val ParallelCodeDarkColorScheme = darkColorScheme(
-    primary = ColorAccentCyan,
-    onPrimary = ColorOnAccentCyan,
+    primary = ColorAccentAmber,
+    onPrimary = ColorOnAccentAmber,
     primaryContainer = ColorPrimaryContainerDark,
     onPrimaryContainer = ColorOnPrimaryContainerDark,
-    secondary = ColorInfoBlue,
-    onSecondary = ColorOnAccentCyan,
+    secondary = ColorInfoGrey,
+    onSecondary = ColorBackgroundDark,
     secondaryContainer = ColorInfoContainerDark,
     onSecondaryContainer = ColorOnInfoContainerDark,
     tertiary = ColorReviewPurple,
-    onTertiary = Color(0xFF2E104D),
+    onTertiary = Color(0xFF231A38),
     background = ColorBackgroundDark,
     onBackground = ColorTextPrimaryDark,
     surface = ColorSurfaceDark,
@@ -116,42 +123,43 @@ val ParallelCodeDarkColorScheme = darkColorScheme(
     outline = ColorBorderDark,
     outlineVariant = ColorBorderSubtleDark,
     error = ColorErrorRed,
-    onError = Color(0xFF310B11),
+    onError = Color(0xFF3A1519),
     errorContainer = ColorErrorContainerDark,
     onErrorContainer = ColorOnErrorContainerDark,
 )
 
 val ParallelCodeLightColorScheme = lightColorScheme(
-    primary = Color(0xFF007A9E),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFD6F3FF),
-    onPrimaryContainer = Color(0xFF003546),
-    secondary = Color(0xFF0D6EFD),
+    primary = Color(0xFF8A6433), // --accent
+    onPrimary = Color.White, // --accent-text
+    primaryContainer = Color(0xFFF1ECE6), // --accent 12% over white
+    onPrimaryContainer = Color(0xFF75532A), // --accent-hover
+    secondary = Color(0xFF5E5E5E), // --info
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE3EFFF),
-    onSecondaryContainer = Color(0xFF002966),
-    tertiary = Color(0xFF8250DF),
+    secondaryContainer = Color(0xFFEBEBE8), // --bg-hover
+    onSecondaryContainer = Color(0xFF1F1F1F),
+    tertiary = Color(0xFF6D4FC2), // --review
     onTertiary = Color.White,
-    background = Color(0xFFF4F6F9),
-    onBackground = Color(0xFF151D26),
-    surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF151D26),
-    surfaceVariant = Color(0xFFEAEFF5),
-    onSurfaceVariant = Color(0xFF53677A),
-    outline = Color(0xFFD0DCE7),
-    outlineVariant = Color(0xFFE2EAF1),
-    error = Color(0xFFCF222E),
+    background = Color(0xFFF4F4F2), // --bg
+    onBackground = Color(0xFF1F1F1F),
+    surface = Color(0xFFFFFFFF), // --bg-elevated
+    onSurface = Color(0xFF1F1F1F),
+    surfaceVariant = Color(0xFFEBEBE8),
+    onSurfaceVariant = Color(0xFF555555),
+    outline = Color(0xFFDDDCD8),
+    outlineVariant = Color(0xFFE9E8E4),
+    error = Color(0xFFB3383F), // --error
     onError = Color.White,
-    errorContainer = Color(0xFFFFECEE),
-    onErrorContainer = Color(0xFF7A0010),
+    errorContainer = Color(0xFFF7E9EA),
+    onErrorContainer = Color(0xFF7D2328),
 )
 
-val ParallelCodeShapes = Shapes(
+// Obsidian is square-edged in both variants: only small controls keep a slight rounding.
+val ObsidianShapes = Shapes(
     extraSmall = RoundedCornerShape(4.dp),
-    small = RoundedCornerShape(8.dp),
-    medium = RoundedCornerShape(10.dp),
-    large = RoundedCornerShape(12.dp),
-    extraLarge = RoundedCornerShape(16.dp),
+    small = RoundedCornerShape(4.dp),
+    medium = RoundedCornerShape(0.dp),
+    large = RoundedCornerShape(0.dp),
+    extraLarge = RoundedCornerShape(0.dp),
 )
 
 @Composable
@@ -165,7 +173,7 @@ fun ParallelCodeTheme(
     CompositionLocalProvider(LocalExtendedColors provides extendedColors) {
         MaterialTheme(
             colorScheme = colorScheme,
-            shapes = ParallelCodeShapes,
+            shapes = ObsidianShapes,
             content = content,
         )
     }

@@ -71,7 +71,12 @@ import { loadEslintQualityFindings } from './eslint-quality-findings.js';
 import { buildVerifyEnv, validateVerifyCommand, verificationRunner } from './verify.js';
 import { startRemoteServer, getMCPLogs, type RemoteProject } from '../remote/server.js';
 import type { UsageProvider, UsageState } from './shared-types.js';
-import type { RemoteAttentionState, RemoteTaskContext } from '../remote/protocol.js';
+import type {
+  RemoteAttentionState,
+  RemoteCloseResult,
+  RemoteTaskContext,
+  RemoteTaskDiff,
+} from '../remote/protocol.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { getUserDataDir } from '../user-data-dir.js';
 import {
@@ -1666,6 +1671,10 @@ export function registerAllHandlers(win: BrowserWindow): void {
     setTaskNotes: (taskId: string, notes: string) =>
       callRenderer<{ ok: boolean }>(IPC.Remote_SetNotesRequest, { taskId, notes }).then(() => {}),
     getUsage: () => callRenderer<Record<UsageProvider, UsageState>>(IPC.Remote_GetUsageRequest, {}),
+    closeTaskFromMobile: (taskId: string, force: boolean) =>
+      callRenderer<RemoteCloseResult>(IPC.Remote_CloseTaskRequest, { taskId, force }),
+    getTaskDiff: (taskId: string) =>
+      callRenderer<RemoteTaskDiff>(IPC.Remote_GetDiffRequest, { taskId }),
     getTaskAttention: (taskId: string): RemoteAttentionState => taskAttention.get(taskId) ?? 'idle',
     getTaskContext: (taskId: string) => taskContext.get(taskId),
     getCollapsedTaskIds: (): string[] => {
