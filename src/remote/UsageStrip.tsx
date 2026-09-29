@@ -13,7 +13,11 @@ import type { UsageProvider, UsageState, UsageWindow } from '../../electron/ipc/
 // The desktop polls the usage endpoints itself; this only re-reads its snapshot.
 const POLL_INTERVAL_MS = 60_000;
 
-const PROVIDER_LABELS: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
+const PROVIDER_LABELS: Record<UsageProvider, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  antigravity: 'Antigravity',
+};
 
 function Meter(props: { label: string; window: UsageWindow }) {
   const left = () => remainingPercent(props.window);

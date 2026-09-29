@@ -14,7 +14,11 @@ import {
   usageVisible,
 } from './usage-format';
 
-const PROVIDER_LABELS: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
+const PROVIDER_LABELS: Record<UsageProvider, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  antigravity: 'Antigravity',
+};
 const POPOVER_WIDTH = 300;
 
 function UsageMeter(props: { label: string; window: UsageWindow; width?: number }) {

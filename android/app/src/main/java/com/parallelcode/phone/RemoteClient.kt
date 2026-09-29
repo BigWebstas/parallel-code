@@ -68,6 +68,8 @@ class RemoteClient(private val credentials: CredentialStore) {
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
     private val _agents = MutableStateFlow<List<RemoteAgent>>(emptyList())
     val agents: StateFlow<List<RemoteAgent>> = _agents.asStateFlow()
+    private val _latencyMs = MutableStateFlow<Long?>(null)
+    val latencyMs: StateFlow<Long?> = _latencyMs.asStateFlow()
 
     private var socket: WebSocket? = null
     // OkHttp queues sends before the socket opens, which would put them ahead of the auth message.
@@ -76,6 +78,8 @@ class RemoteClient(private val credentials: CredentialStore) {
     private var started = false
     private var reconnectJob: Job? = null
     private var handshakeJob: Job? = null
+    private val terminalBuffers = mutableMapOf<String, TerminalBuffer>()
+    private val subscribedAgents = mutableSetOf<String>()
     private val terminalListeners = mutableMapOf<String, MutableSet<TerminalListener>>()
     private val pending = mutableMapOf<String, CompletableDeferred<Unit>>()
     private var nextRequestId = 0
@@ -97,6 +101,9 @@ class RemoteClient(private val credentials: CredentialStore) {
         credentials.saveLink(link)
         _state.value = ConnectionState(link = link)
         _agents.value = emptyList()
+        terminalBuffers.clear()
+        subscribedAgents.clear()
+        terminalListeners.clear()
         reconnect()
     }
 
@@ -104,7 +111,11 @@ class RemoteClient(private val credentials: CredentialStore) {
         closeSocket()
         credentials.clear()
         _agents.value = emptyList()
+        _latencyMs.value = null
         _state.value = ConnectionState()
+        terminalBuffers.clear()
+        subscribedAgents.clear()
+        terminalListeners.clear()
     }
 
     fun reconnect() {
@@ -180,13 +191,17 @@ class RemoteClient(private val credentials: CredentialStore) {
             .header("Authorization", "Bearer $token")
             .method(method, body?.toString()?.toRequestBody("application/json".toMediaType()))
             .build()
+        val start = System.currentTimeMillis()
         val (code, text) = withContext(Dispatchers.IO) {
             try {
                 http.newCall(request).execute().use { it.code to it.body.string() }
             } catch (e: IOException) {
+                _latencyMs.value = null
                 throw ApiException("Could not reach your computer. Check you're on the same network.")
             }
         }
+        val elapsed = System.currentTimeMillis() - start
+        _latencyMs.value = elapsed
         if (code in 200..299) return text
         val error = runCatching { JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotEmpty() }
         // 401 means the desktop no longer knows this token, so drop to view-only like a 4001 close.
@@ -200,16 +215,31 @@ class RemoteClient(private val credentials: CredentialStore) {
         throw ApiException(error ?: "Request failed ($code).", code)
     }
 
-    /** Stream an agent's terminal. The server answers with a scrollback snapshot, then output. */
+    /**
+     * Get or create a persistent TerminalBuffer for an agent.
+     * Subscribes to the desktop server so output streams and buffers in the background.
+     */
+    fun getTerminalBuffer(agentId: String): TerminalBuffer {
+        val buffer = terminalBuffers.getOrPut(agentId) { TerminalBuffer(agentId) }
+        subscribeAgent(agentId)
+        return buffer
+    }
+
+    private fun subscribeAgent(agentId: String) {
+        if (subscribedAgents.add(agentId) && socketOpen) {
+            send(JSONObject().put("type", "subscribe").put("agentId", agentId))
+        }
+    }
+
+    /** Stream an agent's terminal. Retained for backwards compatibility. */
     fun watchTerminal(agentId: String, listener: TerminalListener): () -> Unit {
+        getTerminalBuffer(agentId)
         val listeners = terminalListeners.getOrPut(agentId) { mutableSetOf() }
-        if (listeners.isEmpty()) send(JSONObject().put("type", "subscribe").put("agentId", agentId))
         listeners.add(listener)
         return {
             listeners.remove(listener)
             if (listeners.isEmpty()) {
                 terminalListeners.remove(agentId)
-                send(JSONObject().put("type", "unsubscribe").put("agentId", agentId))
             }
         }
     }
@@ -265,7 +295,7 @@ class RemoteClient(private val credentials: CredentialStore) {
                 scope.launch {
                     if (socket !== ws) return@launch
                     socketOpen = true
-                    terminalListeners.keys.forEach {
+                    subscribedAgents.forEach {
                         send(JSONObject().put("type", "subscribe").put("agentId", it))
                     }
                 }
@@ -303,14 +333,43 @@ class RemoteClient(private val credentials: CredentialStore) {
                     it.copy(status = ConnectionStatus.CONNECTED, canControl = authKind == TokenKind.PAIRED)
                 }
                 _agents.value = msg.list
+
+                // Buffer active running agents in the background
+                msg.list.forEach { agent ->
+                    if (agent.running && !agent.isChat) {
+                        getTerminalBuffer(agent.agentId)
+                    }
+                }
+
+                // Clean up deleted agents that no longer exist on the desktop
+                val activeIds = msg.list.map { it.agentId }.toSet()
+                val deleted = subscribedAgents.filter { it !in activeIds }
+                deleted.forEach { id ->
+                    subscribedAgents.remove(id)
+                    terminalBuffers.remove(id)
+                    terminalListeners.remove(id)
+                    if (socketOpen) {
+                        send(JSONObject().put("type", "unsubscribe").put("agentId", id))
+                    }
+                }
             }
-            is ServerMessage.Status -> _agents.update { list ->
-                list.map { if (it.agentId == msg.agentId) it.copy(running = msg.running, exitCode = msg.exitCode) else it }
+            is ServerMessage.Status -> {
+                _agents.update { list ->
+                    list.map { if (it.agentId == msg.agentId) it.copy(running = msg.running, exitCode = msg.exitCode) else it }
+                }
+                if (msg.running) {
+                    getTerminalBuffer(msg.agentId)
+                }
             }
-            is ServerMessage.Scrollback ->
+            is ServerMessage.Scrollback -> {
+                val buffer = terminalBuffers.getOrPut(msg.agentId) { TerminalBuffer(msg.agentId) }
+                buffer.onScrollback(msg.data, msg.cols, msg.rows)
                 terminalListeners[msg.agentId]?.toList()?.forEach { it.onScrollback(msg.data, msg.cols, msg.rows) }
-            is ServerMessage.Output ->
+            }
+            is ServerMessage.Output -> {
+                terminalBuffers[msg.agentId]?.onOutput(msg.data)
                 terminalListeners[msg.agentId]?.toList()?.forEach { it.onOutput(msg.data) }
+            }
             is ServerMessage.InputResult -> {
                 val result = pending.remove(msg.requestId) ?: return
                 if (msg.ok) {
@@ -357,6 +416,7 @@ class RemoteClient(private val credentials: CredentialStore) {
             it.close(CLOSE_NORMAL, null)
         }
         _state.update { it.copy(status = ConnectionStatus.DISCONNECTED, canControl = false) }
+        _latencyMs.value = null
         val interrupted = IOException(
             "Connection interrupted. Your message may have reached the terminal. Check the output before retrying.",
         )

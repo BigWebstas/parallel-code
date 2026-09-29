@@ -22,8 +22,22 @@ class ProtocolTest {
         assertNull(terminal.agentName)
         assertEquals("needs_input", terminal.attention)
         assertEquals(false, terminal.isChat)
+        assertEquals(false, terminal.collapsed)
         assertEquals(0, chat.exitCode)
         assertEquals(true, chat.isChat)
+        assertEquals(false, chat.collapsed)
+    }
+
+    @Test
+    fun parsesCollapsedAgents() {
+        val msg = parseServerMessage(
+            """{"type":"agents","list":[{"agentId":"collapsed:t3","taskId":"t3","taskName":"Old Task",
+            "status":"exited","exitCode":null,"lastLine":"Done","attention":"idle","collapsed":true}]}""",
+        ) as ServerMessage.Agents
+        val (agent) = msg.list
+        assertEquals("Old Task", agent.taskName)
+        assertEquals(true, agent.collapsed)
+        assertEquals(false, agent.running)
     }
 
     @Test
