@@ -11,6 +11,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,15 +24,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -73,6 +78,10 @@ fun SettingsScreen(
     onKeepScreenOnOnlyActiveChange: (Boolean) -> Unit,
     themeMode: String,
     onThemeModeChange: (String) -> Unit,
+    darkThemePreset: String,
+    onDarkThemePresetChange: (String) -> Unit,
+    lightThemePreset: String,
+    onLightThemePresetChange: (String) -> Unit,
     showMinimizedTasks: Boolean,
     onShowMinimizedTasksChange: (Boolean) -> Unit,
     alwaysFollowOutput: Boolean,
@@ -257,20 +266,74 @@ fun SettingsScreen(
                         )
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(horizontal = 8.dp))
                         ThemeOptionRow(
-                            title = "Obsidian Dark",
-                            subtitle = "Flat charcoal with an amber accent, like the desktop",
+                            title = "Always dark",
+                            subtitle = "Keep dark looks even when the phone is in light mode",
                             selected = themeMode == SettingsStore.THEME_DARK,
                             onClick = { onThemeModeChange(SettingsStore.THEME_DARK) },
                         )
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(horizontal = 8.dp))
                         ThemeOptionRow(
-                            title = "Light",
-                            subtitle = "Clean high-contrast daytime theme",
+                            title = "Always light",
+                            subtitle = "Keep light looks even when the phone is in dark mode",
                             selected = themeMode == SettingsStore.THEME_LIGHT,
                             onClick = { onThemeModeChange(SettingsStore.THEME_LIGHT) },
                         )
                     }
                 }
+            }
+
+            // Look presets, split by tone the way the desktop groups them. The
+            // slot being edited is the tone the phone is actually in, so tapping
+            // a swatch previews the look you are choosing.
+            item {
+                val systemDark = isSystemInDarkTheme()
+                val editingDark = when (themeMode) {
+                    SettingsStore.THEME_DARK -> true
+                    SettingsStore.THEME_LIGHT -> false
+                    else -> systemDark
+                }
+                val selectedId =
+                    if (editingDark) darkThemePreset else lightThemePreset
+                val onSelect: (String) -> Unit =
+                    if (editingDark) onDarkThemePresetChange else onLightThemePresetChange
+                val presets = if (editingDark) LookPresets.dark else LookPresets.light
+
+                SectionHeader(if (editingDark) "DARK LOOKS" else "LIGHT LOOKS")
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, AppTheme.extra.border),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        presets.forEachIndexed { index, preset ->
+                            if (index > 0) {
+                                HorizontalDivider(
+                                    thickness = 1.dp,
+                                    color = AppTheme.extra.borderSubtle,
+                                )
+                            }
+                            LookPresetRow(
+                                preset = preset,
+                                selected = preset.id == selectedId,
+                                onClick = { onSelect(preset.id) },
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "The same looks as the desktop app. Follow system picks your " +
+                        "dark or light set automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTheme.extra.textSubtle,
+                )
             }
 
             // TASKS SECTION
@@ -700,6 +763,101 @@ private fun ThemeOptionRow(
             )
         }
     }
+}
+
+/**
+ * One look preset in the settings list, with a live swatch drawn from that
+ * palette rather than from the active theme, so a swatch always shows the look it
+ * stands for. The desktop's cards show only a name and description; a phone needs
+ * the colors to tell fifteen looks apart.
+ */
+@Composable
+private fun LookPresetRow(
+    preset: LookPalette,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val extra = AppTheme.extra
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LookSwatch(preset = preset, selected = selected)
+        Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
+            Text(
+                preset.label,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                preset.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = extra.textMuted,
+            )
+        }
+        if (selected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 8.dp).size(18.dp),
+            )
+        }
+    }
+}
+
+/**
+ * A miniature of the preset: its window background, a panel, and the accent and
+ * status dots. Radius comes from the preset too, so the square-edged looks read
+ * as different from the rounded ones at a glance.
+ */
+@Composable
+private fun LookSwatch(preset: LookPalette, selected: Boolean) {
+    val borderColor =
+        if (selected) {
+            blendOver(AppTheme.extra.border, preset.accent, 0.72f)
+        } else {
+            AppTheme.extra.border
+        }
+    Box(
+        modifier = Modifier
+            .size(width = 52.dp, height = 40.dp)
+            .clip(RoundedCornerShape(preset.radiusIsland.coerceAtLeast(2.dp)))
+            .background(preset.bg)
+            .border(1.dp, borderColor, RoundedCornerShape(preset.radiusIsland.coerceAtLeast(2.dp)))
+            .padding(3.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(preset.radiusXs.coerceAtLeast(1.dp)))
+                .background(preset.panelBg)
+                .padding(3.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SwatchDot(preset.accent)
+                Spacer(Modifier.width(2.dp))
+                SwatchDot(preset.success)
+                Spacer(Modifier.width(2.dp))
+                SwatchDot(preset.warning)
+            }
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.SwatchDot(color: Color) {
+    Box(
+        modifier = Modifier
+            .size(5.dp)
+            .clip(CircleShape)
+            .background(color),
+    )
 }
 
 @Composable

@@ -39,11 +39,18 @@ data class WidgetPalette(
     fun background(percent: Int): Int = backgrounds.getValue(widgetTransparencyStep(percent))
 }
 
+/**
+ * The widget cards draw in RemoteViews, which cannot read the app's Compose theme,
+ * so their colors are listed here rather than taken from the active look. The
+ * Obsidian card and the Light card do mirror the matching look presets
+ * ([LookPresets]); `LookPalettesTest` keeps them equal, so recoloring a preset
+ * cannot quietly leave the widget behind.
+ */
 val WIDGET_PALETTES = listOf(
     WidgetPalette(
         key = "obsidian",
         label = "Obsidian",
-        fill = 0xFF1E1E1E.toInt(),
+        fill = 0xFF1E1E1E.toInt(), // --island-bg
         title = 0xFFC4A77D.toInt(), // --accent
         headline = 0xFFEDEDED.toInt(), // --fg
         usage = 0xFFB5B5B5.toInt(), // --fg-muted
@@ -73,11 +80,11 @@ val WIDGET_PALETTES = listOf(
     WidgetPalette(
         key = "light",
         label = "Light",
-        fill = 0xFFFFFFFF.toInt(),
-        title = 0xFF8A6433.toInt(), // the light theme's accent
-        headline = 0xFF1F1F1F.toInt(),
-        usage = 0xFF555555.toInt(),
-        updated = 0xFF6E6E6E.toInt(),
+        fill = 0xFFFFFFFF.toInt(), // --island-bg
+        title = 0xFF8A6433.toInt(), // --accent
+        headline = 0xFF1F1F1F.toInt(), // --fg
+        usage = 0xFF555555.toInt(), // --fg-muted
+        updated = 0xFF6E6E6E.toInt(), // --fg-subtle
         backgrounds = mapOf(
             100 to R.drawable.widget_card_light_100,
             75 to R.drawable.widget_card_light_75,

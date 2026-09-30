@@ -37,6 +37,8 @@ android {
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2026.09.00"))
     implementation("androidx.compose.material3:material3")
+    // Look preset rows show a check mark on the selected theme.
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     // Installs the baseline profiles Compose ships, so a sideloaded APK starts and scrolls

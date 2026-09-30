@@ -1,6 +1,7 @@
 package com.parallelcode.phone
 
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -54,6 +55,57 @@ class SettingsStoreTest {
     @Test
     fun defaultsToSystemThemeMode() {
         assertEquals(SettingsStore.THEME_SYSTEM, store.themeMode)
+    }
+
+    @Test
+    fun defaultsLookPresetsToObsidianPerTone() {
+        assertEquals(LookPresets.PRESET_OBSIDIAN, store.darkThemePreset)
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+    }
+
+    @Test
+    fun setsLookPresetsAndPersists() {
+        store.darkThemePreset = "catppuccin-mocha"
+        store.lightThemePreset = "islands-light"
+        assertEquals("catppuccin-mocha", store.darkThemePreset)
+        assertEquals("islands-light", store.lightThemePreset)
+    }
+
+    @Test
+    fun lookPresetsSurviveSeparateToneSlots() {
+        store.darkThemePreset = "ember"
+        store.lightThemePreset = "islands-light"
+        assertEquals("ember", store.darkThemePreset)
+        assertEquals("islands-light", store.lightThemePreset)
+    }
+
+    @Test
+    fun unknownLookPresetFallsBackToToneDefault() {
+        prefs.edit { putString(SettingsStore.KEY_DARK_THEME_PRESET, "solarized-ultra") }
+        prefs.edit { putString(SettingsStore.KEY_LIGHT_THEME_PRESET, "solarized-ultra") }
+        assertEquals(LookPresets.PRESET_OBSIDIAN, store.darkThemePreset)
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+    }
+
+    /** A light look saved into the dark slot must not be drawn in dark mode. */
+    @Test
+    fun lightPresetInDarkSlotFallsBackToDarkDefault() {
+        prefs.edit { putString(SettingsStore.KEY_DARK_THEME_PRESET, LookPresets.PRESET_OBSIDIAN_LIGHT) }
+        assertEquals(LookPresets.PRESET_OBSIDIAN, store.darkThemePreset)
+    }
+
+    @Test
+    fun darkPresetInLightSlotFallsBackToLightDefault() {
+        prefs.edit { putString(SettingsStore.KEY_LIGHT_THEME_PRESET, LookPresets.PRESET_OBSIDIAN) }
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+    }
+
+    /** Assigning the wrong tone normalizes on write instead of storing a mismatch. */
+    @Test
+    fun writingWrongTonePresetNormalizes() {
+        store.lightThemePreset = LookPresets.PRESET_OBSIDIAN
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, prefs.getString(SettingsStore.KEY_LIGHT_THEME_PRESET, null))
     }
 
     @Test
