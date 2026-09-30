@@ -212,6 +212,46 @@ afterEach(() => {
 });
 
 describe('delegation authority and creation', () => {
+  // Git prints worktree paths with forward slashes on every platform while
+  // realpath returns the platform separator, so the literal comparison this
+  // covers rejected every worktree task on Windows. The stubbed git and
+  // realpath layer is platform-bound, so exercise it where that holds.
+  it.skipIf(process.platform !== 'win32')(
+    'accepts a worktree git lists with forward slashes and realpath resolves with backslashes',
+    async () => {
+      const projectRoot = 'C:\\repo';
+      const worktreePath = 'C:\\repo\\.worktrees\\parent';
+      mocks.realpath.mockImplementation(async (path: string) => path);
+      mocks.git.mockImplementation(
+        async (_command: string, args: string[], options: { cwd: string }) => {
+          let stdout = '';
+          if (args.includes('--git-common-dir'))
+            stdout = options.cwd === worktreePath ? 'C:/repo/.git' : '.git';
+          else if (args[0] === 'worktree')
+            stdout = `worktree C:/repo\0HEAD ${head}\0worktree C:/repo/.worktrees/parent\0HEAD ${head}\0`;
+          return { stdout, stderr: '' };
+        },
+      );
+      await expect(
+        service.register(task('parent', { projectRoot, worktreePath, gitIsolation: 'worktree' })),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it('still rejects a worktree git does not list for the project', async () => {
+    mocks.git.mockImplementation(
+      async (_command: string, args: string[], _options: { cwd: string }) => {
+        if (args.includes('--git-common-dir')) return { stdout: '/repo/.git', stderr: '' };
+        if (args[0] === 'worktree')
+          return { stdout: `worktree /repo/other\0HEAD ${head}\0`, stderr: '' };
+        return { stdout: '', stderr: '' };
+      },
+    );
+    await expect(
+      service.register(task('parent', { worktreePath: '/repo/parent', gitIsolation: 'worktree' })),
+    ).rejects.toThrow('Task is not a worktree of this project');
+  });
+
   it('requires available authority for snapshots instead of reporting unknown tasks as unpaused', async () => {
     mocks.realpath.mockRejectedValueOnce(new Error('Project unavailable'));
     await expect(

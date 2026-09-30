@@ -102,6 +102,23 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return (await exec('git', args, { cwd, maxBuffer: 4 * 1024 * 1024 })).stdout.trim();
 }
 
+/**
+ * Whether a path from `git worktree list` names the same directory as the
+ * realpath'd task worktree. Git prints worktree paths with forward slashes on
+ * every platform, while realpath returns the platform separator, so comparing
+ * them literally rejects every worktree task on Windows. Windows paths are also
+ * case-insensitive. Off Windows both sides are already canonical absolute
+ * POSIX paths, so the strings are compared as they are.
+ */
+function listedWorktree(gitPath: string, target: string): boolean {
+  if (process.platform === 'win32') {
+    const normalize = (value: string): string =>
+      value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    return normalize(gitPath) === normalize(target);
+  }
+  return gitPath === target;
+}
+
 /** Identity comes only from acknowledged desktop lifecycle operations, never display broadcasts. */
 export class DelegationService {
   private readonly tasks = new Map<string, Authority>();
@@ -205,7 +222,11 @@ export class DelegationService {
         realpath(resolve(projectRoot, projectCommon)),
         realpath(resolve(worktreePath, taskCommon)),
       ]);
-      if (a !== b || !worktrees.split('\0').includes(`worktree ${worktreePath}`))
+      const listed = worktrees
+        .split('\0')
+        .filter((entry) => entry.startsWith('worktree '))
+        .map((entry) => entry.slice('worktree '.length));
+      if (a !== b || !listed.some((entry) => listedWorktree(entry, worktreePath)))
         throw new DelegationError('Task is not a worktree of this project');
       validateBranchName(input.branchName, 'branchName');
     }
