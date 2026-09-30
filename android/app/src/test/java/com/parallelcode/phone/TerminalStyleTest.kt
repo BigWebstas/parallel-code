@@ -1,6 +1,7 @@
 package com.parallelcode.phone
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -35,9 +36,12 @@ class TerminalStyleTest {
         assertEquals(CellStyle.DEFAULT, cleared)
     }
 
+    /** Obsidian's palette, which the desktop pairs with the Obsidian look. */
+    private val obsidian = TerminalPalette.forLook(LookPresets.byId(LookPresets.PRESET_OBSIDIAN))
+
     @Test
     fun resolvesThroughTheDesktopPalette() {
-        val p = TerminalPalette.OBSIDIAN
+        val p = obsidian
         assertEquals(0xFFe08c96.toInt(), p.resolve(sgr("31")).foreground)
         // Bold basic colors brighten, as in xterm.js.
         assertEquals(0xFFeaa0aa.toInt(), p.resolve(sgr("1;31")).foreground)
@@ -48,9 +52,28 @@ class TerminalStyleTest {
 
     @Test
     fun inverseSwapsWithTheThemeDefaults() {
-        val p = TerminalPalette.OBSIDIAN
+        val p = obsidian
         val s = p.resolve(sgr("7"))
         assertEquals(p.background, s.foreground)
         assertEquals(p.foreground, s.background)
+    }
+
+    /**
+     * Each look draws its terminal over its own panel, not a shared background.
+     * Midnight is the case that matters: it is Graphite with a pure-black panel.
+     */
+    @Test
+    fun eachLookUsesItsOwnTerminalBackground() {
+        val midnight = TerminalPalette.forLook(LookPresets.byId("midnight"))
+        val graphite = TerminalPalette.forLook(LookPresets.byId("graphite"))
+        assertNotEquals(graphite.background, midnight.background)
+        assertEquals(0xFF000000.toInt(), midnight.background)
+    }
+
+    /** A look's terminal colors change with it, rather than staying on Obsidian. */
+    @Test
+    fun looksWithoutTheirOwnAnsiStillDifferInColor() {
+        val noir = TerminalPalette.forLook(LookPresets.byId("noir"))
+        assertNotEquals(obsidian.resolve(sgr("31")).foreground, noir.resolve(sgr("31")).foreground)
     }
 }

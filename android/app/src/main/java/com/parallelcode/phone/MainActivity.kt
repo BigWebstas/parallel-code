@@ -1,5 +1,6 @@
 package com.parallelcode.phone
 import android.Manifest
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -36,13 +37,16 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -91,6 +95,12 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     private val _themeMode = MutableStateFlow(settingsStore.themeMode)
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
+    private val _darkThemePreset = MutableStateFlow(settingsStore.darkThemePreset)
+    val darkThemePreset: StateFlow<String> = _darkThemePreset.asStateFlow()
+
+    private val _lightThemePreset = MutableStateFlow(settingsStore.lightThemePreset)
+    val lightThemePreset: StateFlow<String> = _lightThemePreset.asStateFlow()
+
     private val _showMinimizedTasks = MutableStateFlow(settingsStore.showMinimizedTasks)
     val showMinimizedTasks: StateFlow<Boolean> = _showMinimizedTasks.asStateFlow()
 
@@ -133,6 +143,16 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
         _themeMode.value = value
     }
 
+    fun setDarkThemePreset(value: String) {
+        settingsStore.darkThemePreset = value
+        _darkThemePreset.value = settingsStore.darkThemePreset
+    }
+
+    fun setLightThemePreset(value: String) {
+        settingsStore.lightThemePreset = value
+        _lightThemePreset.value = settingsStore.lightThemePreset
+    }
+
     fun setShowMinimizedTasks(value: Boolean) {
         settingsStore.showMinimizedTasks = value
         _showMinimizedTasks.value = value
@@ -170,6 +190,8 @@ class MainActivity : ComponentActivity() {
             val keepScreenOnOnlyActive by model.keepScreenOnOnlyWhenActive.collectAsState()
             val agents by model.client.agents.collectAsState()
             val themeMode by model.themeMode.collectAsState()
+            val darkThemePreset by model.darkThemePreset.collectAsState()
+            val lightThemePreset by model.lightThemePreset.collectAsState()
 
             val hasActiveAgent = agents.any { it.running && (it.attention == "active" || it.attention == "shell_busy") }
             val shouldKeepAwake = keepScreenOn && (!keepScreenOnOnlyActive || hasActiveAgent)
@@ -191,7 +213,27 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            ParallelCodeTheme(darkTheme = darkTheme) {
+            val palette = resolveLookPalette(
+                darkPresetId = darkThemePreset,
+                lightPresetId = lightThemePreset,
+                darkTheme = darkTheme,
+            )
+
+            // enableEdgeToEdge() in onCreate follows the system tone, but a look can
+            // differ from it (Always light on a dark phone), so the system bar icon
+            // tint is re-applied for the palette actually on screen.
+            val view = LocalView.current
+            if (!view.isInEditMode) {
+                SideEffect {
+                    val window = (view.context as? Activity)?.window ?: return@SideEffect
+                    WindowCompat.getInsetsController(window, view).apply {
+                        isAppearanceLightStatusBars = !palette.dark
+                        isAppearanceLightNavigationBars = !palette.dark
+                    }
+                }
+            }
+
+            ParallelCodeTheme(palette = palette) {
                 PhoneApp(model)
             }
         }
@@ -336,6 +378,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                 val keepScreenOn by model.keepScreenOn.collectAsState()
                 val keepScreenOnOnlyActive by model.keepScreenOnOnlyWhenActive.collectAsState()
                 val themeMode by model.themeMode.collectAsState()
+                val darkThemePreset by model.darkThemePreset.collectAsState()
+                val lightThemePreset by model.lightThemePreset.collectAsState()
                 val showMinimizedTasks by model.showMinimizedTasks.collectAsState()
                 val latencyMs by model.client.latencyMs.collectAsState()
                 val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
@@ -352,6 +396,10 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onKeepScreenOnOnlyActiveChange = model::setKeepScreenOnOnlyWhenActive,
                     themeMode = themeMode,
                     onThemeModeChange = model::setThemeMode,
+                    darkThemePreset = darkThemePreset,
+                    onDarkThemePresetChange = model::setDarkThemePreset,
+                    lightThemePreset = lightThemePreset,
+                    onLightThemePresetChange = model::setLightThemePreset,
                     showMinimizedTasks = showMinimizedTasks,
                     onShowMinimizedTasksChange = model::setShowMinimizedTasks,
                     alwaysFollowOutput = alwaysFollowOutput,

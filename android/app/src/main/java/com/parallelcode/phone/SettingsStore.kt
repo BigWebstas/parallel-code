@@ -17,10 +17,30 @@ class SettingsStore(private val prefs: SharedPreferences) {
             prefs.edit { putBoolean(KEY_KEEP_SCREEN_ON_ONLY_ACTIVE, value) }
         }
 
+    /**
+     * Which tone to draw in: [THEME_SYSTEM] follows Android, the other two force it.
+     * The palette itself is [darkThemePreset] or [lightThemePreset], as on the desktop.
+     */
     var themeMode: String
         get() = prefs.getString(KEY_THEME_MODE, THEME_SYSTEM) ?: THEME_SYSTEM
         set(value) {
             prefs.edit { putString(KEY_THEME_MODE, value) }
+        }
+
+    /** Preset drawn while in dark mode; unknown or wrong-tone ids read back as Obsidian. */
+    var darkThemePreset: String
+        get() = LookPresets.forTone(dark = true, id = prefs.getString(KEY_DARK_THEME_PRESET, null)).id
+        set(value) {
+            val preset = LookPresets.forTone(dark = true, id = value)
+            prefs.edit { putString(KEY_DARK_THEME_PRESET, preset.id) }
+        }
+
+    /** Preset drawn while in light mode; unknown or wrong-tone ids read back as Obsidian Light. */
+    var lightThemePreset: String
+        get() = LookPresets.forTone(dark = false, id = prefs.getString(KEY_LIGHT_THEME_PRESET, null)).id
+        set(value) {
+            val preset = LookPresets.forTone(dark = false, id = value)
+            prefs.edit { putString(KEY_LIGHT_THEME_PRESET, preset.id) }
         }
 
     var showMinimizedTasks: Boolean
@@ -91,6 +111,8 @@ class SettingsStore(private val prefs: SharedPreferences) {
         const val KEY_KEEP_SCREEN_ON = "keepScreenOn"
         const val KEY_KEEP_SCREEN_ON_ONLY_ACTIVE = "keepScreenOnOnlyActive"
         const val KEY_THEME_MODE = "themeMode"
+        const val KEY_DARK_THEME_PRESET = "darkThemePreset"
+        const val KEY_LIGHT_THEME_PRESET = "lightThemePreset"
         const val KEY_SHOW_MINIMIZED_TASKS = "showMinimizedTasks"
         const val KEY_ALWAYS_FOLLOW_OUTPUT = "alwaysFollowOutput"
         const val KEY_FIT_TERMINAL = "fitTerminalToPhone"

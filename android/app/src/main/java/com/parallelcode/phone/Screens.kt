@@ -1123,7 +1123,10 @@ private fun TerminalText(
     alwaysFollow: Boolean,
     onViewSize: (cols: Int, rows: Int) -> Unit,
 ) {
-    val palette = if (AppTheme.extra.dark) TerminalPalette.OBSIDIAN else TerminalPalette.OBSIDIAN_LIGHT
+    // The terminal follows the active look, as it does on the desktop: its own ANSI
+    // set over the look's panel background.
+    val look = AppTheme.palette
+    val palette = remember(look) { TerminalPalette.forLook(look) }
     // A lazy list lays out only the lines on screen; history lines keep their style runs between
     // frames, so a spinner repainting one row no longer rebuilds thousands of lines.
     val list = rememberLazyListState()

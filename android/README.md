@@ -9,9 +9,10 @@ Native companion app for the desktop's **Connect Phone** (Remote Access) feature
 - **Several computers:** link more than one desktop (for example the installed app and a dev build, or two machines) and switch between them in Settings → Computers; each keeps its own pairing.
 - **Agents:** live list with each agent's status and last line, under the desktop's Claude, Codex, and Antigravity 5-hour and weekly usage meters (hidden on desktops without `/api/mobile/usage`).
 - **Minimized tasks:** tasks minimized on the desktop are pinned below the live list; a setting hides them.
-- **Settings:** theme (follow system, Obsidian Dark, Light), keep the screen on, widget background transparency and card color, connection status, and forget this computer.
+- **Looks:** the same 15 themes as the desktop, in Settings → Appearance. Follow system / always dark / always light picks the tone, and a separate dark and light look is remembered, so switching your phone's theme switches the look with it. Each look is drawn with a live swatch, and every color and corner radius comes from the desktop's own stylesheet. See [Looks](#looks).
+- **Settings:** theme and looks, keep the screen on, widget background transparency and card color, connection status, and forget this computer.
 - **Swipe between tasks:** with a task open, swipe sideways to the previous or next one in the list; the header shows its position ("2 of 5").
-- **Terminal:** an agent's terminal in the desktop's default Obsidian colors (light or dark with the phone). Once paired: a reply box and keys a phone keyboard lacks (Enter, Esc, Tab, arrows, Ctrl+C). With "Fit the terminal to this phone" on (Settings, off by default), the terminal takes the phone's size while open so full-screen agents such as Claude Code fill it; the computer's own terminal shifts meanwhile and gets its size back when you leave.
+- **Terminal:** an agent's terminal in the colors of the look you picked, matching the desktop. Once paired: a reply box and keys a phone keyboard lacks (Enter, Esc, Tab, arrows, Ctrl+C). With "Fit the terminal to this phone" on (Settings, off by default), the terminal takes the phone's size while open so full-screen agents such as Claude Code fill it; the computer's own terminal shifts meanwhile and gets its size back when you leave.
 - **Changes:** the task's diff against its base branch, file by file with added and removed lines.
 - **Quick replies and voice:** saved replies above the reply box (edit them in Settings) and a mic button that dictates with Android's speech recognizer.
 - **Widget:** a home-screen widget with the agents that need you and the usage meters, updated while the app is connected. Settings → Widget sets its background transparency (opaque, 75%, 50% or 25%; the border fades with the card, so your wallpaper shows through) and its card color (Obsidian, Slate or Light, each with text colors that stay readable).
@@ -21,6 +22,29 @@ Native companion app for the desktop's **Connect Phone** (Remote Access) feature
 - **Close task:** from an agent's screen; needs pairing. Like the desktop, it warns before losing uncommitted or unmerged work.
 
 - **Built-in chat:** read the conversation, send messages, stop the agent, and answer its approvals and questions once paired. Choosing the model and attaching images stay on the computer.
+
+## Looks
+
+The phone uses the desktop's look presets, not its own. `LookPalettes.kt` is generated from the files the desktop already keeps its looks in:
+
+| Desktop source     | What it contributes                                          |
+| ------------------ | ------------------------------------------------------------ |
+| `src/lib/look.ts`  | Preset ids, labels, descriptions, order, and light/dark tone |
+| `src/styles.css`   | The colors and the corner radius scale                       |
+| `src/lib/theme.ts` | The terminal ANSI palettes and which look pairs with which   |
+
+```sh
+npm run generate:android-looks   # rewrite LookPalettes.kt after a desktop theme change
+npm run check:android-looks      # fail if it is out of date (also run by the Kotlin tests)
+```
+
+Three things are worth knowing about the mapping:
+
+- **The cascade is resolved, not copied.** Each desktop theme sets only the variables it changes and inherits the rest from `:root`, so the generator resolves the full palette per preset. The phone has no fallback values of its own.
+- **Gradients are flattened.** Several desktop backgrounds are `radial-gradient`s. The phone draws flat surfaces, so a gradient becomes its middle stop, which keeps the look recognizable. Everything else is the exact value.
+- **Terminals follow the look.** A terminal is drawn over the look's `--task-panel-bg` with the ANSI set the desktop pairs with that look, so Midnight gets a pure-black panel and Noir gets Noir's ANSI colors. Dark looks with no set of their own on the desktop fall back to the muted Noir set, because the desktop's fallback there is xterm's own defaults.
+
+Obsidian in both tones is the default, and its values are pinned by `LookPalettesTest`, so adding a theme cannot quietly change what the app looks like out of the box.
 
 ## Build
 
