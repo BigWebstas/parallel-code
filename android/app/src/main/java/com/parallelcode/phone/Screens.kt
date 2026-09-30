@@ -832,6 +832,7 @@ fun AgentScreen(
     val lines = remember(version) { buffer.screen.styledLines() }
     var tab by rememberSaveable { mutableStateOf(AgentTab.TERMINAL) }
     var closing by remember { mutableStateOf(false) }
+    var merging by remember { mutableStateOf(false) }
     var viewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // With "Fit the terminal to this phone" on and paired, the PTY takes this screen's size so
@@ -852,6 +853,18 @@ fun AgentScreen(
             client.releaseTerminal(agentId)
             client.releaseViewSize(agentId)
         }
+    }
+
+    if (merging && agent != null) {
+        MergeTaskDialog(
+            taskId = agent.taskId,
+            client = client,
+            onDismiss = { merging = false },
+            onMerged = {
+                merging = false
+                onBack()
+            },
+        )
     }
 
     if (closing && agent != null) {
@@ -899,6 +912,9 @@ fun AgentScreen(
                     },
                     actions = {
                         if (agent != null && state.canControl) {
+                            TextButton(onClick = { merging = true }) {
+                                Text("Merge", fontWeight = FontWeight.SemiBold)
+                            }
                             TextButton(onClick = { closing = true }) {
                                 Text("Close", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
                             }
