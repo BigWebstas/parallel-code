@@ -414,6 +414,16 @@ describe('phone terminal viewport', () => {
     await vi.waitFor(() => expect(host.textContent).toContain('No changes yet.'));
   });
 
+  it('explains a task with no branch instead of claiming there are no changes', async () => {
+    // Without the flag an empty diff reads as "nothing to review", which is wrong
+    // for a task that works directly in the project folder.
+    vi.mocked(fetchTaskDiff).mockResolvedValue({ diff: '', truncated: false, unsupported: true });
+    mount();
+    await openTab('Diff');
+    await vi.waitFor(() => expect(host.textContent).toContain('no branch to compare'));
+    expect(host.textContent).not.toContain('No changes yet.');
+  });
+
   it('surfaces a diff load failure', async () => {
     vi.mocked(fetchTaskDiff).mockRejectedValue(new Error('git unavailable'));
     mount();

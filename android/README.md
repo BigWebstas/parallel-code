@@ -74,7 +74,7 @@ See `electron/remote/server.ts` and `electron/remote/protocol.ts`.
 | Usage        | `GET /api/mobile/usage`; the desktop status bar's snapshot, readable view-only                                                |
 | Notes        | `GET` / `PUT /api/mobile/notes/<taskId>` with `{ notes }`; reading works view-only, saving needs pairing                      |
 | Close task   | `POST /api/mobile/tasks/<taskId>/close` with `{ force }` (paired); `409` with `{ warnings }` when work would be lost          |
-| Changes      | `GET /api/mobile/tasks/<taskId>/diff` → `{ diff, truncated }`; readable view-only                                             |
+| Changes      | `GET /api/mobile/tasks/<taskId>/diff` → `{ diff, truncated, unsupported }`; readable view-only                                |
 | Reply        | `input` with `submit: true` and a `requestId`; confirmed by `input-result`                                                    |
 | Close `4001` | Paired token rejected: drop it and reconnect view-only. QR token rejected: scan again                                         |
 | Close `4003` | Typing rights lost: drop the paired token                                                                                     |

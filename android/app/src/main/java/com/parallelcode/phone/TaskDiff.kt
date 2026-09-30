@@ -1,7 +1,23 @@
 package com.parallelcode.phone
 
+import org.json.JSONObject
+
 /** One changed file in a unified diff, as the desktop's diff view lists it. */
 data class DiffFile(val path: String, val added: Int, val removed: Int, val lines: List<String>, val binary: Boolean)
+
+/**
+ * The desktop's answer to a diff request. `unsupported` marks a task that edits
+ * the project folder in place, so it has no branch of its own to compare.
+ */
+data class TaskDiff(val diff: String, val truncated: Boolean, val unsupported: Boolean) {
+    companion object {
+        fun from(json: JSONObject) = TaskDiff(
+            diff = json.optString("diff"),
+            truncated = json.optBoolean("truncated"),
+            unsupported = json.optBoolean("unsupported"),
+        )
+    }
+}
 
 /** Split `git diff` output into files; hunk lines keep their ' ', '+', '-' or '@@' prefix. */
 fun parseUnifiedDiff(diff: String): List<DiffFile> {

@@ -44,6 +44,8 @@ export type RemoteCloseResult = { closed: true } | { closed: false; warnings: st
 export interface RemoteTaskDiff {
   diff: string;
   truncated: boolean;
+  /** True when the task has no branch of its own, so there is nothing to compare. */
+  unsupported?: boolean;
 }
 
 /** One readiness row in a phone's merge dialog; mirrors the desktop's panel. */

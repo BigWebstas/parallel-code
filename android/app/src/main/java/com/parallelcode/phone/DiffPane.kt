@@ -52,6 +52,7 @@ fun DiffPane(taskId: String, client: RemoteClient, modifier: Modifier) {
     var reload by remember { mutableIntStateOf(0) }
     var files by remember(taskId) { mutableStateOf<List<DiffFile>?>(null) }
     var truncated by remember(taskId) { mutableStateOf(false) }
+    var unsupported by remember(taskId) { mutableStateOf(false) }
     var error by remember(taskId) { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
 
@@ -59,9 +60,10 @@ fun DiffPane(taskId: String, client: RemoteClient, modifier: Modifier) {
         loading = true
         error = null
         try {
-            val (diff, cut) = client.fetchDiff(taskId)
-            files = parseUnifiedDiff(diff)
-            truncated = cut
+            val result = client.fetchDiff(taskId)
+            files = parseUnifiedDiff(result.diff)
+            truncated = result.truncated
+            unsupported = result.unsupported
         } catch (e: ApiException) {
             error = if (e.status == 403 || e.status == 404) "Update Parallel Code on your computer to see changes here." else e.message
         } finally {
@@ -80,6 +82,7 @@ fun DiffPane(taskId: String, client: RemoteClient, modifier: Modifier) {
             Text(
                 when {
                     current == null -> ""
+                    unsupported -> ""
                     current.isEmpty() -> "No changes"
                     else -> "${current.size} file${if (current.size == 1) "" else "s"} · +${current.sumOf { it.added }} −${current.sumOf { it.removed }}"
                 },
@@ -98,6 +101,17 @@ fun DiffPane(taskId: String, client: RemoteClient, modifier: Modifier) {
             if (loading) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(strokeWidth = 2.dp) }
             }
+            return@Column
+        }
+        if (unsupported) {
+            Text(
+                "This task works directly in the project folder, so there is no branch to compare.",
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                color = AppTheme.extra.textMuted,
+                style = MaterialTheme.typography.bodySmall,
+            )
             return@Column
         }
         if (truncated) {

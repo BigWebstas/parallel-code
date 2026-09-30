@@ -92,6 +92,8 @@ export interface TaskDiff {
   diff: string;
   /** True when the diff was cut short for the phone. */
   truncated: boolean;
+  /** True when the task has no branch of its own, so there is nothing to review. */
+  unsupported?: boolean;
 }
 
 /** Fetch a task's diff for review. Works with the base connection token. */

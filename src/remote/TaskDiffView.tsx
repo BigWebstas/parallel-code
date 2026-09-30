@@ -60,6 +60,8 @@ export function TaskDiffView(props: TaskDiffViewProps) {
 
   const truncated = () => diff()?.truncated === true;
 
+  const unsupported = () => diff()?.unsupported === true;
+
   return (
     <div class="mobile-diff">
       <Show when={status() === 'loading'}>
@@ -75,11 +77,17 @@ export function TaskDiffView(props: TaskDiffViewProps) {
         </div>
       </Show>
 
-      <Show when={status() === 'ready' && files().length === 0}>
+      <Show when={status() === 'ready' && unsupported()}>
+        <p class="mobile-diff-status">
+          This task works directly in the project folder, so there is no branch to compare.
+        </p>
+      </Show>
+
+      <Show when={status() === 'ready' && !unsupported() && files().length === 0}>
         <p class="mobile-diff-status">No changes yet.</p>
       </Show>
 
-      <Show when={status() === 'ready' && files().length > 0}>
+      <Show when={status() === 'ready' && !unsupported() && files().length > 0}>
         <Show when={truncated()}>
           <p class="mobile-diff-truncated">
             This diff is too large for the phone; showing the start.

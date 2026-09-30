@@ -204,6 +204,18 @@ async function handleGetDiff(req: GetNotesRequest): Promise<void> {
   try {
     if (!isKnownTask(store.tasks, req.taskId)) throw new Error('Task not found');
     const task = store.tasks[req.taskId];
+    // A 'none' task edits the project folder in place: it has no branch and no
+    // worktree of its own, so there is nothing to diff it against. Without this
+    // the phone would fall through to the project folder and either report a
+    // git error or, worse, show unrelated work already sitting in the repo.
+    if (task.gitIsolation === 'none') {
+      reply(req.reqId, true, {
+        diff: '',
+        truncated: false,
+        unsupported: true,
+      } satisfies RemoteTaskDiff);
+      return;
+    }
     const { rawDiff } = await loadTaskDiff({
       worktreePath: task.worktreePath,
       projectRoot: getProjectPath(task.projectId),

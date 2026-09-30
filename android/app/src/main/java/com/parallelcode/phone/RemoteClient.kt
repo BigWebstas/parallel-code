@@ -221,9 +221,9 @@ class RemoteClient(private val credentials: CredentialStore) {
     }
 
     /** The task's changes against its base branch; readable with the view-only token. */
-    suspend fun fetchDiff(taskId: String): Pair<String, Boolean> {
+    suspend fun fetchDiff(taskId: String): TaskDiff {
         val json = api("GET", "/api/mobile/tasks/${encodePath(taskId)}/diff", null, credentials.pairedToken ?: credentials.link?.token)
-        return json.optString("diff") to json.optBoolean("truncated")
+        return TaskDiff.from(json)
     }
 
     /** The desktop status bar's subscription usage; readable with the view-only token. */
