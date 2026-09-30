@@ -409,26 +409,82 @@ export function validateCommand(command: string): void {
   }
 }
 
+/** What node-pty should actually launch. `args` is a string only for the cmd.exe shim case. */
+export interface SpawnTarget {
+  file: string;
+  args: string[] | string;
+}
+
 /**
- * Resolve a bare command name to an absolute path for node-pty on Windows.
- * Unlike POSIX (where node-pty's spawn relies on execvp's own PATH search),
- * node-pty's Windows/conpty backend calls CreateProcess directly and cannot
- * resolve bare names itself, failing with "File not found" for e.g. `claude`
- * even though `where`/`validateCommand` finds it. POSIX and already-absolute
- * paths pass through unchanged.
+ * Quote one argument for a Windows command line the way `CommandLineToArgvW`
+ * expects, so node-pty's own escaping is not applied twice.
  */
-export function resolveSpawnCommand(command: string): string {
-  if (process.platform !== 'win32' || path.isAbsolute(command)) return command;
+function quoteWinArg(value: string): string {
+  if (!/[\s"]/.test(value)) return value;
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Build the `cmd.exe /d /s /c` invocation used to run a `.cmd`/`.bat` shim.
+ *
+ * conpty calls CreateProcessW, which cannot execute a batch file directly —
+ * that needs the command interpreter, hence the 193 (`ERROR_BAD_EXE_FORMAT`)
+ * "Cannot create process" failure. `/d` skips AutoRun registry commands and `/s`
+ * makes cmd strip one outer quote pair and use the rest verbatim, so wrapping
+ * the whole line keeps a shim path containing spaces intact.
+ */
+function cmdShimTarget(shimPath: string, args: string[], env: Record<string, string>): SpawnTarget {
+  const comspec = env.ComSpec || env.COMSPEC || process.env.ComSpec || 'cmd.exe';
+  const inner = [shimPath, ...args].map(quoteWinArg).join(' ');
+  return { file: comspec, args: `/d /s /c "${inner}"` };
+}
+
+/**
+ * Resolve what to actually spawn for an agent command.
+ *
+ * POSIX passes through unchanged: node-pty's Unix backend uses execvp, which
+ * does its own PATH search. On Windows the conpty backend calls CreateProcessW
+ * directly, so it needs a real image and cannot search PATH. `where` also
+ * reports the extensionless bash shim that npm writes next to `claude.cmd`,
+ * which is a shell script no Windows loader will accept, so prefer a real
+ * executable and fall back to running a batch shim through `cmd.exe`.
+ */
+export function resolveSpawnTarget(
+  command: string,
+  args: string[] = [],
+  env: Record<string, string> = {},
+): SpawnTarget {
+  if (process.platform !== 'win32') return { file: command, args };
+
+  // An explicitly configured path still needs the shim treatment, since users
+  // point at the `claude.cmd` npm writes. `path.win32` rather than `path` so the
+  // check matches the platform this branch actually runs on.
+  if (path.win32.isAbsolute(command)) {
+    return /\.(cmd|bat)$/i.test(command)
+      ? cmdShimTarget(command, args, env)
+      : { file: command, args };
+  }
+
+  let candidates: string[];
   try {
     const output = execFileSync('where', [command], { encoding: 'utf8', timeout: 3000 });
-    const resolved = output
+    candidates = output
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .find(Boolean);
-    return resolved ?? command;
+      .filter(Boolean);
   } catch {
-    return command;
+    return { file: command, args };
   }
+
+  const executable = candidates.find((candidate) => /\.(exe|com)$/i.test(candidate));
+  if (executable) return { file: executable, args };
+
+  const shim = candidates.find((candidate) => /\.(cmd|bat)$/i.test(candidate));
+  if (shim) return cmdShimTarget(shim, args, env);
+
+  // Nothing launchable (e.g. only the extensionless bash shim). Keep the bare
+  // name so the spawn fails with the usual "not found" rather than a 193.
+  return { file: command, args };
 }
 
 function copyProcessEnv(): Record<string, string> {
@@ -857,8 +913,9 @@ export async function spawnAgent(
   beforeSpawn?.();
   registerAgentLaunch(args.agentId, args.taskId, launchId);
   let proc: pty.IPty;
+  const spawnTarget = resolveSpawnTarget(spawnSpec.spawnCommand, spawnSpec.spawnArgs, spawnEnv);
   try {
-    proc = pty.spawn(resolveSpawnCommand(spawnSpec.spawnCommand), spawnSpec.spawnArgs, {
+    proc = pty.spawn(spawnTarget.file, spawnTarget.args, {
       name: 'xterm-256color',
       cols: args.cols,
       rows: args.rows,

@@ -109,7 +109,7 @@ import {
   projectImageTag,
   resizeAgent,
   resolveProjectDockerfile,
-  resolveSpawnCommand,
+  resolveSpawnTarget,
   spawnAgent,
   setAgentHookRuntime,
   subscribeToAgent,
@@ -1476,46 +1476,122 @@ describe('validateCommand', () => {
   });
 });
 
-describe('resolveSpawnCommand', () => {
+describe('resolveSpawnTarget', () => {
+  const WIN_ENV = { ComSpec: 'C:\\Windows\\system32\\cmd.exe' };
+
+  function withPlatform(value: NodeJS.Platform, run: () => void): void {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value });
+    try {
+      run();
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform);
+    }
+  }
+
   it('returns an already-absolute path unchanged', () => {
-    expect(resolveSpawnCommand('C:\\tools\\claude.exe')).toBe('C:\\tools\\claude.exe');
+    expect(resolveSpawnTarget('C:\\tools\\claude.exe', ['--continue'])).toEqual({
+      file: 'C:\\tools\\claude.exe',
+      args: ['--continue'],
+    });
   });
 
   it('leaves bare commands unresolved on POSIX (execvp handles PATH itself)', () => {
-    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'linux' });
-    try {
-      expect(resolveSpawnCommand('claude')).toBe('claude');
-    } finally {
-      if (platform) Object.defineProperty(process, 'platform', platform);
-    }
+    withPlatform('linux', () => {
+      expect(resolveSpawnTarget('claude', ['--continue'])).toEqual({
+        file: 'claude',
+        args: ['--continue'],
+      });
+    });
   });
 
-  it('resolves a bare command to its `where`-reported path on Windows', () => {
+  it('resolves a bare command to its `where`-reported executable on Windows', () => {
     // node-pty's conpty backend calls CreateProcess directly and cannot
     // resolve bare names the way POSIX execvp does, so a name that
     // `validateCommand` accepts still fails to launch unless resolved first.
-    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'win32' });
-    mockExecFileSync.mockImplementationOnce(() => 'C:\\Users\\me\\.local\\bin\\claude.exe\r\n');
-    try {
-      expect(resolveSpawnCommand('claude')).toBe('C:\\Users\\me\\.local\\bin\\claude.exe');
-    } finally {
-      if (platform) Object.defineProperty(process, 'platform', platform);
-    }
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementationOnce(() => 'C:\\Users\\me\\.local\\bin\\claude.exe\r\n');
+      expect(resolveSpawnTarget('claude', ['--continue'])).toEqual({
+        file: 'C:\\Users\\me\\.local\\bin\\claude.exe',
+        args: ['--continue'],
+      });
+    });
+  });
+
+  it('prefers a real executable over the extensionless npm shim', () => {
+    // `where` lists the extensionless bash shim npm writes next to the .cmd.
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementationOnce(
+        () =>
+          'C:\\Users\\me\\AppData\\Roaming\\npm\\claude\r\n' +
+          'C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd\r\n' +
+          'C:\\Users\\me\\.local\\bin\\claude.exe\r\n',
+      );
+      expect(resolveSpawnTarget('claude', ['--continue']).file).toBe(
+        'C:\\Users\\me\\.local\\bin\\claude.exe',
+      );
+    });
+  });
+
+  it('runs a .cmd shim through cmd.exe instead of handing it to CreateProcess', () => {
+    // CreateProcessW cannot execute a batch file; spawning one directly is the
+    // "Cannot create process, error code: 193" (ERROR_BAD_EXE_FORMAT) failure.
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementationOnce(
+        () =>
+          'C:\\Users\\me\\AppData\\Roaming\\npm\\claude\r\n' +
+          'C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd\r\n',
+      );
+      expect(resolveSpawnTarget('claude', ['--continue'], WIN_ENV)).toEqual({
+        file: 'C:\\Windows\\system32\\cmd.exe',
+        args: '/d /s /c "C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd --continue"',
+      });
+    });
+  });
+
+  it('keeps a shim path containing spaces intact', () => {
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementationOnce(() => 'C:\\Program Files\\npm\\claude.cmd\r\n');
+      expect(resolveSpawnTarget('claude', ['-p', 'hello world'], WIN_ENV)).toEqual({
+        file: 'C:\\Windows\\system32\\cmd.exe',
+        args: '/d /s /c ""C:\\Program Files\\npm\\claude.cmd" -p "hello world""',
+      });
+    });
+  });
+
+  it('wraps an explicitly configured .cmd path through cmd.exe', () => {
+    withPlatform('win32', () => {
+      expect(resolveSpawnTarget('C:\\Users\\me\\npm\\claude.cmd', ['--continue'], WIN_ENV)).toEqual(
+        {
+          file: 'C:\\Windows\\system32\\cmd.exe',
+          args: '/d /s /c "C:\\Users\\me\\npm\\claude.cmd --continue"',
+        },
+      );
+    });
+  });
+
+  it('keeps the bare command when only an extensionless shim exists', () => {
+    // Spawning the bash script is what produced the 193; a plain "not found"
+    // is the more honest failure.
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementationOnce(() => 'C:\\Users\\me\\npm\\bin\\claude\r\n');
+      expect(resolveSpawnTarget('claude', ['--continue'])).toEqual({
+        file: 'claude',
+        args: ['--continue'],
+      });
+    });
   });
 
   it('falls back to the bare command on Windows when resolution fails', () => {
-    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'win32' });
-    mockExecFileSync.mockImplementationOnce(() => {
-      throw new Error('not found');
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementationOnce(() => {
+        throw new Error('not found');
+      });
+      expect(resolveSpawnTarget('claude', ['--continue'])).toEqual({
+        file: 'claude',
+        args: ['--continue'],
+      });
     });
-    try {
-      expect(resolveSpawnCommand('claude')).toBe('claude');
-    } finally {
-      if (platform) Object.defineProperty(process, 'platform', platform);
-    }
   });
 });
 
