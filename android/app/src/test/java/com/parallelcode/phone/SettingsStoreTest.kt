@@ -104,4 +104,38 @@ class SettingsStoreTest {
         assertTrue(store.alwaysFollowOutput)
         assertTrue(prefs.getBoolean(SettingsStore.KEY_ALWAYS_FOLLOW_OUTPUT, false))
     }
+
+    @Test
+    fun widgetTransparencyDefaultsToOpaqueAndPersists() {
+        assertEquals(100, store.widgetTransparency)
+        store.widgetTransparency = 50
+        assertEquals(50, store.widgetTransparency)
+        assertEquals(50, prefs.getInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 100))
+    }
+
+    @Test
+    fun widgetTransparencySnapsToAStopOnTheWayInAndOut() {
+        store.widgetTransparency = 90
+        assertEquals(100, store.widgetTransparency)
+        assertEquals(100, prefs.getInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 0))
+
+        // A value written by an older build still reads back as a real stop.
+        prefs.edit().putInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 42).apply()
+        assertEquals(50, store.widgetTransparency)
+    }
+
+    @Test
+    fun widgetPaletteDefaultsToObsidianAndPersists() {
+        assertEquals("obsidian", store.widgetPalette)
+        store.widgetPalette = "light"
+        assertEquals("light", store.widgetPalette)
+        assertEquals("light", prefs.getString(SettingsStore.KEY_WIDGET_PALETTE, null))
+    }
+
+    @Test
+    fun unknownWidgetPaletteFallsBackToObsidian() {
+        store.widgetPalette = "chartreuse"
+        assertEquals("obsidian", store.widgetPalette)
+        assertEquals("obsidian", prefs.getString(SettingsStore.KEY_WIDGET_PALETTE, null))
+    }
 }

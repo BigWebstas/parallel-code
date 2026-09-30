@@ -9,12 +9,12 @@ Native companion app for the desktop's **Connect Phone** (Remote Access) feature
 - **Several computers:** link more than one desktop (for example the installed app and a dev build, or two machines) and switch between them in Settings → Computers; each keeps its own pairing.
 - **Agents:** live list with each agent's status and last line, under the desktop's Claude, Codex, and Antigravity 5-hour and weekly usage meters (hidden on desktops without `/api/mobile/usage`).
 - **Minimized tasks:** tasks minimized on the desktop are pinned below the live list; a setting hides them.
-- **Settings:** theme (follow system, Obsidian Dark, Light), keep the screen on, connection status, and forget this computer.
+- **Settings:** theme (follow system, Obsidian Dark, Light), keep the screen on, widget background transparency and card color, connection status, and forget this computer.
 - **Swipe between tasks:** with a task open, swipe sideways to the previous or next one in the list; the header shows its position ("2 of 5").
 - **Terminal:** an agent's terminal in the desktop's default Obsidian colors (light or dark with the phone). Once paired: a reply box and keys a phone keyboard lacks (Enter, Esc, Tab, arrows, Ctrl+C). With "Fit the terminal to this phone" on (Settings, off by default), the terminal takes the phone's size while open so full-screen agents such as Claude Code fill it; the computer's own terminal shifts meanwhile and gets its size back when you leave.
 - **Changes:** the task's diff against its base branch, file by file with added and removed lines.
 - **Quick replies and voice:** saved replies above the reply box (edit them in Settings) and a mic button that dictates with Android's speech recognizer.
-- **Widget:** a home-screen widget with the agents that need you and the usage meters, updated while the app is connected.
+- **Widget:** a home-screen widget with the agents that need you and the usage meters, updated while the app is connected. Settings → Widget sets its background transparency (opaque, 75%, 50% or 25%; the border fades with the card, so your wallpaper shows through) and its card color (Obsidian, Slate or Light, each with text colors that stay readable).
 - **Notes:** read a task's notes panel; edit and save it once paired.
 - **New task:** pick a project and describe the work; needs pairing.
 - **Notifications:** optional, in Settings. A foreground service keeps the connection open in the background and notifies when an agent needs input, hits an error, or finishes (each can be turned off); tapping one opens that agent.

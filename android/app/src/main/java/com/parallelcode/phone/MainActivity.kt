@@ -137,6 +137,25 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
         settingsStore.showMinimizedTasks = value
         _showMinimizedTasks.value = value
     }
+
+    private val _widgetTransparency = MutableStateFlow(settingsStore.widgetTransparency)
+    val widgetTransparency: StateFlow<Int> = _widgetTransparency.asStateFlow()
+
+    fun setWidgetTransparency(value: Int) {
+        settingsStore.widgetTransparency = value
+        _widgetTransparency.value = settingsStore.widgetTransparency
+        // The widget draws on its own schedule, so push the new card to it right away.
+        AgentWidget.refresh(getApplication())
+    }
+
+    private val _widgetPalette = MutableStateFlow(settingsStore.widgetPalette)
+    val widgetPalette: StateFlow<String> = _widgetPalette.asStateFlow()
+
+    fun setWidgetPalette(value: String) {
+        settingsStore.widgetPalette = value
+        _widgetPalette.value = settingsStore.widgetPalette
+        AgentWidget.refresh(getApplication())
+    }
 }
 
 class MainActivity : ComponentActivity() {
@@ -339,6 +358,10 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onAlwaysFollowOutputChange = model::setAlwaysFollowOutput,
                     fitTerminalToPhone = model.fitTerminalToPhone.collectAsState().value,
                     onFitTerminalToPhoneChange = model::setFitTerminalToPhone,
+                    widgetTransparency = model.widgetTransparency.collectAsState().value,
+                    onWidgetTransparencyChange = model::setWidgetTransparency,
+                    widgetPalette = model.widgetPalette.collectAsState().value,
+                    onWidgetPaletteChange = model::setWidgetPalette,
                     quickReplies = quickReplies,
                     onQuickRepliesChange = model::setQuickReplies,
                     notifications = notifications,

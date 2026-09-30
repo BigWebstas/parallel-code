@@ -50,6 +50,19 @@ class SettingsStore(private val prefs: SharedPreferences) {
             .lines().map { it.trim() }.filter { it.isNotEmpty() }
         set(value) = prefs.edit { putString(KEY_QUICK_REPLIES, value.joinToString("\n")) }
 
+    /**
+     * How opaque the home-screen widget's card is, as one of [WIDGET_TRANSPARENCY_STEPS]. Lower
+     * values show more wallpaper through the card; its border fades with the fill.
+     */
+    var widgetTransparency: Int
+        get() = widgetTransparencyStep(prefs.getInt(KEY_WIDGET_TRANSPARENCY, 100))
+        set(value) = prefs.edit { putInt(KEY_WIDGET_TRANSPARENCY, widgetTransparencyStep(value)) }
+
+    /** The widget's card color, as a [WIDGET_PALETTES] key; unknown keys read back as Obsidian. */
+    var widgetPalette: String
+        get() = widgetPalette(prefs.getString(KEY_WIDGET_PALETTE, null)).key
+        set(value) = prefs.edit { putString(KEY_WIDGET_PALETTE, widgetPalette(value).key) }
+
     /** Keep watching in the background and notify about agents (see [AgentWatchService]). */
     var notificationsEnabled: Boolean
         get() = prefs.getBoolean(KEY_NOTIFICATIONS, false)
@@ -87,6 +100,8 @@ class SettingsStore(private val prefs: SharedPreferences) {
         const val KEY_NOTIFY_NEEDS_INPUT = "notifyNeedsInput"
         const val KEY_NOTIFY_ERRORS = "notifyErrors"
         const val KEY_NOTIFY_FINISHED = "notifyFinished"
+        const val KEY_WIDGET_TRANSPARENCY = "widgetTransparency"
+        const val KEY_WIDGET_PALETTE = "widgetPalette"
 
         const val THEME_SYSTEM = "system"
         const val THEME_DARK = "dark"
