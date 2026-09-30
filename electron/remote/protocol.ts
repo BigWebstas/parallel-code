@@ -46,6 +46,28 @@ export interface RemoteTaskDiff {
   truncated: boolean;
 }
 
+/** One readiness row in a phone's merge dialog; mirrors the desktop's panel. */
+export interface RemoteReadinessCheck {
+  label: string;
+  status: 'pass' | 'warning' | 'blocked' | 'checking' | 'neutral';
+  detail: string;
+}
+
+/**
+ * Read-only merge readiness, plus the flags a phone's confirm dialog needs.
+ * Built by the desktop's own `buildMergeReadiness`, so both surfaces agree on
+ * what blocks a merge. `canMerge` is false only for a blocker, never a warning.
+ */
+export interface RemoteMergeReadiness {
+  readiness: {
+    overall: 'ready' | 'attention' | 'blocked' | 'checking';
+    checks: RemoteReadinessCheck[];
+  };
+  canMerge: boolean;
+  baseBranch: string;
+  branchName: string;
+}
+
 /** Metadata attached to a task's remote agent entry. */
 export type RemoteTaskContext = Pick<
   RemoteAgent,
