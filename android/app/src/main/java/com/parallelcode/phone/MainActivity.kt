@@ -64,6 +64,7 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     private val phoneApp = application as PhoneApplication
     val client = phoneApp.client
     val settingsStore = phoneApp.settings
+    val promptHistory = phoneApp.promptHistory
 
     /** An agent to open, from a tapped notification. */
     val openAgentRequest = MutableStateFlow<String?>(null)
@@ -110,6 +111,14 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     fun setQuickReplies(value: List<String>) {
         settingsStore.quickReplies = value
         _quickReplies.value = settingsStore.quickReplies
+    }
+
+    private val _sendQuickReplies = MutableStateFlow(settingsStore.sendQuickReplies)
+    val sendQuickReplies: StateFlow<Boolean> = _sendQuickReplies.asStateFlow()
+
+    fun setSendQuickReplies(value: Boolean) {
+        settingsStore.sendQuickReplies = value
+        _sendQuickReplies.value = value
     }
 
     private val _fitTerminalToPhone = MutableStateFlow(settingsStore.fitTerminalToPhone)
@@ -372,6 +381,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onPair = { screenKey = "pair" },
                     onNewTask = { screenKey = "new-task" },
                     onSettings = { screenKey = "settings" },
+                    computers = computers,
+                    onSwitchComputer = { model.client.switchTo(it) },
                 )
             }
             Screen.Settings -> {
@@ -412,6 +423,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onWidgetPaletteChange = model::setWidgetPalette,
                     quickReplies = quickReplies,
                     onQuickRepliesChange = model::setQuickReplies,
+                    sendQuickReplies = model.sendQuickReplies.collectAsState().value,
+                    onSendQuickRepliesChange = model::setSendQuickReplies,
                     notifications = notifications,
                     onNotificationsChange = { prefs ->
                         val needsPermission = prefs.enabled && !notifications.enabled &&
@@ -428,6 +441,7 @@ private fun PhoneApp(model: PhoneViewModel) {
                         model.client.switchTo(it)
                         screenKey = "agents"
                     },
+                    onRenameComputer = { url, alias -> model.client.rename(url, alias) },
                     onForgetComputer = { model.client.forget(it) },
                     onAddComputer = { screenKey = "add-computer" },
                     onPair = { screenKey = "pair" },
@@ -451,6 +465,7 @@ private fun PhoneApp(model: PhoneViewModel) {
             is Screen.Agent -> {
                 val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
                 val quickReplies by model.quickReplies.collectAsState()
+                val sendQuickReplies by model.sendQuickReplies.collectAsState()
                 val fitTerminalToPhone by model.fitTerminalToPhone.collectAsState()
                 // The tasks in the order the list shows them: swipe sideways to move between them.
                 val pages = remember(agents) { agents.filter { !it.collapsed } + agents.filter { it.collapsed } }
@@ -466,6 +481,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                             state = state,
                             client = model.client,
                             quickReplies = quickReplies,
+                            sendQuickReplies = sendQuickReplies,
+                            promptHistory = model.promptHistory,
                             pageLabel = pageLabel,
                             onBack = { screenKey = "agents" },
                             onPair = { screenKey = "pair" },
@@ -478,6 +495,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                         alwaysFollowOutput = alwaysFollowOutput,
                         fitTerminalToPhone = fitTerminalToPhone && active,
                         quickReplies = quickReplies,
+                        sendQuickReplies = sendQuickReplies,
+                        promptHistory = model.promptHistory,
                         pageLabel = pageLabel,
                         onBack = { screenKey = "agents" },
                         onPair = { screenKey = "pair" },

@@ -6,9 +6,15 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** A desktop this phone has linked to, by its Remote Access address. */
-data class SavedComputer(val baseUrl: String, val token: String, val pairedToken: String?) {
-    /** "192.168.1.20:7777": what the phone shows for this computer. */
-    val label: String get() = baseUrl.substringAfter("://")
+data class SavedComputer(
+    val baseUrl: String,
+    val token: String,
+    val pairedToken: String?,
+    /** A name the user gave this computer; null means it has none. */
+    val alias: String? = null,
+) {
+    /** What the phone shows for this computer: its name, or "192.168.1.20:7777". */
+    val label: String get() = alias?.takeIf { it.isNotBlank() } ?: baseUrl.substringAfter("://")
 }
 
 /**
@@ -31,6 +37,8 @@ class CredentialStore(private val prefs: SharedPreferences) {
                     c.getString("baseUrl"),
                     c.getString("token"),
                     if (c.isNull("pairedToken")) null else c.optString("pairedToken").ifEmpty { null },
+                    // Written by newer builds; missing on older ones.
+                    if (c.isNull("alias")) null else c.optString("alias").ifEmpty { null },
                 )
             }
         }
@@ -46,11 +54,12 @@ class CredentialStore(private val prefs: SharedPreferences) {
 
     /**
      * Use [link]'s computer, adding it if new. A new QR token for a known address may belong to a
-     * different computer now, so it drops that address's paired token.
+     * different computer now, so it drops that address's paired token, but keeps its name.
      */
     fun saveLink(link: ConnectionLink) {
+        val alias = computers.firstOrNull { it.baseUrl == link.baseUrl }?.alias
         val others = computers.filter { it.baseUrl != link.baseUrl }
-        write(others + SavedComputer(link.baseUrl, link.token, null), active = link.baseUrl)
+        write(others + SavedComputer(link.baseUrl, link.token, null, alias), active = link.baseUrl)
     }
 
     /** Switch to a saved computer. */
@@ -61,6 +70,15 @@ class CredentialStore(private val prefs: SharedPreferences) {
     fun savePairedToken(token: String) = updateActive { it.copy(pairedToken = token) }
 
     fun clearPairedToken() = updateActive { it.copy(pairedToken = null) }
+
+    /** Name a saved computer; a blank name clears the one it had. */
+    fun rename(baseUrl: String, alias: String?) {
+        val current = prefs.getString(KEY_ACTIVE, null)
+        write(
+            computers.map { if (it.baseUrl == baseUrl) it.copy(alias = alias?.trim()?.takeIf { it.isNotEmpty() }) else it },
+            active = current,
+        )
+    }
 
     /** Forget a saved computer; forgetting the one in use leaves none selected. */
     fun remove(baseUrl: String) {
@@ -85,7 +103,8 @@ class CredentialStore(private val prefs: SharedPreferences) {
                 JSONObject()
                     .put("baseUrl", it.baseUrl)
                     .put("token", it.token)
-                    .put("pairedToken", it.pairedToken ?: JSONObject.NULL),
+                    .put("pairedToken", it.pairedToken ?: JSONObject.NULL)
+                    .put("alias", it.alias ?: JSONObject.NULL),
             )
         }
         prefs.edit {

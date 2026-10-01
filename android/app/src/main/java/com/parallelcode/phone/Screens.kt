@@ -24,6 +24,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,7 +35,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -52,6 +55,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -62,6 +71,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -339,11 +349,20 @@ fun AgentsScreen(
     onPair: () -> Unit,
     onNewTask: () -> Unit,
     onSettings: () -> Unit,
+    computers: List<SavedComputer> = emptyList(),
+    onSwitchComputer: (String) -> Unit = {},
 ) {
     var refreshing by remember { mutableStateOf(false) }
+    var showSwitchMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val activeAgents = remember(agents) { agents.filter { !it.collapsed } }
     val minimizedAgents = remember(agents) { agents.filter { it.collapsed } }
+    val showHostSwitch = computers.size > 1
+    val hostLabel = computers.firstOrNull { it.baseUrl == host }?.label
+        ?: host.substringAfter("://")
+    val latencyMs by client.latencyMs.collectAsState()
+    val latencySegment =
+        if (state.status == ConnectionStatus.CONNECTED && latencyMs != null) " · $latencyMs ms" else ""
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -392,7 +411,7 @@ fun AgentsScreen(
                                         .background(statusDotColor.copy(alpha = pulseAlpha)),
                                 )
                                 Text(
-                                    "${statusLabel(state)} · ${host.substringAfter("://")}",
+                                    "${statusLabel(state)}$latencySegment · $hostLabel",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = AppTheme.extra.textMuted,
                                 )
@@ -400,6 +419,50 @@ fun AgentsScreen(
                         }
                     },
                     actions = {
+                        if (showHostSwitch) {
+                            Box {
+                                TextButton(onClick = { showSwitchMenu = true }) {
+                                    Text("Switch", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                                }
+                                DropdownMenu(
+                                    expanded = showSwitchMenu,
+                                    onDismissRequest = { showSwitchMenu = false },
+                                ) {
+                                    computers.forEach { computer ->
+                                        val inUse = computer.baseUrl == host
+                                        DropdownMenuItem(
+                                            text = {
+                                                Column {
+                                                    Text(
+                                                        computer.label,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontWeight = if (inUse) FontWeight.SemiBold else FontWeight.Normal,
+                                                    )
+                                                    Text(
+                                                        (if (inUse) "In use · " else "") + if (computer.pairedToken != null) "Paired" else "View only",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = AppTheme.extra.textMuted,
+                                                    )
+                                                }
+                                            },
+                                            onClick = {
+                                                showSwitchMenu = false
+                                                if (!inUse) onSwitchComputer(computer.baseUrl)
+                                            },
+                                            trailingIcon = if (inUse) {
+                                                {
+                                                    Text(
+                                                        "✓",
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        fontWeight = FontWeight.Bold,
+                                                    )
+                                                }
+                                            } else null,
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         if (state.canControl) {
                             Button(
                                 onClick = onNewTask,
@@ -822,6 +885,8 @@ fun AgentScreen(
     alwaysFollowOutput: Boolean,
     fitTerminalToPhone: Boolean,
     quickReplies: List<String>,
+    sendQuickReplies: Boolean = false,
+    promptHistory: PromptHistoryStore? = null,
     pageLabel: String? = null,
     onBack: () -> Unit,
     onPair: () -> Unit,
@@ -1028,7 +1093,12 @@ fun AgentScreen(
                 Spacer(Modifier.height(8.dp))
             } else if (tab == AgentTab.TERMINAL && agent?.collapsed != true) {
                 ReplyBox(
+                    agentId = agentId,
                     quickReplies = quickReplies,
+                    sendQuickReplies = sendQuickReplies,
+                    working = agent?.running == true &&
+                        (agent.attention == "active" || agent.attention == "shell_busy"),
+                    promptHistory = promptHistory,
                     send = { draft ->
                         val data = messageForTerminal(draft, buffer.screen.bracketedPaste)
                         if (data.isNotEmpty()) client.sendInput(agentId, data, submit = true)
@@ -1122,7 +1192,7 @@ private enum class AgentTab(val label: String) { TERMINAL("Terminal"), CHANGES("
 private val QUICK_KEYS = listOf(
     "Enter" to "\r",
     "Esc" to "\u001b",
-    "Tab" to "\t",
+    "→" to "\u001b[C",
     "↑" to "\u001b[A",
     "↓" to "\u001b[B",
     "/" to "/",
@@ -1353,10 +1423,9 @@ private fun terminalLine(line: List<StyledSpan>, palette: TerminalPalette) =
 
 @Composable
 private fun QuickKeyButton(
-    label: String,
-    data: String,
     busy: Boolean,
-    onSendKey: (String) -> Unit,
+    onSend: () -> Unit,
+    content: @Composable RowScope.() -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -1369,7 +1438,7 @@ private fun QuickKeyButton(
     OutlinedButton(
         onClick = {
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            onSendKey(data)
+            onSend()
         },
         enabled = !busy,
         shape = MaterialTheme.shapes.small,
@@ -1384,14 +1453,25 @@ private fun QuickKeyButton(
             scaleX = scale
             scaleY = scale
         },
-    ) {
-        Text(label, fontFamily = FontFamily.Monospace, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-    }
+        content = content,
+    )
+}
+
+/** An arrow quick key ([Icons.Filled.KeyboardArrowUp] and friends), drawn larger than key text. */
+private fun arrowKeyFor(label: String): Pair<ImageVector, String>? = when (label) {
+    "↑" -> Icons.Filled.KeyboardArrowUp to "Arrow up"
+    "↓" -> Icons.Filled.KeyboardArrowDown to "Arrow down"
+    "→" -> Icons.Filled.KeyboardArrowRight to "Arrow right"
+    else -> null
 }
 
 @Composable
 private fun ReplyBox(
+    agentId: String,
     quickReplies: List<String>,
+    sendQuickReplies: Boolean = false,
+    working: Boolean = false,
+    promptHistory: PromptHistoryStore? = null,
     send: suspend (String) -> Unit,
     sendKey: suspend (String) -> Unit,
 ) {
@@ -1400,6 +1480,7 @@ private fun ReplyBox(
     var draft by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var showHistory by remember { mutableStateOf(false) }
     fun run(action: suspend () -> Unit) {
         busy = true
         error = null
@@ -1423,10 +1504,19 @@ private fun ReplyBox(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 QUICK_KEYS.forEach { (label, data) ->
-                    QuickKeyButton(label, data, busy = busy) { run { sendKey(it) } }
+                    val arrow = arrowKeyFor(label)
+                    QuickKeyButton(busy = busy, onSend = { run { sendKey(data) } }) {
+                        if (arrow != null) {
+                            Icon(arrow.first, contentDescription = arrow.second, modifier = Modifier.size(20.dp))
+                        } else {
+                            Text(label, fontFamily = FontFamily.Monospace, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
                 }
             }
-            QuickReplies(quickReplies, enabled = !busy) { draft = appendToDraft(draft, it) }
+            QuickReplies(quickReplies, enabled = !busy) {
+                if (sendQuickReplies) run { send(it) } else draft = appendToDraft(draft, it)
+            }
             AnimatedVisibility(
                 visible = error != null,
                 enter = expandVertically() + fadeIn(),
@@ -1434,7 +1524,11 @@ private fun ReplyBox(
             ) {
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
-            Row(verticalAlignment = Alignment.Bottom) {
+            Row(
+                modifier = Modifier.height(IntrinsicSize.Min),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
@@ -1450,7 +1544,29 @@ private fun ReplyBox(
                         unfocusedBorderColor = AppTheme.extra.border,
                     ),
                 )
-                VoiceInputButton(enabled = !busy) { draft = appendToDraft(draft, it) }
+                VoiceInputButton(
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxHeight(),
+                ) { draft = appendToDraft(draft, it) }
+                if (promptHistory != null) {
+                    OutlinedButton(
+                        onClick = { showHistory = true },
+                        enabled = !busy && promptHistory.history(agentId).isNotEmpty(),
+                        shape = MaterialTheme.shapes.large,
+                        modifier = Modifier.fillMaxHeight(),
+                    ) {
+                        Icon(Icons.Filled.History, contentDescription = "Recent messages")
+                    }
+                }
+                if (working && draft.isBlank()) {
+                    OutlinedButton(
+                        // Interrupts the running command, like the Ctrl+C quick key.
+                        onClick = { run { sendKey(3.toChar().toString()) } },
+                        enabled = !busy,
+                        shape = MaterialTheme.shapes.large,
+                        modifier = Modifier.fillMaxHeight(),
+                    ) { Icon(Icons.Filled.Stop, contentDescription = "Stop") }
+                } else {
                 val sendInteraction = remember { MutableInteractionSource() }
                 val sendPressed by sendInteraction.collectIsPressedAsState()
                 val sendScale by animateFloatAsState(
@@ -1466,18 +1582,34 @@ private fun ReplyBox(
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ),
-                    modifier = Modifier.graphicsLayer {
-                        scaleX = sendScale
-                        scaleY = sendScale
-                    },
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            scaleX = sendScale
+                            scaleY = sendScale
+                        },
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        val text = draft
                         run {
-                            send(draft)
+                            send(text)
+                            promptHistory?.record(agentId, text)
                             draft = ""
                         }
                     },
                 ) { Text("Send", fontWeight = FontWeight.Bold) }
+                }
+            }
+            if (showHistory) {
+                val history = remember(showHistory) { promptHistory?.history(agentId).orEmpty() }
+                PromptHistoryDialog(
+                    history = history,
+                    onPick = {
+                        draft = appendToDraft(draft, it)
+                        showHistory = false
+                    },
+                    onDismiss = { showHistory = false },
+                )
             }
         }
     }

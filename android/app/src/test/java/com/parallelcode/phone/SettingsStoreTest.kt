@@ -150,6 +150,14 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun sendQuickRepliesDefaultsOffAndPersists() {
+        assertFalse(store.sendQuickReplies)
+        store.sendQuickReplies = true
+        assertTrue(store.sendQuickReplies)
+        assertTrue(prefs.getBoolean(SettingsStore.KEY_SEND_QUICK_REPLIES, false))
+    }
+
+    @Test
     fun alwaysFollowOutputDefaultsOffAndPersists() {
         assertFalse(store.alwaysFollowOutput)
         store.alwaysFollowOutput = true

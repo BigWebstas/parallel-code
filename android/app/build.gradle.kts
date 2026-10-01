@@ -39,6 +39,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     // Look preset rows show a check mark on the selected theme.
     implementation("androidx.compose.material:material-icons-core")
+    // Stop, history and mic buttons: these icons only ship in the extended set.
+    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.2")
     // Installs the baseline profiles Compose ships, so a sideloaded APK starts and scrolls

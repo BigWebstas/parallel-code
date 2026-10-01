@@ -23,12 +23,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -84,6 +88,8 @@ fun ChatScreen(
     state: ConnectionState,
     client: RemoteClient,
     quickReplies: List<String>,
+    sendQuickReplies: Boolean = false,
+    promptHistory: PromptHistoryStore? = null,
     pageLabel: String? = null,
     onBack: () -> Unit,
     onPair: () -> Unit,
@@ -187,6 +193,8 @@ fun ChatScreen(
                 ChatComposer(
                     draftKey = agentId,
                     quickReplies = quickReplies,
+                    sendQuickReplies = sendQuickReplies,
+                    promptHistory = promptHistory,
                     enabled = canSend && current != null && current.status != "closed",
                     working = current?.status == "working",
                     send = { text -> client.sendChatAction(agentId, "send", JSONObject().put("text", text)) },
@@ -488,6 +496,8 @@ private fun RequestCard(
 private fun ChatComposer(
     draftKey: String,
     quickReplies: List<String>,
+    sendQuickReplies: Boolean = false,
+    promptHistory: PromptHistoryStore? = null,
     enabled: Boolean,
     working: Boolean,
     send: suspend (String) -> Unit,
@@ -497,6 +507,7 @@ private fun ChatComposer(
     var draft by rememberSaveable(draftKey) { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var showHistory by remember { mutableStateOf(false) }
 
     fun run(action: suspend () -> Unit, clearDraft: Boolean) {
         busy = true
@@ -520,7 +531,10 @@ private fun ChatComposer(
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-        QuickReplies(quickReplies, enabled = enabled && !busy) { draft = appendToDraft(draft, it) }
+        QuickReplies(quickReplies, enabled = enabled && !busy) {
+            if (sendQuickReplies) run({ send(it) }, clearDraft = false)
+            else draft = appendToDraft(draft, it)
+        }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = draft,
@@ -531,14 +545,39 @@ private fun ChatComposer(
                 enabled = enabled,
             )
             VoiceInputButton(enabled = enabled && !busy) { draft = appendToDraft(draft, it) }
+            if (promptHistory != null) {
+                OutlinedButton(
+                    onClick = { showHistory = true },
+                    enabled = enabled && !busy && promptHistory.history(draftKey).isNotEmpty(),
+                    shape = MaterialTheme.shapes.large,
+                ) {
+                    Icon(Icons.Filled.History, contentDescription = "Recent messages")
+                }
+            }
             if (working && draft.isBlank()) {
-                OutlinedButton(onClick = { run(stop, clearDraft = false) }, enabled = enabled && !busy) { Text("Stop") }
+                OutlinedButton(onClick = { run(stop, clearDraft = false) }, enabled = enabled && !busy) {
+                    Icon(Icons.Filled.Stop, contentDescription = "Stop")
+                }
             } else {
                 Button(
-                    onClick = { run({ send(draft.trim()) }, clearDraft = true) },
+                    onClick = {
+                        val text = draft.trim()
+                        run({ send(text); promptHistory?.record(draftKey, text) }, clearDraft = true)
+                    },
                     enabled = enabled && !busy && draft.isNotBlank(),
                 ) { Text("Send") }
             }
+        }
+        if (showHistory) {
+            val history = remember(showHistory) { promptHistory?.history(draftKey).orEmpty() }
+            PromptHistoryDialog(
+                history = history,
+                onPick = {
+                    draft = appendToDraft(draft, it)
+                    showHistory = false
+                },
+                onDismiss = { showHistory = false },
+            )
         }
     }
 }
