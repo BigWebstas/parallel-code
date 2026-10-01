@@ -1,6 +1,7 @@
 package com.parallelcode.phone
 
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -57,6 +58,57 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun defaultsLookPresetsToObsidianPerTone() {
+        assertEquals(LookPresets.PRESET_OBSIDIAN, store.darkThemePreset)
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+    }
+
+    @Test
+    fun setsLookPresetsAndPersists() {
+        store.darkThemePreset = "catppuccin-mocha"
+        store.lightThemePreset = "islands-light"
+        assertEquals("catppuccin-mocha", store.darkThemePreset)
+        assertEquals("islands-light", store.lightThemePreset)
+    }
+
+    @Test
+    fun lookPresetsSurviveSeparateToneSlots() {
+        store.darkThemePreset = "ember"
+        store.lightThemePreset = "islands-light"
+        assertEquals("ember", store.darkThemePreset)
+        assertEquals("islands-light", store.lightThemePreset)
+    }
+
+    @Test
+    fun unknownLookPresetFallsBackToToneDefault() {
+        prefs.edit { putString(SettingsStore.KEY_DARK_THEME_PRESET, "solarized-ultra") }
+        prefs.edit { putString(SettingsStore.KEY_LIGHT_THEME_PRESET, "solarized-ultra") }
+        assertEquals(LookPresets.PRESET_OBSIDIAN, store.darkThemePreset)
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+    }
+
+    /** A light look saved into the dark slot must not be drawn in dark mode. */
+    @Test
+    fun lightPresetInDarkSlotFallsBackToDarkDefault() {
+        prefs.edit { putString(SettingsStore.KEY_DARK_THEME_PRESET, LookPresets.PRESET_OBSIDIAN_LIGHT) }
+        assertEquals(LookPresets.PRESET_OBSIDIAN, store.darkThemePreset)
+    }
+
+    @Test
+    fun darkPresetInLightSlotFallsBackToLightDefault() {
+        prefs.edit { putString(SettingsStore.KEY_LIGHT_THEME_PRESET, LookPresets.PRESET_OBSIDIAN) }
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+    }
+
+    /** Assigning the wrong tone normalizes on write instead of storing a mismatch. */
+    @Test
+    fun writingWrongTonePresetNormalizes() {
+        store.lightThemePreset = LookPresets.PRESET_OBSIDIAN
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, store.lightThemePreset)
+        assertEquals(LookPresets.PRESET_OBSIDIAN_LIGHT, prefs.getString(SettingsStore.KEY_LIGHT_THEME_PRESET, null))
+    }
+
+    @Test
     fun setsThemeModeAndPersists() {
         store.themeMode = SettingsStore.THEME_DARK
         assertEquals(SettingsStore.THEME_DARK, store.themeMode)
@@ -82,65 +134,60 @@ class SettingsStoreTest {
         assertFalse(store.showMinimizedTasks)
         assertFalse(prefs.getBoolean(SettingsStore.KEY_SHOW_MINIMIZED_TASKS, true))
     }
-}
 
-/** Simple in-memory fake of Android SharedPreferences for unit tests. */
-private class FakeSharedPreferences : SharedPreferences {
-    private val map = mutableMapOf<String, Any>()
+    @Test
+    fun quickRepliesDefaultAndDropBlankLines() {
+        assertEquals(SettingsStore.DEFAULT_QUICK_REPLIES, store.quickReplies)
+        store.quickReplies = listOf(" continue ", "", "ship it")
+        assertEquals(listOf("continue", "ship it"), store.quickReplies)
+    }
 
-    override fun getAll(): Map<String, *> = map
-    override fun getString(key: String?, defValue: String?): String? = (map[key] as? String) ?: defValue
-    @Suppress("UNCHECKED_CAST")
-    override fun getStringSet(key: String?, defValues: Set<String>?): Set<String>? =
-        (map[key] as? Set<String>) ?: defValues
-    override fun getInt(key: String?, defValue: Int): Int = (map[key] as? Int) ?: defValue
-    override fun getLong(key: String?, defValue: Long): Long = (map[key] as? Long) ?: defValue
-    override fun getFloat(key: String?, defValue: Float): Float = (map[key] as? Float) ?: defValue
-    override fun getBoolean(key: String?, defValue: Boolean): Boolean = (map[key] as? Boolean) ?: defValue
-    override fun contains(key: String?): Boolean = map.containsKey(key)
-    override fun edit(): SharedPreferences.Editor = FakeEditor(map)
-    override fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {}
-    override fun unregisterOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener?) {}
+    @Test
+    fun appendsToADraftLikeTyping() {
+        assertEquals("yes", appendToDraft("  ", "yes"))
+        assertEquals("ok yes", appendToDraft("ok", "yes"))
+        assertEquals("ok yes", appendToDraft("ok ", "yes"))
+    }
 
-    private class FakeEditor(private val backingMap: MutableMap<String, Any>) : SharedPreferences.Editor {
-        private val pending = mutableMapOf<String, Any?>()
-        private var clearPending = false
+    @Test
+    fun alwaysFollowOutputDefaultsOffAndPersists() {
+        assertFalse(store.alwaysFollowOutput)
+        store.alwaysFollowOutput = true
+        assertTrue(store.alwaysFollowOutput)
+        assertTrue(prefs.getBoolean(SettingsStore.KEY_ALWAYS_FOLLOW_OUTPUT, false))
+    }
 
-        override fun putString(key: String?, value: String?): SharedPreferences.Editor = apply {
-            if (key != null) pending[key] = value
-        }
-        override fun putStringSet(key: String?, values: Set<String>?): SharedPreferences.Editor = apply {
-            if (key != null) pending[key] = values
-        }
-        override fun putInt(key: String?, value: Int): SharedPreferences.Editor = apply {
-            if (key != null) pending[key] = value
-        }
-        override fun putLong(key: String?, value: Long): SharedPreferences.Editor = apply {
-            if (key != null) pending[key] = value
-        }
-        override fun putFloat(key: String?, value: Float): SharedPreferences.Editor = apply {
-            if (key != null) pending[key] = value
-        }
-        override fun putBoolean(key: String?, value: Boolean): SharedPreferences.Editor = apply {
-            if (key != null) pending[key] = value
-        }
-        override fun remove(key: String?): SharedPreferences.Editor = apply {
-            if (key != null) pending[key] = null
-        }
-        override fun clear(): SharedPreferences.Editor = apply {
-            clearPending = true
-        }
-        override fun commit(): Boolean {
-            apply()
-            return true
-        }
-        override fun apply() {
-            if (clearPending) backingMap.clear()
-            for ((k, v) in pending) {
-                if (v == null) backingMap.remove(k) else backingMap[k] = v
-            }
-            pending.clear()
-            clearPending = false
-        }
+    @Test
+    fun widgetTransparencyDefaultsToOpaqueAndPersists() {
+        assertEquals(100, store.widgetTransparency)
+        store.widgetTransparency = 50
+        assertEquals(50, store.widgetTransparency)
+        assertEquals(50, prefs.getInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 100))
+    }
+
+    @Test
+    fun widgetTransparencySnapsToAStopOnTheWayInAndOut() {
+        store.widgetTransparency = 90
+        assertEquals(100, store.widgetTransparency)
+        assertEquals(100, prefs.getInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 0))
+
+        // A value written by an older build still reads back as a real stop.
+        prefs.edit().putInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 42).apply()
+        assertEquals(50, store.widgetTransparency)
+    }
+
+    @Test
+    fun widgetPaletteDefaultsToObsidianAndPersists() {
+        assertEquals("obsidian", store.widgetPalette)
+        store.widgetPalette = "light"
+        assertEquals("light", store.widgetPalette)
+        assertEquals("light", prefs.getString(SettingsStore.KEY_WIDGET_PALETTE, null))
+    }
+
+    @Test
+    fun unknownWidgetPaletteFallsBackToObsidian() {
+        store.widgetPalette = "chartreuse"
+        assertEquals("obsidian", store.widgetPalette)
+        assertEquals("obsidian", prefs.getString(SettingsStore.KEY_WIDGET_PALETTE, null))
     }
 }

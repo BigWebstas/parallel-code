@@ -28,7 +28,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,6 +52,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -110,6 +110,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.layout.requiredWidth
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.platform.LocalDensity
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -119,7 +128,13 @@ import java.io.IOException
 private const val NOT_A_LINK = "That isn't a Parallel Code link. Open Connect Phone on your computer and try again."
 
 @Composable
-fun ConnectScreen(expired: Boolean, onLink: (ConnectionLink) -> Unit) {
+fun ConnectScreen(
+    expired: Boolean,
+    onLink: (ConnectionLink) -> Unit,
+    saved: List<SavedComputer> = emptyList(),
+    onSelectSaved: (String) -> Unit = {},
+    onCancel: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     var pasted by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -132,7 +147,7 @@ fun ConnectScreen(expired: Boolean, onLink: (ConnectionLink) -> Unit) {
     SetupPage(title = "Connect to your computer") {
         if (expired) {
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = MaterialTheme.shapes.large,
                 color = MaterialTheme.colorScheme.errorContainer,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
                 modifier = Modifier.fillMaxWidth(),
@@ -152,7 +167,7 @@ fun ConnectScreen(expired: Boolean, onLink: (ConnectionLink) -> Unit) {
         )
         Button(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.large,
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -179,7 +194,7 @@ fun ConnectScreen(expired: Boolean, onLink: (ConnectionLink) -> Unit) {
             singleLine = true,
             placeholder = { Text("http://192.168.1.20:7777/?token=…") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.large,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = AppTheme.extra.inputBg,
                 unfocusedContainerColor = AppTheme.extra.inputBg,
@@ -191,6 +206,19 @@ fun ConnectScreen(expired: Boolean, onLink: (ConnectionLink) -> Unit) {
             Text("Connect", fontWeight = FontWeight.SemiBold)
         }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (saved.isNotEmpty()) {
+            Text(
+                "Or use a computer you've linked before:",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppTheme.extra.textMuted,
+            )
+            saved.forEach { computer ->
+                OutlinedButton(onClick = { onSelectSaved(computer.baseUrl) }, modifier = Modifier.fillMaxWidth()) {
+                    Text(computer.label, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+        onCancel?.let { TextButton(onClick = it) { Text("Cancel") } }
     }
 }
 
@@ -217,7 +245,7 @@ fun PairScreen(pair: suspend (pin: String, remember: Boolean) -> Unit, onDone: (
             enabled = !busy,
             textStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.large,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = AppTheme.extra.inputBg,
                 unfocusedContainerColor = AppTheme.extra.inputBg,
@@ -248,7 +276,7 @@ fun PairScreen(pair: suspend (pin: String, remember: Boolean) -> Unit, onDone: (
         Button(
             modifier = Modifier.fillMaxWidth(),
             enabled = pin.length == 6 && !busy,
-            shape = RoundedCornerShape(12.dp),
+            shape = MaterialTheme.shapes.large,
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -375,7 +403,7 @@ fun AgentsScreen(
                         if (state.canControl) {
                             Button(
                                 onClick = onNewTask,
-                                shape = RoundedCornerShape(8.dp),
+                                shape = MaterialTheme.shapes.small,
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary,
@@ -548,7 +576,7 @@ private fun MinimizedTaskCard(
         modifier = Modifier
             .width(if (single) 260.dp else 220.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = AppTheme.extra.cardBg),
         border = BorderStroke(1.dp, AppTheme.extra.borderSubtle),
     ) {
@@ -589,7 +617,7 @@ private fun MinimizedTaskCard(
                     text = agent.lastLine,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp),
                     fontFamily = FontFamily.Monospace,
-                    color = Color(0xFFB5C5D3),
+                    color = AppTheme.extra.textMuted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -599,10 +627,10 @@ private fun MinimizedTaskCard(
 }
 
 @Composable
-private fun PairBanner(onPair: () -> Unit) {
+internal fun PairBanner(onPair: () -> Unit) {
     Card(
         modifier = Modifier.padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = AppTheme.extra.warningBannerBg),
         border = BorderStroke(1.dp, AppTheme.extra.attentionBorder),
     ) {
@@ -619,7 +647,7 @@ private fun PairBanner(onPair: () -> Unit) {
             )
             Button(
                 onClick = onPair,
-                shape = RoundedCornerShape(8.dp),
+                shape = MaterialTheme.shapes.small,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = AppTheme.extra.attentionBorder,
                     contentColor = AppTheme.extra.warningText,
@@ -657,7 +685,18 @@ private fun AgentCard(
     } else {
         AppTheme.extra.border
     }
-    val cardBg = if (isAttention) AppTheme.extra.cardBgAttention else AppTheme.extra.cardBg
+    val cardBg by animateColorAsState(
+        if (isAttention) AppTheme.extra.cardBgAttention else AppTheme.extra.cardBg,
+        animationSpec = tween(300),
+        label = "cardBg",
+    )
+    // A card that just started needing you bumps once, so the change catches the eye.
+    val bump = remember { Animatable(1f) }
+    LaunchedEffect(isAttention) {
+        if (!isAttention) return@LaunchedEffect
+        bump.animateTo(1.03f, tween(140))
+        bump.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+    }
 
     val (statusColor, statusText) = when {
         agent.collapsed -> Pair(AppTheme.extra.textMuted, "Minimized")
@@ -691,8 +730,12 @@ private fun AgentCard(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clickable(enabled = !agent.isChat) { onOpen(agent) },
-        shape = RoundedCornerShape(12.dp),
+            .graphicsLayer {
+                scaleX = bump.value
+                scaleY = bump.value
+            }
+            .clickable { onOpen(agent) },
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = cardBg),
         border = BorderStroke(1.dp, cardBorderColor),
     ) {
@@ -714,7 +757,7 @@ private fun AgentCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     color = statusColor.copy(alpha = 0.12f),
                     border = BorderStroke(1.dp, statusColor.copy(alpha = 0.35f)),
                 ) {
@@ -745,21 +788,21 @@ private fun AgentCard(
                     color = AppTheme.extra.textMuted,
                 )
             }
-            val detail = if (agent.isChat) "Built-in chat. Open it on your computer." else agent.lastLine
+            val detail = agent.lastLine.ifBlank { if (agent.isChat) "Built-in chat" else "" }
             if (detail.isNotBlank()) {
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
+                        .clip(MaterialTheme.shapes.small)
                         .background(MaterialTheme.colorScheme.background)
-                        .border(BorderStroke(1.dp, AppTheme.extra.borderSubtle), RoundedCornerShape(6.dp))
+                        .border(BorderStroke(1.dp, AppTheme.extra.borderSubtle), MaterialTheme.shapes.small)
                         .padding(horizontal = 10.dp, vertical = 7.dp),
                 ) {
                     Text(
                         detail,
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
                         fontFamily = FontFamily.Monospace,
-                        color = Color(0xFFB5C5D3),
+                        color = AppTheme.extra.textMuted,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -776,6 +819,10 @@ fun AgentScreen(
     agentId: String,
     state: ConnectionState,
     client: RemoteClient,
+    alwaysFollowOutput: Boolean,
+    fitTerminalToPhone: Boolean,
+    quickReplies: List<String>,
+    pageLabel: String? = null,
     onBack: () -> Unit,
     onPair: () -> Unit,
 ) {
@@ -784,6 +831,53 @@ fun AgentScreen(
     // Recomposition is batched per frame, so a burst of output renders the text once.
     val lines = remember(version) { buffer.screen.styledLines() }
     var tab by rememberSaveable { mutableStateOf(AgentTab.TERMINAL) }
+    var closing by remember { mutableStateOf(false) }
+    var merging by remember { mutableStateOf(false) }
+    var viewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+
+    // With "Fit the terminal to this phone" on and paired, the PTY takes this screen's size so
+    // full-screen TUIs fill the phone; leaving
+    // the screen hands it back to the desktop. Settle first: the keyboard animates the height.
+    val sizeTerminal = fitTerminalToPhone && state.canControl && agent != null && agent.running && agent.collapsed != true
+    LaunchedEffect(sizeTerminal, viewSize) {
+        val (cols, rows) = viewSize ?: return@LaunchedEffect
+        if (!sizeTerminal) {
+            client.releaseViewSize(agentId)
+            return@LaunchedEffect
+        }
+        delay(300)
+        client.setViewSize(agentId, cols, rows)
+    }
+    DisposableEffect(agentId) {
+        onDispose {
+            client.releaseTerminal(agentId)
+            client.releaseViewSize(agentId)
+        }
+    }
+
+    if (merging && agent != null) {
+        MergeTaskDialog(
+            taskId = agent.taskId,
+            client = client,
+            onDismiss = { merging = false },
+            onMerged = {
+                merging = false
+                onBack()
+            },
+        )
+    }
+
+    if (closing && agent != null) {
+        CloseTaskDialog(
+            taskName = agent.taskName,
+            close = { force -> client.closeTask(agent.taskId, force) },
+            onDismiss = { closing = false },
+            onClosed = {
+                closing = false
+                onBack()
+            },
+        )
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -810,10 +904,20 @@ fun AgentScreen(
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                agent?.let(::agentStatusLabel) ?: statusLabel(state),
+                                (agent?.let(::agentStatusLabel) ?: statusLabel(state)) + (pageLabel?.let { " · $it" } ?: ""),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = AppTheme.extra.textMuted,
                             )
+                        }
+                    },
+                    actions = {
+                        if (agent != null && state.canControl) {
+                            TextButton(onClick = { merging = true }) {
+                                Text("Merge", fontWeight = FontWeight.SemiBold)
+                            }
+                            TextButton(onClick = { closing = true }) {
+                                Text("Close", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     },
                 )
@@ -849,7 +953,7 @@ fun AgentScreen(
             AnimatedContent(
                 targetState = tab,
                 transitionSpec = {
-                    if (targetState == AgentTab.NOTES) {
+                    if (targetState.ordinal > initialState.ordinal) {
                         (slideInHorizontally(animationSpec = tween(220)) { width -> width / 4 } + fadeIn(tween(180)))
                             .togetherWith(slideOutHorizontally(animationSpec = tween(200)) { width -> -width / 4 } + fadeOut(tween(160)))
                     } else {
@@ -886,10 +990,27 @@ fun AgentScreen(
                             }
                         }
                     } else {
-                        TerminalText(lines, Modifier.fillMaxSize())
+                        TerminalText(
+                            lines,
+                            buffer.screen.cols,
+                            Modifier.fillMaxSize(),
+                            alwaysFollow = alwaysFollowOutput,
+                            onViewSize = { cols, rows -> viewSize = cols to rows },
+                        )
                     }
                     AgentTab.NOTES -> if (agent != null) {
                         NotesPane(agent.taskId, state.canControl, client, Modifier.fillMaxSize())
+                    } else {
+                        Text(
+                            "This agent is no longer running.",
+                            Modifier
+                                .fillMaxSize()
+                                .padding(16.dp),
+                            color = AppTheme.extra.textMuted,
+                        )
+                    }
+                    AgentTab.CHANGES -> if (agent != null) {
+                        DiffPane(agent.taskId, client, Modifier.fillMaxSize())
                     } else {
                         Text(
                             "This agent is no longer running.",
@@ -907,6 +1028,7 @@ fun AgentScreen(
                 Spacer(Modifier.height(8.dp))
             } else if (tab == AgentTab.TERMINAL && agent?.collapsed != true) {
                 ReplyBox(
+                    quickReplies = quickReplies,
                     send = { draft ->
                         val data = messageForTerminal(draft, buffer.screen.bracketedPaste)
                         if (data.isNotEmpty()) client.sendInput(agentId, data, submit = true)
@@ -918,7 +1040,83 @@ fun AgentScreen(
     }
 }
 
-private enum class AgentTab(val label: String) { TERMINAL("Terminal"), NOTES("Notes") }
+/**
+ * Confirms closing a task, as the desktop's Close Task dialog does. The first confirm asks the
+ * desktop to close only if no work would be lost; if it answers with warnings, they are shown and
+ * a second confirm forces the close.
+ */
+@Composable
+internal fun CloseTaskDialog(
+    taskName: String,
+    close: suspend (force: Boolean) -> List<String>,
+    onDismiss: () -> Unit,
+    onClosed: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var warnings by remember { mutableStateOf<List<String>>(emptyList()) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun submit() {
+        val force = warnings.isNotEmpty()
+        busy = true
+        error = null
+        scope.launch {
+            try {
+                val refused = close(force)
+                if (refused.isEmpty()) onClosed() else warnings = refused
+            } catch (e: ApiException) {
+                error = e.message
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        title = { Text("Close task?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "“$taskName” closes on your computer: its agents and shells stop, and its worktree, if any, is removed.",
+                    color = AppTheme.extra.textMuted,
+                )
+                warnings.forEach {
+                    Text(
+                        it,
+                        Modifier
+                            .fillMaxWidth()
+                            .background(AppTheme.extra.warningBannerBg)
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        color = AppTheme.extra.warningText,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = ::submit, enabled = !busy) {
+                if (busy) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Text(
+                        if (warnings.isEmpty()) "Close" else "Close anyway",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !busy) { Text("Cancel") }
+        },
+    )
+}
+
+private enum class AgentTab(val label: String) { TERMINAL("Terminal"), CHANGES("Changes"), NOTES("Notes") }
 
 /** Keys agent TUIs ask for that a phone keyboard can't type, as in the phone web UI. */
 private val QUICK_KEYS = listOf(
@@ -934,84 +1132,118 @@ private val QUICK_KEYS = listOf(
 )
 
 @Composable
-private fun TerminalText(lines: List<List<StyledSpan>>, modifier: Modifier) {
-    val palette = if (isSystemInDarkTheme()) TerminalPalette.OBSIDIAN else TerminalPalette.OBSIDIAN_LIGHT
-    val text = remember(lines, palette) { terminalAnnotatedString(lines, palette) }
-    val vertical = rememberScrollState()
+private fun TerminalText(
+    lines: List<List<StyledSpan>>,
+    cols: Int,
+    modifier: Modifier,
+    alwaysFollow: Boolean,
+    onViewSize: (cols: Int, rows: Int) -> Unit,
+) {
+    // The terminal follows the active look, as it does on the desktop: its own ANSI
+    // set over the look's panel background.
+    val look = AppTheme.palette
+    val palette = remember(look) { TerminalPalette.forLook(look) }
+    // A lazy list lays out only the lines on screen; history lines keep their style runs between
+    // frames, so a spinner repainting one row no longer rebuilds thousands of lines.
+    val list = rememberLazyListState()
     val horizontal = rememberScrollState()
     val scope = rememberCoroutineScope()
     var follow by remember { mutableStateOf(true) }
-
-    // Evaluates whether the scroll position is near the bottom (within 48px)
-    val isNearBottom by remember {
-        derivedStateOf {
-            vertical.maxValue == 0 || (vertical.maxValue - vertical.value) <= 48
-        }
-    }
-
+    val isNearBottom by remember { derivedStateOf { !list.canScrollForward } }
     var hasNewOutputWhileScrolled by remember { mutableStateOf(false) }
 
-    // Pause follow immediately when dragging away from the bottom; resume if user flings/scrolls back to bottom
-    LaunchedEffect(vertical.isScrollInProgress) {
-        if (vertical.isScrollInProgress) {
-            if (!isNearBottom) {
-                follow = false
-            }
-        } else {
-            if (isNearBottom) {
-                follow = true
-                hasNewOutputWhileScrolled = false
-            }
+    // Follow output only while parked at the bottom, decided where each scroll ends. Deciding at
+    // the start instead kept follow on for a scroll that began at the bottom (the usual case), so
+    // an agent that redraws constantly (Claude's spinner) snapped the view back on its next frame.
+    // With "Always scroll to latest output" on, a scroll only holds the view while the finger is down.
+    LaunchedEffect(list.isScrollInProgress, alwaysFollow) {
+        if (!list.isScrollInProgress) {
+            follow = alwaysFollow || isNearBottom
+            if (follow) hasNewOutputWhileScrolled = false
         }
     }
 
-    LaunchedEffect(text) {
-        if (follow && !vertical.isScrollInProgress) {
+    LaunchedEffect(lines) {
+        if (follow && !list.isScrollInProgress) {
             withFrameNanos {}
-            vertical.scrollTo(vertical.maxValue)
+            // A scroll may have started or ended during that frame.
+            if (follow && !list.isScrollInProgress && lines.isNotEmpty()) list.scrollToItem(lines.lastIndex)
         } else if (!isNearBottom) {
             hasNewOutputWhileScrolled = true
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(Color(palette.background)),
     ) {
-        // Outer vertical scroll with nested horizontal scroll for wide lines
+        // The PTY keeps the desktop's size, which rarely matches the phone. Size the font so its
+        // columns span the screen width (within readable bounds), and anchor a screen shorter
+        // than the view to the bottom, next to the reply box, as a terminal window would.
+        val density = LocalDensity.current
+        val measurer = rememberTextMeasurer()
+        val paddingPx = with(density) { (TERMINAL_PADDING_H * 2).roundToPx() }
+        val textWidthPx = constraints.maxWidth - paddingPx
+        val charPxAt10 = remember(measurer) {
+            measurer.measure("0".repeat(10), TextStyle(fontFamily = FontFamily.Monospace, fontSize = 10.sp)).size.width / 10f
+        }
+        val fontSize = (10f * textWidthPx / (cols.coerceAtLeast(1) * charPxAt10)).coerceIn(8f, 14f).sp
+        // Wide terminals at the smallest font scroll sideways; the lazy list needs a fixed width.
+        val contentWidth = with(density) {
+            maxOf(constraints.maxWidth, (cols * charPxAt10 * fontSize.value / 10f).toInt() + paddingPx).toDp()
+        }
+
+        // The size this view fits at the default font, offered for the PTY.
+        val viewPaddingPx = with(density) { 16.dp.roundToPx() }
+        val viewHeightPx = constraints.maxHeight
+        LaunchedEffect(textWidthPx, viewHeightPx) {
+            val probe = measurer.measure(
+                "0".repeat(10),
+                TextStyle(fontFamily = FontFamily.Monospace, fontSize = TERMINAL_FONT, lineHeight = TERMINAL_FONT * 1.27f),
+            )
+            val viewCols = (textWidthPx / (probe.size.width / 10f)).toInt()
+            val viewRows = ((viewHeightPx - viewPaddingPx) / probe.size.height.toFloat()).toInt()
+            if (viewCols >= 20 && viewRows >= 5) onViewSize(viewCols, viewRows)
+        }
+
         Box(
-            modifier = Modifier
+            Modifier
                 .fillMaxSize()
-                .verticalScroll(vertical),
+                .horizontalScroll(horizontal),
         ) {
-            Box(
+            LazyColumn(
+                state = list,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(horizontal)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .requiredWidth(contentWidth)
+                    .fillMaxHeight(),
+                contentPadding = PaddingValues(horizontal = TERMINAL_PADDING_H, vertical = 8.dp),
+                verticalArrangement = Arrangement.Bottom,
             ) {
-                Text(
-                    text = text,
-                    color = Color(palette.foreground),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    lineHeight = 14.sp,
-                    softWrap = false,
-                )
+                items(lines.size) { i ->
+                    val line = lines[i]
+                    val text = remember(line, palette) { terminalLine(line, palette) }
+                    Text(
+                        text = text,
+                        color = Color(palette.foreground),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = fontSize,
+                        lineHeight = fontSize * 1.27f,
+                        softWrap = false,
+                        maxLines = 1,
+                    )
+                }
             }
         }
 
         // Vertical scrollbar indicator along the right edge
-        if (vertical.maxValue > 0) {
-            TerminalVerticalScrollbar(
-                scrollState = vertical,
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .padding(end = 2.dp, top = 4.dp, bottom = 4.dp),
-            )
-        }
+        TerminalVerticalScrollbar(
+            list = list,
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxHeight()
+                .padding(end = 2.dp, top = 4.dp, bottom = 4.dp),
+        )
 
         // Floating jump-to-bottom / new-output pill button
         AnimatedVisibility(
@@ -1033,9 +1265,7 @@ private fun TerminalText(lines: List<List<StyledSpan>>, modifier: Modifier) {
                 onClick = {
                     follow = true
                     hasNewOutputWhileScrolled = false
-                    scope.launch {
-                        vertical.animateScrollTo(vertical.maxValue)
-                    }
+                    scope.launch { if (lines.isNotEmpty()) list.animateScrollToItem(lines.lastIndex) }
                 },
                 interactionSource = jumpInteractionSource,
                 shape = RoundedCornerShape(20.dp),
@@ -1064,63 +1294,60 @@ private fun TerminalText(lines: List<List<StyledSpan>>, modifier: Modifier) {
     }
 }
 
+private val TERMINAL_PADDING_H = 12.dp
+private val TERMINAL_FONT = 11.sp
+
 @Composable
 private fun TerminalVerticalScrollbar(
-    scrollState: ScrollState,
+    list: LazyListState,
     modifier: Modifier = Modifier,
 ) {
-    if (scrollState.maxValue <= 0) return
+    val info = list.layoutInfo
+    val total = info.totalItemsCount
+    val visible = info.visibleItemsInfo.size
+    if (total == 0 || visible >= total) return
     BoxWithConstraints(modifier.width(4.dp)) {
         val totalHeight = maxHeight
-        val viewHeightPx = constraints.maxHeight.toFloat()
-        val maxScroll = scrollState.maxValue.toFloat()
-        val totalContentHeight = viewHeightPx + maxScroll
-        val thumbHeightRatio = (viewHeightPx / totalContentHeight).coerceIn(0.08f, 0.9f)
-        val thumbHeightDp = totalHeight * thumbHeightRatio
-        val scrollRatio = (scrollState.value.toFloat() / maxScroll).coerceIn(0f, 1f)
-        val thumbOffsetDp = (totalHeight - thumbHeightDp) * scrollRatio
-
+        val thumbHeightDp = totalHeight * (visible.toFloat() / total).coerceIn(0.08f, 0.9f)
+        val scrollRatio = (list.firstVisibleItemIndex.toFloat() / (total - visible)).coerceIn(0f, 1f)
         Box(
             Modifier
-                .offset(y = thumbOffsetDp)
+                .offset(y = (totalHeight - thumbHeightDp) * scrollRatio)
                 .fillMaxWidth()
                 .height(thumbHeightDp)
                 .clip(RoundedCornerShape(2.dp))
                 .background(
-                    if (scrollState.isScrollInProgress) AppTheme.extra.textPrimary.copy(alpha = 0.55f)
+                    if (list.isScrollInProgress) AppTheme.extra.textPrimary.copy(alpha = 0.55f)
                     else AppTheme.extra.textMuted.copy(alpha = 0.28f)
                 ),
         )
     }
 }
 
-private fun terminalAnnotatedString(lines: List<List<StyledSpan>>, palette: TerminalPalette) =
+private fun terminalLine(line: List<StyledSpan>, palette: TerminalPalette) =
     buildAnnotatedString {
-        lines.forEachIndexed { i, line ->
-            if (i > 0) append('\n')
-            line.forEach { span ->
-                if (span.style == CellStyle.DEFAULT) {
-                    append(span.text)
-                    return@forEach
-                }
-                val s = palette.resolve(span.style)
-                withStyle(
-                    SpanStyle(
-                        color = Color(s.foreground),
-                        background = s.background?.let(::Color) ?: Color.Unspecified,
-                        fontWeight = if (s.bold) FontWeight.Bold else null,
-                        fontStyle = if (s.italic) FontStyle.Italic else null,
-                        textDecoration = when {
-                            s.underline && s.strike -> TextDecoration.combine(
-                                listOf(TextDecoration.Underline, TextDecoration.LineThrough),
-                            )
-                            s.underline -> TextDecoration.Underline
-                            s.strike -> TextDecoration.LineThrough
-                            else -> null
-                        },
-                    ),
-                ) { append(span.text) }
+        line.forEach { span ->
+            if (span.style == CellStyle.DEFAULT) {
+                append(span.text)
+                return@forEach
             }
+            val s = palette.resolve(span.style)
+            withStyle(
+                SpanStyle(
+                    color = Color(s.foreground),
+                    background = s.background?.let(::Color) ?: Color.Unspecified,
+                    fontWeight = if (s.bold) FontWeight.Bold else null,
+                    fontStyle = if (s.italic) FontStyle.Italic else null,
+                    textDecoration = when {
+                        s.underline && s.strike -> TextDecoration.combine(
+                            listOf(TextDecoration.Underline, TextDecoration.LineThrough),
+                        )
+                        s.underline -> TextDecoration.Underline
+                        s.strike -> TextDecoration.LineThrough
+                        else -> null
+                    },
+                ),
+            ) { append(span.text) }
         }
     }
 
@@ -1145,7 +1372,7 @@ private fun QuickKeyButton(
             onSendKey(data)
         },
         enabled = !busy,
-        shape = RoundedCornerShape(8.dp),
+        shape = MaterialTheme.shapes.small,
         border = BorderStroke(1.dp, AppTheme.extra.border),
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -1163,7 +1390,11 @@ private fun QuickKeyButton(
 }
 
 @Composable
-private fun ReplyBox(send: suspend (String) -> Unit, sendKey: suspend (String) -> Unit) {
+private fun ReplyBox(
+    quickReplies: List<String>,
+    send: suspend (String) -> Unit,
+    sendKey: suspend (String) -> Unit,
+) {
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     var draft by rememberSaveable { mutableStateOf("") }
@@ -1195,6 +1426,7 @@ private fun ReplyBox(send: suspend (String) -> Unit, sendKey: suspend (String) -
                     QuickKeyButton(label, data, busy = busy) { run { sendKey(it) } }
                 }
             }
+            QuickReplies(quickReplies, enabled = !busy) { draft = appendToDraft(draft, it) }
             AnimatedVisibility(
                 visible = error != null,
                 enter = expandVertically() + fadeIn(),
@@ -1210,7 +1442,7 @@ private fun ReplyBox(send: suspend (String) -> Unit, sendKey: suspend (String) -
                     placeholder = { Text("Reply to agent", color = AppTheme.extra.textSubtle) },
                     maxLines = 5,
                     enabled = !busy,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = AppTheme.extra.inputBg,
                         unfocusedContainerColor = AppTheme.extra.inputBg,
@@ -1218,7 +1450,7 @@ private fun ReplyBox(send: suspend (String) -> Unit, sendKey: suspend (String) -
                         unfocusedBorderColor = AppTheme.extra.border,
                     ),
                 )
-                Spacer(Modifier.width(8.dp))
+                VoiceInputButton(enabled = !busy) { draft = appendToDraft(draft, it) }
                 val sendInteraction = remember { MutableInteractionSource() }
                 val sendPressed by sendInteraction.collectIsPressedAsState()
                 val sendScale by animateFloatAsState(
@@ -1228,7 +1460,7 @@ private fun ReplyBox(send: suspend (String) -> Unit, sendKey: suspend (String) -
                 )
                 Button(
                     enabled = draft.isNotBlank() && !busy,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.large,
                     interactionSource = sendInteraction,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -1257,7 +1489,7 @@ fun statusLabel(state: ConnectionState) = when (state.status) {
     ConnectionStatus.DISCONNECTED -> "Offline"
 }
 
-private fun agentStatusLabel(agent: RemoteAgent): String {
+internal fun agentStatusLabel(agent: RemoteAgent): String {
     if (agent.collapsed) return "Minimized"
     if (!agent.running) return agent.exitCode?.let { "Exited ($it)" } ?: "Exited"
     return when (agent.attention) {

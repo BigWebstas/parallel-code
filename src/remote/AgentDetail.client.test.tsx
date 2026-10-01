@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'solid-js/web';
 import { AgentDetail } from './AgentDetail';
+import { fetchMergeReadiness, fetchNotes, fetchTaskDiff, mergeTask, closeTask } from './api';
 import { sendInput } from './ws';
 
 const terminalMocks = vi.hoisted(() => ({
@@ -42,6 +43,15 @@ vi.mock('@xterm/xterm', () => ({
     scrollToBottom() {}
   },
 }));
+const wsMocks = vi.hoisted(() => ({ canControl: true }));
+
+const READY_MERGE = {
+  readiness: { overall: 'ready' as const, checks: [] },
+  canMerge: true,
+  baseBranch: 'main',
+  branchName: 'task/thing',
+};
+
 vi.mock('./ws', () => ({
   agents: () => [
     {
@@ -53,7 +63,7 @@ vi.mock('./ws', () => ({
     },
   ],
   status: () => 'connected',
-  canControl: () => true,
+  canControl: () => wsMocks.canControl,
   reconnect: vi.fn(),
   subscribeAgent: vi.fn(),
   unsubscribeAgent: vi.fn(),
@@ -67,6 +77,15 @@ vi.mock('./ws', () => ({
 vi.mock('./api', () => ({
   fetchNotes: vi.fn().mockResolvedValue('Notes from desktop'),
   saveNotes: vi.fn(),
+  fetchTaskDiff: vi.fn().mockResolvedValue({ diff: '', truncated: false }),
+  fetchMergeReadiness: vi.fn().mockResolvedValue({
+    readiness: { overall: 'ready', checks: [] },
+    canMerge: true,
+    baseBranch: 'main',
+    branchName: 'task/thing',
+  }),
+  mergeTask: vi.fn().mockResolvedValue(undefined),
+  closeTask: vi.fn().mockResolvedValue(undefined),
   ApiError: class extends Error {},
 }));
 
@@ -74,6 +93,14 @@ let host: HTMLDivElement;
 let dispose: () => void;
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks drops queued one-shot values too, but re-establish the
+  // defaults so each test starts from a known API state.
+  vi.mocked(fetchNotes).mockResolvedValue('Notes from desktop');
+  vi.mocked(fetchTaskDiff).mockResolvedValue({ diff: '', truncated: false });
+  vi.mocked(fetchMergeReadiness).mockResolvedValue(READY_MERGE);
+  vi.mocked(mergeTask).mockResolvedValue(undefined);
+  vi.mocked(closeTask).mockResolvedValue({ warnings: [] });
+  wsMocks.canControl = true;
   terminalMocks.options.fontSize = 14;
   localStorage.clear();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
@@ -85,13 +112,13 @@ afterEach(() => {
   host.remove();
   vi.restoreAllMocks();
 });
-function mount() {
+function mount(onBack: () => void = () => {}) {
   dispose = render(
     () => (
       <AgentDetail
         agentId="a1"
         taskName="First task"
-        onBack={() => {}}
+        onBack={onBack}
         onNeedsPairing={() => {}}
         onNextTask={() => {}}
       />
@@ -103,6 +130,29 @@ function composer() {
   const field = host.querySelector<HTMLTextAreaElement>('[aria-label="Message agent"]');
   if (!field) throw new Error('Missing composer');
   return field;
+}
+function tab(label: string) {
+  const button = [...host.querySelectorAll<HTMLButtonElement>('nav button')].find(
+    (b) => b.textContent === label,
+  );
+  if (!button) throw new Error(`Missing ${label} tab`);
+  return button;
+}
+async function openTab(label: string) {
+  tab(label).click();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+function dialogButton(label: string) {
+  const button = [
+    ...host.querySelectorAll<HTMLButtonElement>('.mobile-dialog-actions button'),
+  ].find((b) => b.textContent === label);
+  if (!button) throw new Error(`Missing dialog button: ${label}`);
+  return button;
+}
+async function openMergeDialog() {
+  host.querySelector<HTMLButtonElement>('.mobile-diff-actions')?.click();
+  await vi.waitFor(() => expect(host.querySelector('.mobile-dialog')).not.toBeNull());
 }
 function type(text: string) {
   composer().value = text;
@@ -301,6 +351,7 @@ describe('phone terminal viewport', () => {
     expect([...host.querySelectorAll('nav button')].map((button) => button.textContent)).toEqual([
       'Terminal',
       'Notes',
+      'Diff',
     ]);
     expect(host.querySelector('.mobile-tabs [aria-label="Smaller terminal text"]')).not.toBeNull();
     expect(host.querySelector('.mobile-tabs [aria-label="Larger terminal text"]')).not.toBeNull();
@@ -315,6 +366,212 @@ describe('phone terminal viewport', () => {
     await vi.waitFor(() => expect(composer().disabled).toBe(false));
     click('Notes');
     expect(host.querySelector('[aria-label="Smaller terminal text"]')).toBeNull();
+  });
+
+  it('renders the task diff in the Diff tab and hides the terminal composer', async () => {
+    vi.mocked(fetchTaskDiff).mockResolvedValue({
+      diff: 'diff --git a/src/a.ts b/src/a.ts\n@@ -1,2 +1,2 @@\n keep\n-old\n+new\n',
+      truncated: false,
+    });
+    mount();
+    await openTab('Diff');
+    await vi.waitFor(() =>
+      expect(host.querySelector('.mobile-diff-path')?.textContent).toBe('src/a.ts'),
+    );
+    // Files start collapsed so a long change list stays scannable on a phone.
+    expect(host.querySelector('.mobile-diff-line-add')).toBeNull();
+    host.querySelector<HTMLButtonElement>('.mobile-diff-file-head')?.click();
+    await vi.waitFor(() => expect(host.querySelector('.mobile-diff-line-add')).not.toBeNull());
+    expect(host.querySelector('.mobile-diff-line-add')?.textContent).toBe('new');
+    expect(host.querySelector('.mobile-diff-line-remove')?.textContent).toBe('old');
+    // The prompt box types into the terminal, so it must not appear on Diff.
+    expect(host.querySelector('[aria-label="Message agent"]')).toBeNull();
+    // Nor may the Notes save footer leak onto a read-only tab.
+    expect(host.querySelector('.mobile-notes-footer')).toBeNull();
+  });
+
+  it('still offers the notes footer on Notes, so the views stay independent', async () => {
+    mount();
+    await openTab('Notes');
+    expect(host.querySelector('.mobile-notes-footer')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Message agent"]')).toBeNull();
+  });
+
+  it('says so when the desktop truncated a diff too large for the phone', async () => {
+    vi.mocked(fetchTaskDiff).mockResolvedValue({
+      diff: 'diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-a\n+b\n',
+      truncated: true,
+    });
+    mount();
+    await openTab('Diff');
+    await vi.waitFor(() => expect(host.textContent).toContain('too large for the phone'));
+  });
+
+  it('reports no changes when the task has nothing to compare', async () => {
+    vi.mocked(fetchTaskDiff).mockResolvedValue({ diff: '', truncated: false });
+    mount();
+    await openTab('Diff');
+    await vi.waitFor(() => expect(host.textContent).toContain('No changes yet.'));
+  });
+
+  it('explains a task with no branch instead of claiming there are no changes', async () => {
+    // Without the flag an empty diff reads as "nothing to review", which is wrong
+    // for a task that works directly in the project folder.
+    vi.mocked(fetchTaskDiff).mockResolvedValue({ diff: '', truncated: false, unsupported: true });
+    mount();
+    await openTab('Diff');
+    await vi.waitFor(() => expect(host.textContent).toContain('no branch to compare'));
+    expect(host.textContent).not.toContain('No changes yet.');
+  });
+
+  it('surfaces a diff load failure', async () => {
+    vi.mocked(fetchTaskDiff).mockRejectedValue(new Error('git unavailable'));
+    mount();
+    await openTab('Diff');
+    await vi.waitFor(() => expect(host.textContent).toContain('git unavailable'));
+  });
+
+  it('refetches the diff when re-entering the tab so new work shows up', async () => {
+    vi.mocked(fetchTaskDiff).mockResolvedValue({ diff: '', truncated: false });
+    mount();
+    await openTab('Diff');
+    await openTab('Terminal');
+    await openTab('Diff');
+    await vi.waitFor(() => expect(fetchTaskDiff).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows the desktop readiness checks read-only in the merge dialog', async () => {
+    vi.mocked(fetchMergeReadiness).mockResolvedValue({
+      readiness: {
+        overall: 'attention',
+        checks: [
+          { label: 'Merge safety', status: 'warning', detail: 'main is 2 commits ahead.' },
+          { label: 'Verification', status: 'warning', detail: 'No verification was reported.' },
+        ],
+      },
+      canMerge: true,
+      baseBranch: 'main',
+      branchName: 'task/thing',
+    });
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    await vi.waitFor(() => expect(host.textContent).toContain('Needs attention'));
+    expect(host.textContent).toContain('main is 2 commits ahead.');
+    expect(host.textContent).toContain('No verification was reported.');
+    // A warning is advisory: the merge action stays available.
+    expect(dialogButton('Merge').disabled).toBe(false);
+  });
+
+  it('disables merging when readiness reports a blocker', async () => {
+    vi.mocked(fetchMergeReadiness).mockResolvedValue({
+      readiness: {
+        overall: 'blocked',
+        checks: [
+          { label: 'Merge safety', status: 'blocked', detail: 'Worktree has a detached HEAD.' },
+        ],
+      },
+      canMerge: false,
+      baseBranch: 'main',
+      branchName: 'task/thing',
+    });
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    await vi.waitFor(() => expect(host.textContent).toContain('Not ready to merge'));
+    expect(dialogButton('Merge').disabled).toBe(true);
+  });
+
+  it('merges with the chosen options and returns to the list', async () => {
+    const back = vi.fn();
+    mount(back);
+    await openTab('Diff');
+    await openMergeDialog();
+    // First tap opens the confirm step; the option checkboxes live there.
+    dialogButton('Merge').click();
+    await vi.waitFor(() =>
+      expect(host.querySelectorAll('.mobile-dialog-option input').length).toBe(2),
+    );
+    for (const box of host.querySelectorAll<HTMLInputElement>('.mobile-dialog-option input')) {
+      box.checked = true;
+      box.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    dialogButton('Merge').click();
+    await vi.waitFor(() =>
+      expect(mergeTask).toHaveBeenCalledWith('t1', { squash: true, cleanup: true }),
+    );
+    // A merged task may be gone, so the list is where the user should land.
+    await vi.waitFor(() => expect(back).toHaveBeenCalled());
+  });
+
+  it('surfaces a merge failure and stays in the dialog', async () => {
+    vi.mocked(mergeTask).mockRejectedValueOnce(new Error('Only worktree tasks can be merged'));
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    dialogButton('Merge').click();
+    dialogButton('Merge').click();
+    await vi.waitFor(() => expect(host.textContent).toContain('Only worktree tasks can be merged'));
+    expect(host.querySelector('.mobile-dialog')).not.toBeNull();
+  });
+
+  it('closes a task after an explicit confirmation', async () => {
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    dialogButton('Close').click();
+    await vi.waitFor(() => expect(host.textContent).toContain('Close task'));
+    // The first Close only opens the confirmation; nothing is destroyed yet.
+    expect(closeTask).not.toHaveBeenCalled();
+    dialogButton('Close task').click();
+    await vi.waitFor(() => expect(closeTask).toHaveBeenCalledWith('t1', false));
+  });
+
+  it('keeps the dialog open and explains when a close would lose work', async () => {
+    vi.mocked(closeTask).mockResolvedValue({ warnings: ['2 child tasks still running'] });
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    dialogButton('Close').click();
+    await vi.waitFor(() => expect(host.textContent).toContain('Close task'));
+    dialogButton('Close task').click();
+    // The desktop refused; the reason is shown instead of navigating away.
+    await vi.waitFor(() => expect(host.textContent).toContain('2 child tasks still running'));
+    expect(host.querySelector('.mobile-dialog')).not.toBeNull();
+  });
+
+  it('retries a refused close with force only once the user asks', async () => {
+    vi.mocked(closeTask)
+      .mockResolvedValueOnce({ warnings: ['uncommitted changes'] })
+      .mockResolvedValueOnce({ warnings: [] });
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    dialogButton('Close').click();
+    await vi.waitFor(() => expect(host.textContent).toContain('Close task'));
+    dialogButton('Close task').click();
+    await vi.waitFor(() => expect(host.textContent).toContain('uncommitted changes'));
+    // The force checkbox only appears after a refusal, and stays opt-in.
+    const forceBox = host.querySelector<HTMLInputElement>('.mobile-dialog-option input');
+    if (!forceBox) throw new Error('Missing force checkbox');
+    expect(closeTask).toHaveBeenLastCalledWith('t1', false);
+    forceBox.checked = true;
+    forceBox.dispatchEvent(new Event('change', { bubbles: true }));
+    dialogButton('Close task').click();
+    await vi.waitFor(() => expect(closeTask).toHaveBeenLastCalledWith('t1', true));
+  });
+
+  it('hides merge and close for a view-only device', async () => {
+    wsMocks.canControl = false;
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    await vi.waitFor(() => expect(host.textContent).toContain('Pair this phone'));
+    const labels = [...host.querySelectorAll('.mobile-dialog-actions button')].map(
+      (b) => b.textContent,
+    );
+    expect(labels).not.toContain('Merge');
+    expect(labels).not.toContain('Close');
   });
 
   it('pans the desktop grid before scrolling history and shields gestures from xterm', () => {

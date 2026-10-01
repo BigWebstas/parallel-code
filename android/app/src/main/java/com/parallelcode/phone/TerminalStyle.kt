@@ -1,5 +1,7 @@
 package com.parallelcode.phone
 
+import androidx.compose.ui.graphics.Color
+
 /**
  * A cell's SGR state packed into a Long so the screen stores one primitive per cell.
  * Bits 0–25: foreground, 26–51: background, 52+: flags. A color is [DEFAULT_COLOR], a palette
@@ -119,8 +121,16 @@ data class ResolvedStyle(
     val strike: Boolean,
 )
 
-/** The desktop's terminal colors (`src/lib/theme.ts`) for its default Obsidian presets. */
-class TerminalPalette(val foreground: Int, val background: Int, private val ansi: IntArray) {
+/**
+ * A terminal's colors: the default text color, its background, and the 16 ANSI
+ * colors. The background is the look's own panel color, and the ANSI set is the
+ * one the desktop pairs with that look (see the generated [TerminalTheme]s).
+ */
+class TerminalPalette(
+    val foreground: Int,
+    val background: Int,
+    private val ansi: IntArray,
+) {
     fun resolve(style: Long): ResolvedStyle {
         val flags = CellStyle.flags(style)
         val bold = flags and CellStyle.BOLD != 0
@@ -164,19 +174,24 @@ class TerminalPalette(val foreground: Int, val background: Int, private val ansi
         private const val OPAQUE = 0xFF shl 24
         private val CUBE = intArrayOf(0, 95, 135, 175, 215, 255)
 
-        private fun palette(fg: Int, bg: Int, vararg ansi: Int) =
-            TerminalPalette(OPAQUE or fg, OPAQUE or bg, IntArray(16) { OPAQUE or ansi[it] })
+        /**
+         * The terminal palette for [palette], pairing its generated ANSI set with
+         * its own panel background, which is what the desktop does per look.
+         */
+        fun forLook(palette: LookPalette): TerminalPalette {
+            val theme = ALL_TERMINAL_THEMES[palette.terminalThemeId] ?: error("no terminal theme ${palette.terminalThemeId}")
+            return TerminalPalette(
+                foreground = OPAQUE or theme.foreground,
+                background = OPAQUE or palette.panelBg.toArgbInt(),
+                ansi = IntArray(16) { OPAQUE or theme.ansi[it] },
+            )
+        }
 
-        val OBSIDIAN = palette(
-            0xe4e4e4, 0x1e1e1e,
-            0x2e2e2e, 0xe08c96, 0x98c9ae, 0xdfc18e, 0x8fb3dc, 0xc1b0e8, 0x8ec9c9, 0xc9c9c9,
-            0x858585, 0xeaa0aa, 0xaddcc1, 0xead3a8, 0xa8c5e8, 0xd2c4f0, 0xa6dada, 0xededed,
-        )
-
-        val OBSIDIAN_LIGHT = palette(
-            0x1f2329, 0xffffff,
-            0x24292e, 0xcf222e, 0x116329, 0x8a6d00, 0x0550ae, 0x8250df, 0x1b7c83, 0x6e7781,
-            0x57606a, 0xa40e26, 0x1a7f37, 0x633c01, 0x0969da, 0x6639ba, 0x3192aa, 0x1f2329,
-        )
+        /** A [Color]'s 0xAARRGGBB int; the terminal palettes store colors this way. */
+        private fun Color.toArgbInt(): Int =
+            ((alpha * 255).toInt() shl 24) or
+                ((red * 255).toInt() shl 16) or
+                ((green * 255).toInt() shl 8) or
+                (blue * 255).toInt()
     }
 }

@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   antigravityFallbackCachePaths,
   antigravityQuotaCachePath,
+  discoverAllLanguageServerCredentials,
+  discoverLanguageServerCredentials,
   fetchAntigravityUsage,
   parseAntigravityUsageResponse,
   parseQuotaWindow,
@@ -322,6 +324,24 @@ describe('fetchAntigravityUsage', () => {
     });
   });
 
+  it('dates an untimestamped statusline payload by when the file was written', async () => {
+    const cacheFile = path.join(tempDir(), 'quota_cache.json');
+    fs.writeFileSync(
+      cacheFile,
+      JSON.stringify({
+        quota: { 'gemini-weekly': { remaining_fraction: 0.03, reset_in_seconds: 3600 } },
+      }),
+    );
+    const writtenAt = new Date('2026-09-29T23:04:38Z');
+    fs.utimesSync(cacheFile, writtenAt, writtenAt);
+    const result = await fetchAntigravityUsage(cacheFile, {});
+    expect(result).toMatchObject({
+      status: 'ok',
+      sevenDay: { usedPercent: 97, resetsAt: writtenAt.getTime() + 3_600_000 },
+      fetchedAt: writtenAt.getTime(),
+    });
+  });
+
   it('fills the weekly window from the cache when the language server has none', async () => {
     const http = await import('node:http');
     const server = http.createServer((_req, res) => {
@@ -366,11 +386,103 @@ describe('fetchAntigravityUsage', () => {
     }
   });
 
+  it('does not overwrite the five-hour cache window when language server reports weekly quota for Gemini', async () => {
+    const http = await import('node:http');
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          userStatus: {
+            cascadeModelConfigData: {
+              clientModelConfigs: [
+                {
+                  label: 'Gemini 3.8 Flash (High)',
+                  quotaInfo: { remainingFraction: 0.15, resetTime: '2026-10-01T02:57:22Z' },
+                },
+              ],
+            },
+          },
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+
+    try {
+      const cacheFile = path.join(tempDir(), 'quota_cache.json');
+      fs.writeFileSync(cacheFile, JSON.stringify(agyHudCache));
+      const result = await fetchAntigravityUsage(cacheFile, {
+        ANTIGRAVITY_LS_ADDRESS: `127.0.0.1:${port}`,
+        ANTIGRAVITY_CSRF_TOKEN: 'test-csrf-123',
+      });
+
+      expect(result).toMatchObject({
+        status: 'ok',
+        fiveHour: { usedPercent: 100, resetsAt: Date.parse('2026-09-29T03:40:56Z') },
+        sevenDay: { usedPercent: 85, resetsAt: Date.parse('2026-10-01T02:57:22Z') },
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it('uses discoverCredentials when provided', async () => {
     const mockDiscover = vi.fn().mockReturnValue(null);
     const missing = path.join(tempDir(), 'quota_cache.json');
     const result = await fetchAntigravityUsage(missing, {}, mockDiscover);
     expect(mockDiscover).toHaveBeenCalled();
     expect(result.status).toBe('unavailable');
+  });
+
+  it('tries candidate credentials in order until an active language server responds', async () => {
+    const http = await import('node:http');
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          userStatus: {
+            cascadeModelConfigData: {
+              clientModelConfigs: [
+                {
+                  label: 'Gemini 3.8 Flash (High)',
+                  quotaInfo: { remainingFraction: 0.7, resetTime: '2026-09-29T03:00:00Z' },
+                },
+              ],
+            },
+          },
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+
+    try {
+      const mockDiscover = vi.fn().mockReturnValue([
+        { address: '127.0.0.1:1', token: 'dead-token' },
+        { address: `127.0.0.1:${port}`, token: 'live-token' },
+      ]);
+      const missing = path.join(tempDir(), 'quota_cache.json');
+      const result = await fetchAntigravityUsage(missing, {}, mockDiscover);
+
+      expect(result).toMatchObject({
+        status: 'ok',
+        fiveHour: { usedPercent: 30 },
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('discoverAllLanguageServerCredentials returns empty array when /proc does not exist', () => {
+    const origPlatform = process.platform;
+    try {
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      expect(discoverAllLanguageServerCredentials()).toEqual([]);
+      expect(discoverLanguageServerCredentials()).toBeNull();
+    } finally {
+      Object.defineProperty(process, 'platform', { value: origPlatform });
+    }
   });
 });

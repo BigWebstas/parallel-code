@@ -123,4 +123,22 @@ class TerminalScreenTest {
         assertTrue(text.contains("L52"))
         assertEquals(false, text.contains("L40\n"))
     }
+
+    @Test
+    fun resizeKeepsTheCursorLineAndScrollsTheTopIntoHistory() {
+        val s = screen(cols = 5, rows = 3, data = "a\r\nb\r\nc")
+        s.resize(4, 2)
+        assertEquals("a\nb\nc", s.text())
+        s.feed("\u001b[1;1Hx".toByteArray())
+        assertEquals("a\nx\nc", s.text())
+    }
+
+    @Test
+    fun resizeGrowsAndTruncatesColumns() {
+        val s = screen(cols = 5, rows = 2, data = "abcde")
+        s.resize(3, 4)
+        assertEquals("abc", s.text())
+        s.feed("\u001b[4;1Hz".toByteArray())
+        assertEquals("abc\n\n\nz", s.text())
+    }
 }

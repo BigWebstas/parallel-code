@@ -60,9 +60,29 @@ class ProtocolTest {
 
     @Test
     fun ignoresUnknownAndMalformedMessages() {
-        assertNull(parseServerMessage("""{"type":"chat-state","agentId":"a","state":{}}"""))
+        assertNull(parseServerMessage("""{"type":"mystery","agentId":"a"}"""))
+        assertNull(parseServerMessage("""{"type":"chat-state","agentId":"a"}"""))
         assertNull(parseServerMessage("""{"type":"output","agentId":"a"}"""))
         assertNull(parseServerMessage("nope"))
+    }
+
+    @Test
+    fun parsesChatStateWithRequestsKeepingTheirIdType() {
+        val msg = parseServerMessage(
+            """{"type":"chat-state","agentId":"a","state":{"status":"ready","model":"opus",
+            "items":[{"id":"1","kind":"user","text":"hi"},
+              {"id":"2","kind":"tool","text":"out","activity":{"type":"command","label":"Run","status":"failed","command":"ls"}}],
+            "requests":[{"id":7,"since":0,"kind":"question","text":"","questions":[
+              {"id":"q","question":"Which?","isSecret":false,"multiSelect":true,
+               "options":[{"label":"A","description":""}]}]}]}}""",
+        ) as ServerMessage.Chat
+        assertEquals("a", msg.agentId)
+        assertEquals(listOf("user", "tool"), msg.state.items.map { it.kind })
+        assertEquals("ls", msg.state.items[1].activity?.command)
+        val request = msg.state.requests.single()
+        assertEquals(7, request.id)
+        assertEquals(true, request.questions.single().multiSelect)
+        assertEquals("A", request.questions.single().options.single().label)
     }
 
     @Test

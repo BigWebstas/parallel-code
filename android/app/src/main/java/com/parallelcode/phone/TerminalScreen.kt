@@ -34,7 +34,9 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
 
     private var grid = blankGrid()
     private var savedMainGrid: Array<Line>? = null
-    private val history = ArrayDeque<Line>()
+    // Lines that scrolled off never change again, so they are kept already split into style runs:
+    // rendering then only has to split the screen's rows.
+    private val history = ArrayDeque<List<StyledSpan>>()
     private var row = 0
     private var col = 0
     private var wrapPending = false
@@ -78,6 +80,41 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
         feed(data)
     }
 
+    /**
+     * Change the screen size in place, as a terminal window does when the PTY is resized for this
+     * phone. When rows shrink, lines above the cursor scroll into history so the cursor stays put.
+     */
+    fun resize(cols: Int, rows: Int) {
+        val newCols = cols.coerceIn(1, 500)
+        val newRows = rows.coerceIn(1, 300)
+        if (newCols == this.cols && newRows == this.rows) return
+        val shift = (row + 1 - newRows).coerceAtLeast(0)
+        if (savedMainGrid == null) {
+            for (r in 0 until shift) {
+                history.addLast(spans(grid[r]))
+                if (history.size > MAX_HISTORY) history.removeFirst()
+            }
+        }
+        fun refit(old: Array<Line>, from: Int) = Array(newRows) { r ->
+            val line = Line(newCols, CellStyle.DEFAULT)
+            old.getOrNull(from + r)?.let { src ->
+                val n = minOf(newCols, src.chars.size)
+                src.chars.copyInto(line.chars, 0, 0, n)
+                src.styles.copyInto(line.styles, 0, 0, n)
+            }
+            line
+        }
+        grid = refit(grid, shift)
+        savedMainGrid = savedMainGrid?.let { refit(it, 0) }
+        this.cols = newCols
+        this.rows = newRows
+        scrollTop = 0
+        scrollBottom = newRows - 1
+        moveTo(row - shift, col)
+        savedRow = savedRow.coerceIn(0, newRows - 1)
+        savedCol = savedCol.coerceIn(0, newCols - 1)
+    }
+
     fun feed(data: ByteArray) {
         // A multi-byte character can be split across chunks; carry the tail to the next call.
         val input = ByteBuffer.wrap(undecoded + data)
@@ -94,7 +131,7 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     /** History then screen, each line split into style runs, without trailing blank lines. */
     fun styledLines(): List<List<StyledSpan>> {
         val lines = ArrayList<List<StyledSpan>>(history.size + rows)
-        history.mapTo(lines, ::spans)
+        lines.addAll(history)
         grid.mapTo(lines, ::spans)
         while (lines.isNotEmpty() && lines.last().isEmpty()) lines.removeAt(lines.lastIndex)
         return lines
@@ -209,7 +246,7 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
         repeat(n.coerceAtMost(scrollBottom - scrollTop + 1)) {
             // Lines scrolling off the top row move into history so agent TUIs with pinned status bars can be scrolled.
             if (scrollTop == 0 && savedMainGrid == null) {
-                history.addLast(grid[0])
+                history.addLast(spans(grid[0]))
                 if (history.size > MAX_HISTORY) history.removeFirst()
             }
             for (r in scrollTop until scrollBottom) grid[r] = grid[r + 1]

@@ -11,8 +11,10 @@ import { warn } from '../log.js';
 import {
   writeToAgent,
   resizeAgent,
+  setAgentRemoteSize,
   killAgent,
   subscribeToAgent,
+  subscribeToAgentRendered,
   unsubscribeFromAgent,
   getAgentScrollback,
   getActiveAgentIds,
@@ -27,6 +29,9 @@ import {
   type RemoteAgent,
   type RemoteAttentionState,
   type RemoteTaskContext,
+  type RemoteCloseResult,
+  type RemoteMergeReadiness,
+  type RemoteTaskDiff,
 } from './protocol.js';
 import {
   createChatSubscriptions,
@@ -956,10 +961,22 @@ export function startRemoteServer(opts: {
   publishTour?: (taskId: string, payload: AgentTourPayload) => Promise<unknown>;
   /** Read a task's notes (renderer-backed). */
   getTaskNotes?: (taskId: string) => Promise<string>;
+  /** Read merge readiness for the phone's merge dialog (renderer-backed). */
+  getMergeReadiness?: (taskId: string) => Promise<RemoteMergeReadiness>;
+  /** Merge a task on behalf of a paired phone (renderer-backed). */
+  mergeTaskFromMobile?: (req: {
+    taskId: string;
+    squash: boolean;
+    cleanup: boolean;
+  }) => Promise<void>;
   /** Persist a task's notes (renderer-backed). */
   setTaskNotes?: (taskId: string, notes: string) => Promise<void>;
   /** The desktop's last agent-subscription usage snapshot (renderer-backed). */
   getUsage?: () => Promise<Record<UsageProvider, UsageState>>;
+  /** Close a task (renderer-backed); unless `force`, refuses when work would be lost. */
+  closeTaskFromMobile?: (taskId: string, force: boolean) => Promise<RemoteCloseResult>;
+  /** A task's diff against its base branch (renderer-backed). */
+  getTaskDiff?: (taskId: string) => Promise<RemoteTaskDiff>;
   /** Renderer-derived task attention state (needs input, working, ready, …). */
   getTaskAttention?: (taskId: string) => RemoteAttentionState;
   getTaskContext?: (taskId: string) => RemoteTaskContext | undefined;
@@ -1399,6 +1416,66 @@ export function startRemoteServer(opts: {
         return;
       }
 
+      // --- Task diff (read: mobile + paired) ---
+      // The same changes the desktop's diff view shows. Read-only, like notes:
+      // the view-only token already streams the terminals that made them.
+      const diffMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/diff$/);
+      if (diffMatch) {
+        if (tokenClass !== 'mobile' && tokenClass !== 'paired')
+          return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'GET') return jsonEnd(405, { error: 'method not allowed' });
+        const getTaskDiff = opts.getTaskDiff;
+        if (!getTaskDiff) return jsonEnd(503, { error: 'diff unavailable' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(diffMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        getTaskDiff(taskId)
+          .then((diff) => jsonEnd(200, diff))
+          .catch((err) => jsonEnd(500, { error: String(err) }));
+        return;
+      }
+
+      // --- Paired-mobile task close ---
+      // Closing stops the task's agents and removes its worktree, so it needs
+      // the paired token. Without `force` the desktop refuses when work would
+      // be lost and answers 409 with its Close Task dialog's warnings.
+      const closeMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/close$/);
+      if (closeMatch) {
+        if (tokenClass !== 'paired') return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'POST') return jsonEnd(405, { error: 'method not allowed' });
+        const closeTask = opts.closeTaskFromMobile;
+        if (!closeTask) return jsonEnd(503, { error: 'task close unavailable' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(closeMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        readJsonBody(req)
+          .then((body) => {
+            if (body.force !== undefined && typeof body.force !== 'boolean')
+              return jsonEnd(400, { error: 'force must be a boolean' });
+            closeTask(taskId, body.force === true)
+              .then((result) =>
+                result.closed
+                  ? jsonEnd(200, { ok: true })
+                  : jsonEnd(409, { error: 'closing would lose work', warnings: result.warnings }),
+              )
+              .catch((err) => jsonEnd(500, { error: String(err) }));
+          })
+          .catch(() => jsonEnd(400, { error: 'bad request' }));
+        return;
+      }
+
       // --- Task notes (read: mobile + paired; write: paired) ---
       // The notes textarea shown on the desktop task panel. The QR-code mobile
       // token may read notes; writing them (text that lands in the desktop UI
@@ -1457,6 +1534,69 @@ export function startRemoteServer(opts: {
         }
 
         return jsonEnd(405, { error: 'method not allowed' });
+      }
+
+      // --- Merge readiness (read: mobile + paired) ---
+      // Read-only, so it follows diff/notes. Phones render these checks verbatim
+      // before merging; the merge itself is the paired-only write below.
+      const readinessMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/readiness$/);
+      if (readinessMatch) {
+        if (tokenClass !== 'mobile' && tokenClass !== 'paired')
+          return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'GET') return jsonEnd(405, { error: 'method not allowed' });
+        const getMergeReadiness = opts.getMergeReadiness;
+        if (!getMergeReadiness) return jsonEnd(503, { error: 'readiness unavailable' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(readinessMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        getMergeReadiness(taskId)
+          .then((result) => jsonEnd(200, result))
+          .catch((err) => jsonEnd(500, { error: String(err) }));
+        return;
+      }
+
+      // --- Paired-mobile task merge ---
+      // Merging runs real git against the base branch, so it needs the paired
+      // token. `cleanup` is opt-in and defaults off, so a tap never deletes a
+      // worktree or branch the way the desktop checkbox explicitly allows.
+      const mergeMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/merge$/);
+      if (mergeMatch) {
+        if (tokenClass !== 'paired') return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'POST') return jsonEnd(405, { error: 'method not allowed' });
+        const mergeTaskFromMobile = opts.mergeTaskFromMobile;
+        if (!mergeTaskFromMobile) return jsonEnd(503, { error: 'task merge unavailable' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(mergeMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        readJsonBody(req)
+          .then((body) => {
+            if (body.squash !== undefined && typeof body.squash !== 'boolean')
+              return jsonEnd(400, { error: 'squash must be a boolean' });
+            if (body.cleanup !== undefined && typeof body.cleanup !== 'boolean')
+              return jsonEnd(400, { error: 'cleanup must be a boolean' });
+            return mergeTaskFromMobile({
+              taskId,
+              squash: body.squash === true,
+              cleanup: body.cleanup === true,
+            }).then(
+              () => jsonEnd(200, { ok: true }),
+              (err: unknown) => jsonEnd(500, { error: String(err) }),
+            );
+          })
+          .catch(() => jsonEnd(400, { error: 'bad request' }));
+        return;
       }
 
       // Coordinator agents reach their own tasks and canvases, never other agents' terminals.
@@ -1710,6 +1850,8 @@ export function startRemoteServer(opts: {
   });
 
   const clientSubs = new WeakMap<WebSocket, Map<string, (data: string) => void>>();
+  // Which phone currently sizes each agent's PTY (see ViewSizeCommand).
+  const viewSizeOwners = new Map<string, WebSocket>();
   const authenticatedClients = new Set<WebSocket>();
   const clientTokenTypes = new Map<WebSocket, 'coordinator' | 'mobile' | 'paired'>();
   const pendingSubmissions = new Map<string, ReturnType<typeof setTimeout>>();
@@ -1834,6 +1976,12 @@ export function startRemoteServer(opts: {
         ws.close(4003, 'Pairing required');
         return;
       }
+      // A viewing phone may size the terminal once paired: it changes what the
+      // desktop pane shows, and typing already needs the same trust.
+      if (msg.type === 'view-size' && tokenType !== 'coordinator' && tokenType !== 'paired') {
+        ws.close(4003, 'Pairing required');
+        return;
+      }
       if ((msg.type === 'resize' || msg.type === 'kill') && tokenType !== 'coordinator') {
         ws.close(4003, 'Forbidden');
         return;
@@ -1949,6 +2097,23 @@ export function startRemoteServer(opts: {
           }
           break;
 
+        case 'view-size': {
+          const size =
+            msg.cols !== undefined && msg.rows !== undefined
+              ? { cols: msg.cols, rows: msg.rows }
+              : null;
+          // The last phone to size an agent owns it; only the owner hands it back.
+          if (!size && viewSizeOwners.get(msg.agentId) !== ws) break;
+          try {
+            setAgentRemoteSize(msg.agentId, size);
+            if (size) viewSizeOwners.set(msg.agentId, ws);
+            else viewSizeOwners.delete(msg.agentId);
+          } catch {
+            viewSizeOwners.delete(msg.agentId);
+          }
+          break;
+        }
+
         case 'kill':
           try {
             killAgent(msg.agentId);
@@ -1961,19 +2126,23 @@ export function startRemoteServer(opts: {
           const subs = clientSubs.get(ws);
           if (subs?.has(msg.agentId)) break;
 
-          const scrollback = getAgentScrollback(msg.agentId);
-          if (scrollback) {
+          const sendScrollback = (data: string, cols: number, rows: number) => {
+            if (ws.readyState !== WebSocket.OPEN) return;
             ws.send(
               JSON.stringify({
                 type: 'scrollback',
                 agentId: msg.agentId,
-                data: scrollback,
-                cols: getAgentCols(msg.agentId),
-                rows: getAgentRows(msg.agentId),
+                data,
+                cols,
+                rows,
               } satisfies ServerMessage),
             );
-          }
-
+          };
+          const sendRawScrollback = () => {
+            const scrollback = getAgentScrollback(msg.agentId);
+            if (scrollback)
+              sendScrollback(scrollback, getAgentCols(msg.agentId), getAgentRows(msg.agentId));
+          };
           const cb = (encoded: string) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(
@@ -1985,8 +2154,22 @@ export function startRemoteServer(opts: {
               );
             }
           };
-          if (subscribeToAgent(msg.agentId, cb)) {
-            subs?.set(msg.agentId, cb);
+          // Phones get the rendered screen and history; a live agent's raw
+          // replay can be nothing but repaints of its last screen.
+          const subscriber = subscribeToAgentRendered(
+            msg.agentId,
+            (snapshot) => {
+              if (snapshot) sendScrollback(snapshot.data, snapshot.cols, snapshot.rows);
+              else sendRawScrollback();
+            },
+            cb,
+          );
+          if (subscriber) {
+            subs?.set(msg.agentId, subscriber);
+          } else {
+            // Not a live PTY session: replay what is left, as before.
+            sendRawScrollback();
+            if (subscribeToAgent(msg.agentId, cb)) subs?.set(msg.agentId, cb);
           }
           break;
         }
@@ -2004,6 +2187,15 @@ export function startRemoteServer(opts: {
     });
 
     ws.on('close', () => {
+      for (const [agentId, owner] of viewSizeOwners) {
+        if (owner !== ws) continue;
+        viewSizeOwners.delete(agentId);
+        try {
+          setAgentRemoteSize(agentId, null);
+        } catch {
+          /* agent gone */
+        }
+      }
       authenticatedClients.delete(ws);
       clientTokenTypes.delete(ws);
       const timer = authTimers.get(ws);

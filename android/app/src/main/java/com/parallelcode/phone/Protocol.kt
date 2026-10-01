@@ -28,6 +28,7 @@ sealed interface ServerMessage {
     data class Status(val agentId: String, val running: Boolean, val exitCode: Int?) : ServerMessage
     data class InputResult(val requestId: String, val ok: Boolean, val error: String?) :
         ServerMessage
+    data class Chat(val agentId: String, val state: ChatState) : ServerMessage
 }
 
 private fun JSONObject.optStringOrNull(key: String): String? =
@@ -38,7 +39,7 @@ private fun JSONObject.optIntOrNull(key: String): Int? =
 
 private fun decodeBase64(data: String): ByteArray = java.util.Base64.getDecoder().decode(data)
 
-/** Returns null for messages this app ignores (such as chat state) and for malformed ones. */
+/** Returns null for messages this app ignores and for malformed ones. */
 fun parseServerMessage(raw: String): ServerMessage? = try {
     val msg = JSONObject(raw)
     when (msg.getString("type")) {
@@ -58,6 +59,7 @@ fun parseServerMessage(raw: String): ServerMessage? = try {
             msg.getString("status") == "running",
             msg.optIntOrNull("exitCode"),
         )
+        "chat-state" -> ServerMessage.Chat(msg.getString("agentId"), parseChatState(msg.getJSONObject("state")))
         "input-result" -> ServerMessage.InputResult(
             msg.getString("requestId"),
             msg.getBoolean("ok"),

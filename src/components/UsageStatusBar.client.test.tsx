@@ -92,4 +92,19 @@ describe('UsageStatusBar', () => {
     container.querySelector<HTMLElement>('[role="status"]')?.click();
     expect(mockRefreshUsage).toHaveBeenCalledWith('claude', { force: true });
   });
+
+  it('does not display reset due when a window has 100% left', () => {
+    usage.antigravity = {
+      fiveHour: { usedPercent: 0, resetsAt: Date.now() - 60_000 },
+      sevenDay: null,
+      fetchedAt: Date.now(),
+      status: 'ok',
+      error: null,
+    };
+    const container = mount();
+    const entries = container.querySelectorAll('[role="status"]');
+    const agyEntry = Array.from(entries).find((e) => e.textContent?.includes('Antigravity'));
+    expect(agyEntry?.textContent).toContain('100% left');
+    expect(agyEntry?.textContent).not.toContain('reset due');
+  });
 });

@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -165,7 +165,7 @@ fun UsageStrip(client: RemoteClient, connected: Boolean) {
             .padding(horizontal = 16.dp)
             .semantics { contentDescription = "Agent usage, tap to refresh" }
             .clickable { refresh++ },
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, AppTheme.extra.border),
     ) {
@@ -204,11 +204,11 @@ private fun UsageMeter(label: String, window: UsageWindow, stale: Boolean) {
         window.warn -> AppTheme.extra.warningText
         else -> MaterialTheme.colorScheme.primary
     }
-    val animatedProgress by animateFloatAsState(
-        targetValue = (left / 100f).coerceIn(0f, 1f),
-        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
-        label = "usageProgress",
-    )
+    // Fills from empty on first show, then eases between snapshots.
+    val target = (left / 100f).coerceIn(0f, 1f)
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(target) { progress.animateTo(target, tween(durationMillis = 700, easing = FastOutSlowInEasing)) }
+    val animatedProgress = progress.value
     val textColor = when {
         stale -> AppTheme.extra.textSubtle
         isCritical -> MaterialTheme.colorScheme.error
@@ -245,7 +245,7 @@ private fun UsageMeter(label: String, window: UsageWindow, stale: Boolean) {
                 fontWeight = FontWeight.Medium,
                 color = textColor,
             )
-            val reset = formatReset(window.resetsAt)
+            val reset = if (window.remainingPercent == 100) "" else formatReset(window.resetsAt)
             if (reset.isNotEmpty()) {
                 Text(
                     " · $reset",

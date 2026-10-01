@@ -104,6 +104,10 @@ const ALLOWED_CHANNELS = new Set([
   'remote_get_notes_request',
   'remote_set_notes_request',
   'remote_get_usage_request',
+  'remote_close_task_request',
+  'remote_get_diff_request',
+  'remote_get_merge_readiness_request',
+  'remote_merge_task_request',
   'remote_update_task_status',
   'remote_renderer_reply',
   'plan_content',
@@ -213,6 +217,7 @@ const ALLOWED_CHANNELS = new Set([
   'super_productivity_get_tasks',
   'super_productivity_rename_task',
   'super_productivity_complete_task',
+  'super_productivity_update_task_notes',
   'super_productivity_consume_pending_open',
   'super_productivity_open_task_requested',
 ]);
