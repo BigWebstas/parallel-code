@@ -57,7 +57,7 @@ export function createTerminalQueryResponder(opts: {
     scrollback: SCROLLBACK_LINES,
   });
   const serializer = new SerializeAddon();
-  term.loadAddon(serializer);
+  term.loadAddon(serializer as unknown as Parameters<typeof term.loadAddon>[0]);
   let muted = 0;
   let disposed = false;
   let pendingWrites = 0;
