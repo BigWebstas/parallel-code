@@ -5,7 +5,7 @@ import { stopAgentChat, stopAllAgentChats, runningAgentChatIds } from '../chat/s
 import { execFileSync, execFile, spawn as cpSpawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
-import os from 'os';
+import * as os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Notify } from './notify.js';
@@ -30,6 +30,7 @@ import {
 } from '../agent-hooks/observations.js';
 import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
+import { commandExistsOnPath, isExplicitCommandPath } from './command-path.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -391,8 +392,8 @@ export function validateCommand(command: string): void {
   if (!command || !command.trim()) {
     throw new Error('Command must not be empty.');
   }
-  // Absolute paths: check directly via filesystem
-  if (path.isAbsolute(command)) {
+  // Paths (absolute or relative): check directly via filesystem
+  if (isExplicitCommandPath(command)) {
     try {
       fs.accessSync(command, fs.constants.X_OK);
       return;
@@ -402,17 +403,13 @@ export function validateCommand(command: string): void {
       );
     }
   }
-  // Bare names: resolve via `which` on POSIX or `where` on Windows (execFileSync —
-  // no shell interpolation). `where` also matches PATHEXT, so it finds the .cmd
-  // shims npm installs on Windows.
-  const resolver = process.platform === 'win32' ? 'where' : 'which';
-  try {
-    execFileSync(resolver, [command], { encoding: 'utf8', timeout: 3000 });
-  } catch {
-    throw new Error(
-      `Command '${command}' not found in PATH. Make sure it is installed and available in your terminal.`,
-    );
-  }
+  // Bare names: PATH lookup without spawning `which` — a subprocess per agent
+  // launch stalls the main thread, worst on Windows where process creation is
+  // expensive (and `which` may not even exist there).
+  if (commandExistsOnPath(command)) return;
+  throw new Error(
+    `Command '${command}' not found in PATH. Make sure it is installed and available in your terminal.`,
+  );
 }
 
 /** What node-pty should actually launch. `args` is a string only for the cmd.exe shim case. */
@@ -502,6 +499,15 @@ function copyProcessEnv(): Record<string, string> {
   return env;
 }
 
+/** Last-resort spawn cwd when HOME/USERPROFILE are unset. Never throws. */
+function safeHomedir(): string {
+  try {
+    return os.homedir();
+  } catch {
+    return process.platform === 'win32' ? 'C:\\' : '/';
+  }
+}
+
 export function buildPtySpawnEnv(
   rendererEnv: Record<string, string> = {},
   fileEnv: Record<string, string> = {},
@@ -587,6 +593,10 @@ function buildPtySpawnSpec(
 
   const name = containerName as string;
   const image = args.dockerImage || DOCKER_DEFAULT_IMAGE;
+  // Docker Desktop on Windows (and macOS) has no `--network host`, and
+  // `process.getuid` does not exist on Windows — both flags would make every
+  // Docker-mode spawn fail there.
+  const isLinuxHost = process.platform === 'linux';
   return {
     spawnCommand: 'docker',
     spawnArgs: [
@@ -597,14 +607,14 @@ function buildPtySpawnSpec(
       name,
       '--label',
       'parallel-code=true',
-      '--network',
-      'host',
+      ...(isLinuxHost ? ['--network', 'host'] : []),
       '--memory',
       '8g',
       '--pids-limit',
       '512',
-      '--user',
-      `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
+      ...(isLinuxHost
+        ? ['--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`]
+        : []),
       ...(args.dockerMountWorktreeParent
         ? ['-v', `${path.dirname(cwd)}:${path.dirname(cwd)}`, ...resolveWorktreeGitDirMount(cwd)]
         : []),
@@ -833,7 +843,9 @@ export async function spawnAgent(
   if (handingOff.has(args.agentId)) throw new Error('Wait for the view switch to finish.');
   const channelId = args.onOutput.__CHANNEL_ID__;
   const command = args.command || resolveUserShell();
-  const cwd = args.cwd || os.homedir();
+  // HOME is frequently unset on Windows and '/' is drive-relative there;
+  // fall back to USERPROFILE / the OS home directory instead.
+  const cwd = args.cwd || process.env.HOME || process.env.USERPROFILE || safeHomedir();
 
   // Renderer reloads should reattach to still-running PTYs before validating
   // the launch command. The process already exists; a missing binary after

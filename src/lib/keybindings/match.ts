@@ -4,6 +4,8 @@ import type { Modifiers } from './types';
 // Safe platform detection — navigator may not exist in test/SSR environments
 export const isMacPlatform: boolean =
   typeof navigator !== 'undefined' ? navigator.userAgent.includes('Mac') : false;
+export const isWindowsPlatform: boolean =
+  typeof navigator !== 'undefined' ? navigator.userAgent.includes('Win') : false;
 
 export interface NormalizedModifiers {
   ctrl: boolean;
@@ -41,7 +43,7 @@ export function modifiersMatch(
 
 /**
  * Check whether a KeyboardEvent matches a KeyBinding's key + modifiers.
- * Handles cmdOrCtrl → Cmd on macOS / Ctrl on Linux, and raw meta/ctrl.
+ * Handles cmdOrCtrl → Cmd on macOS / Ctrl on Windows and Linux, and raw meta/ctrl.
  * Shared by both app-layer (shortcuts.ts) and terminal-layer (TerminalView).
  */
 export function matchesKeyEvent(e: KeyboardEvent, binding: KeyBinding): boolean {

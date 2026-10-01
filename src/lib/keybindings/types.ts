@@ -1,9 +1,9 @@
 export interface Modifiers {
   ctrl?: boolean;
-  meta?: boolean; // Cmd on macOS, Super on Linux (rarely needed directly)
+  meta?: boolean; // Cmd on macOS, Super/Win elsewhere (rarely needed directly)
   alt?: boolean; // Option on macOS
   shift?: boolean;
-  cmdOrCtrl?: boolean; // Cmd on macOS, Ctrl on Linux — use for cross-platform shortcuts
+  cmdOrCtrl?: boolean; // Cmd on macOS, Ctrl on Windows/Linux — use for cross-platform shortcuts
 }
 
 export interface KeyBinding {
@@ -11,7 +11,9 @@ export interface KeyBinding {
   layer: 'app' | 'terminal';
   category: string;
   description: string;
-  platform: 'mac' | 'linux' | 'both';
+  // 'linux' bindings also apply on Windows (both are Ctrl-based); 'windows'
+  // exists for bindings that only make sense there.
+  platform: 'mac' | 'linux' | 'windows' | 'both';
   key: string;
   modifiers: Modifiers;
   // App layer: action identifier (e.g., "navigateColumn:left")

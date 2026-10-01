@@ -108,17 +108,6 @@ function appendTail(tail: string, chunk: string): string {
   return next.length > VERIFY_OUTPUT_TAIL_CHARS ? next.slice(-VERIFY_OUTPUT_TAIL_CHARS) : next;
 }
 
-function shellCommandArgs(shell: string, command: string): string[] {
-  const base = path.basename(shell).toLowerCase();
-  if (base.startsWith('cmd')) {
-    return ['/d', '/s', '/c', command];
-  }
-  if (base.startsWith('powershell') || base.startsWith('pwsh')) {
-    return ['-NoProfile', '-NonInteractive', '-Command', command];
-  }
-  return ['-c', command];
-}
-
 function killProcessTree(child: Child): void {
   try {
     signalProcessGroup(child, 'SIGTERM');
@@ -145,8 +134,22 @@ function exitOutcome(code: number | null, signal: NodeJS.Signals | null): EndRea
   return { status: 'failed', ...(signal ? { message: `Killed by ${signal}.` } : {}) };
 }
 
+/**
+ * Shell-specific argv for running `command`. POSIX shells take `-c`;
+ * cmd.exe needs `/d /s /c` (`/d` skips AutoRun, `/s` keeps quoting sane) and
+ * PowerShell needs `-Command`. Without this, `cmd.exe -c "..."` treats `-c`
+ * as a file name and the run fails on Windows.
+ */
+export function shellSpawnArgs(shell: string, command: string): string[] {
+  const base = path.basename(shell).toLowerCase();
+  if (base === 'cmd.exe' || base === 'cmd') return ['/d', '/s', '/c', command];
+  if (base === 'powershell.exe' || base === 'powershell' || base === 'pwsh.exe' || base === 'pwsh')
+    return ['-NoLogo', '-NoProfile', '-Command', command];
+  return ['-c', command];
+}
+
 function spawnCommand(request: VerifyRequest, deps: SpawnDeps): Child {
-  return deps.spawnImpl(deps.shell, shellCommandArgs(deps.shell, request.command), {
+  return deps.spawnImpl(deps.shell, shellSpawnArgs(deps.shell, request.command), {
     cwd: request.worktreePath,
     env: { ...process.env, ...request.env, NO_COLOR: '1', FORCE_COLOR: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],

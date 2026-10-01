@@ -20,6 +20,7 @@ import {
   isManagedNodeModules,
   realpathOrNull,
 } from './worktree-node-modules.js';
+import { symlinkCrossPlatform } from './symlink.js';
 import type {
   ChangedFile,
   CommitInfo,
@@ -1006,7 +1007,7 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
 
 /** Where `createWorktree` puts the worktree for a branch. */
 export function worktreePathFor(repoRoot: string, branchName: string): string {
-  return `${repoRoot}/.worktrees/${branchName}`;
+  return path.join(repoRoot, '.worktrees', branchName);
 }
 
 export async function createWorktree(
@@ -1112,7 +1113,8 @@ export async function createWorktree(
           }
         }
       } else {
-        fs.symlinkSync(source, target);
+        // Junction fallback on Windows: plain dir symlinks need elevation.
+        symlinkCrossPlatform(source, target);
       }
       createdSymlinks.push(name);
     } catch (err) {

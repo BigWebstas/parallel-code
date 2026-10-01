@@ -48,7 +48,10 @@ describe('startAgentHookServer', () => {
   it('writes the endpoint file, script, and settings pointing at the script', () => {
     const endpoint = fs.readFileSync(path.join(dir, 'endpoint.env'), 'utf8');
     expect(endpoint).toContain(`PARALLEL_CODE_HOOK_PORT=${server.port}\n`);
-    expect(fs.statSync(server.hookScriptPath).mode & 0o111).not.toBe(0);
+    // Mode bits are emulated on Windows ACLs — the executable bit is meaningless there.
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(server.hookScriptPath).mode & 0o111).not.toBe(0);
+    }
     const settings = JSON.parse(fs.readFileSync(server.claudeSettingsPath, 'utf8'));
     expect(settings.hooks.Stop[0].hooks[0].command).toContain(server.hookScriptPath);
   });
@@ -133,19 +136,22 @@ describe('startAgentHookServer', () => {
     expect(await post('{}', { 'x-parallel-code-hook-token': tokenFrom(dir) }, '/other')).toBe(404);
   });
 
-  it('tightens permissions left loose by a previous launch', async () => {
-    const loose = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-hooks-loose-'));
-    fs.chmodSync(loose, 0o755);
-    fs.writeFileSync(path.join(loose, 'endpoint.env'), 'stale', { mode: 0o644 });
-    const second = await startAgentHookServer({ dir: loose, onEvent: () => undefined });
-    try {
-      expect(fs.statSync(loose).mode & 0o777).toBe(0o700);
-      expect(fs.statSync(path.join(loose, 'endpoint.env')).mode & 0o777).toBe(0o600);
-    } finally {
-      await second.close();
-      fs.rmSync(loose, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(process.platform === 'win32')(
+    'tightens permissions left loose by a previous launch',
+    async () => {
+      const loose = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-hooks-loose-'));
+      fs.chmodSync(loose, 0o755);
+      fs.writeFileSync(path.join(loose, 'endpoint.env'), 'stale', { mode: 0o644 });
+      const second = await startAgentHookServer({ dir: loose, onEvent: () => undefined });
+      try {
+        expect(fs.statSync(loose).mode & 0o777).toBe(0o700);
+        expect(fs.statSync(path.join(loose, 'endpoint.env')).mode & 0o777).toBe(0o600);
+      } finally {
+        await second.close();
+        fs.rmSync(loose, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('rejects instead of crashing when the hook directory cannot be written', async () => {
     const blocked = path.join(dir, 'not-a-dir');
@@ -164,20 +170,23 @@ describe('startAgentHookServer', () => {
     });
   });
 
-  it('round-trips through the generated shell script itself', async () => {
-    const { execFile } = await import('child_process');
-    const env = {
-      ...process.env,
-      ...server.buildPtyEnv('agent-sh', 'task-sh', 'launch-sh'),
-    };
-    const stdout = await new Promise<string>((resolve, reject) => {
-      const child = execFile('/bin/sh', [server.hookScriptPath], { env }, (err, out) =>
-        err ? reject(err) : resolve(out),
-      );
-      child.stdin?.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
-    });
-    expect(stdout).toBe('{}\n');
-    await vi.waitFor(() => expect(events).toHaveLength(1));
-    expect(events[0]).toMatchObject({ state: 'working', agentId: 'agent-sh', taskId: 'task-sh' });
-  });
+  it.skipIf(process.platform === 'win32')(
+    'round-trips through the generated shell script itself',
+    async () => {
+      const { execFile } = await import('child_process');
+      const env = {
+        ...process.env,
+        ...server.buildPtyEnv('agent-sh', 'task-sh', 'launch-sh'),
+      };
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const child = execFile('/bin/sh', [server.hookScriptPath], { env }, (err, out) =>
+          err ? reject(err) : resolve(out),
+        );
+        child.stdin?.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+      });
+      expect(stdout).toBe('{}\n');
+      await vi.waitFor(() => expect(events).toHaveLength(1));
+      expect(events[0]).toMatchObject({ state: 'working', agentId: 'agent-sh', taskId: 'task-sh' });
+    },
+  );
 });

@@ -23,10 +23,28 @@ describe('antigravityQuotaCachePath', () => {
 
   it('honours XDG_CACHE_HOME and falls back to ~/.cache', () => {
     expect(antigravityQuotaCachePath({ XDG_CACHE_HOME: '/custom/cache' })).toBe(
+      // path.join: expectations must be separator-aware to hold on Windows.
       path.join('/custom/cache', 'agy-hud', 'quota_cache.json'),
     );
     expect(antigravityQuotaCachePath({})).toBe(
       path.join(os.homedir(), '.cache', 'agy-hud', 'quota_cache.json'),
+    );
+  });
+
+  it('uses %LOCALAPPDATA% and %USERPROFILE% on Windows', () => {
+    expect(antigravityQuotaCachePath({ LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' })).toBe(
+      path.join('C:\\Users\\me\\AppData\\Local', 'Cache', 'agy-hud', 'quota_cache.json'),
+    );
+    const paths = antigravityFallbackCachePaths({ USERPROFILE: 'C:\\Users\\me' });
+    expect(paths).toContain(
+      path.join(
+        'C:\\Users\\me',
+        '.gemini',
+        'antigravity-cli',
+        'scratch',
+        'agy-hud',
+        'quota_cache.json',
+      ),
     );
   });
 });

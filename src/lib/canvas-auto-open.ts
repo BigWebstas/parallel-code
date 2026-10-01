@@ -6,6 +6,7 @@
  */
 import { isPlanApprovalTool } from '../../electron/agent-hooks/status';
 import { isMarkdownPath } from './canvas-tabs';
+import { isAbsolutePath } from './path';
 
 interface HookEventLike {
   event: string;
@@ -30,9 +31,22 @@ export function worktreeMarkdownPath(reported: string, worktreePath: string): st
   if (!reported || reported.endsWith('…')) return null;
   const root = worktreePath.replace(/\/+$/, '');
   let rel = reported;
-  if (reported.startsWith('/')) {
-    if (!reported.startsWith(`${root}/`)) return null;
-    rel = reported.slice(root.length + 1);
+  if (isAbsolutePath(reported)) {
+    // Agents on Windows report `C:\…` where POSIX reports `/…`; normalize
+    // separators before comparing, and compare case-insensitively for
+    // Windows-style paths (the filesystem is case-insensitive there).
+    const normReported = reported.replace(/\\/g, '/');
+    const normRoot = root.replace(/\\/g, '/');
+    const windowsStyle = /^[A-Za-z]:\//.test(normReported) || normReported.startsWith('//');
+    const prefix =
+      normReported.length > normRoot.length && normReported[normRoot.length] === '/'
+        ? normReported.slice(0, normRoot.length)
+        : null;
+    const sameRoot =
+      prefix !== null &&
+      (prefix === normRoot || (windowsStyle && prefix.toLowerCase() === normRoot.toLowerCase()));
+    if (!sameRoot) return null;
+    rel = normReported.slice(normRoot.length + 1);
   }
   rel = rel.replace(/^\.\//, '');
   const segments = rel.split('/');

@@ -17,4 +17,11 @@ describe('abbreviateHomePath', () => {
   it('leaves non-home paths unchanged', () => {
     expect(abbreviateHomePath('/var/tmp/app')).toBe('/var/tmp/app');
   });
+
+  it('shortens Windows user-profile paths, keeping backslashes', () => {
+    expect(abbreviateHomePath('C:\\Users\\liang\\projects\\app')).toBe('~\\projects\\app');
+    expect(abbreviateHomePath('C:/Users/liang/projects/app')).toBe('~/projects/app');
+    expect(abbreviateHomePath('C:\\Users\\liang')).toBe('~');
+    expect(abbreviateHomePath('D:\\work\\app')).toBe('D:\\work\\app');
+  });
 });

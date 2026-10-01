@@ -9,12 +9,10 @@ const config: KnipConfig = {
   ],
   project: ['electron/**/*.ts', 'src/**/*.{ts,tsx}'],
   ignoreBinaries: [
-    // Optional security tooling invoked from npm scripts; installed on demand.
+    // Optional security tooling invoked from npm scripts (via
+    // scripts/require-tool.mjs); installed on demand.
     'semgrep',
     'gitleaks',
-    // Shell builtin, not a binary: the build script sets `umask 022` so files the
-    // packaging targets generate are world-readable (see scripts/after-pack.cjs).
-    'umask',
   ],
   // Test files are allowed to have unused exports (test helpers, fixtures).
   ignoreExportsUsedInFile: true,

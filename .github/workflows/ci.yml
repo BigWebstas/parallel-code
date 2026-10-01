@@ -54,3 +54,38 @@ jobs:
       # env locally because it takes ~20s and needs a working shell.
       - name: Test (coordinator against a real pty)
         run: npm run test:coordinator-pty
+
+  # Windows never had coverage: POSIX-only suites (git worktrees, pty,
+  # coordinator) need /bin/sh and fail there, so this job runs the static
+  # checks plus the platform-agnostic unit tests that Windows support added
+  # or touched.
+  quality-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Give Git an identity
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check (compile + typecheck + lint + format)
+        run: npm run check
+
+      - name: Check static (typecheck + lint + dead code + architecture)
+        run: npm run check:static
+
+      - name: Test (Windows-compatible unit tests)
+        run: >
+          npx vitest run electron/agent-hooks electron/ipc/verify.test.ts
+          electron/ipc/symlink.test.ts electron/ipc/open-file.test.ts
+          electron/ipc/antigravity-usage.test.ts src/lib/path.test.ts
+          src/lib/terminalLinks.test.ts src/lib/canvas-auto-open.test.ts
+          src/lib/keybindings

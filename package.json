@@ -13,17 +13,17 @@
     "typecheck": "tsc --noEmit",
     "compile": "tsc -p electron/tsconfig.json",
     "build:mcp": "esbuild dist-electron/mcp/server.js --bundle --platform=node --format=cjs --outfile=dist-electron/mcp-server.cjs",
-    "build:frontend": "NODE_OPTIONS='--max-old-space-size=4096' vite build --config electron/vite.config.electron.ts",
+    "build:frontend": "node --max-old-space-size=4096 ./node_modules/vite/bin/vite.js build --config electron/vite.config.electron.ts",
     "build:remote": "vite build --config src/remote/vite.config.ts",
-    "build": "umask 022 && npm run build:frontend && npm run build:remote && npm run compile && npm run build:mcp && electron-builder",
+    "build": "npm run build:frontend && npm run build:remote && npm run compile && npm run build:mcp && electron-builder",
     "serve": "vite preview --config electron/vite.config.electron.ts",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "lint:dead": "knip",
     "lint:arch": "depcruise --config .dependency-cruiser.cjs src electron",
-    "lint:security": "command -v semgrep >/dev/null 2>&1 && semgrep scan --config .semgrep/ --severity WARNING --error || (echo 'semgrep not installed (brew install semgrep or pip install semgrep)' >&2; exit 1)",
+    "lint:security": "node scripts/require-tool.mjs semgrep \"brew install semgrep or pip install semgrep\" semgrep scan --config .semgrep/ --severity WARNING --error",
     "test:security-rules": "node scripts/test-semgrep-filesystem-safety.mjs",
-    "lint:secrets": "command -v gitleaks >/dev/null 2>&1 && gitleaks detect --config .gitleaks.toml || (echo 'gitleaks not installed (brew install gitleaks)' >&2; exit 1)",
+    "lint:secrets": "node scripts/require-tool.mjs gitleaks \"brew install gitleaks\" gitleaks detect --config .gitleaks.toml",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "generate:android-looks": "node scripts/generate-android-looks.mjs",
@@ -183,6 +183,18 @@
           "StartupNotify": "true"
         }
       }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "mac": {
       "target": [

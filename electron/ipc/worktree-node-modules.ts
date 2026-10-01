@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { symlinkCrossPlatform } from './symlink.js';
 
 /**
  * Worktrees share the main checkout's `node_modules` via symlinks. A single
@@ -159,38 +160,11 @@ export function ensureNodeModulesEntryLinks(sourceDir: string, targetDir: string
     if (!isLinkableEntry(name)) continue;
     if (present.has(name)) continue;
     try {
-      const sourceEntry = path.join(sourceDir, name);
-      const targetEntry = path.join(targetDir, name);
-      if (process.platform === 'win32') {
-        const lstat = lstatOrNull(sourceEntry);
-        const isSymlink = lstat?.isSymbolicLink() ?? false;
-        let isDir = false;
-        try {
-          isDir = fs.statSync(sourceEntry).isDirectory();
-        } catch {
-          // If stat fails (e.g. dangling symlink), treat as junction if symlink
-          if (isSymlink) isDir = true;
-        }
-        if (isDir) {
-          const dest = isSymlink
-            ? (readlinkOrNull(sourceEntry) ?? path.resolve(sourceEntry))
-            : path.resolve(sourceEntry);
-          fs.symlinkSync(dest, targetEntry, 'junction');
-        } else {
-          try {
-            fs.symlinkSync(path.relative(targetDir, sourceEntry), targetEntry, 'file');
-          } catch {
-            try {
-              fs.linkSync(sourceEntry, targetEntry);
-            } catch {
-              fs.copyFileSync(sourceEntry, targetEntry);
-            }
-          }
-        }
-      } else {
-        const dest = path.relative(targetDir, sourceEntry);
-        fs.symlinkSync(dest, targetEntry);
-      }
+      // Relative links survive the repo being moved or reached through a
+      // different path alias. On Windows this falls back to a junction
+      // (which needs an absolute target) when dir symlinks lack privilege.
+      const dest = path.relative(targetDir, path.join(sourceDir, name));
+      symlinkCrossPlatform(dest, path.join(targetDir, name));
     } catch (err) {
       console.warn(`Failed to link node_modules entry '${name}':`, err);
     }

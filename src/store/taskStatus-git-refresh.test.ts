@@ -235,3 +235,51 @@ describe('branch auto-adoption', () => {
     expect(store.tasks['t-closing'].branchAdoptedFrom).toBeUndefined();
   });
 });
+
+describe('refresh overlap coalescing', () => {
+  it('shares one backend call between overlapping refreshes', async () => {
+    seedTask('t-coalesce');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    invokeMock.mockImplementationOnce(() => gate.then(() => worktreeStatus('task/t-coalesce')));
+    invokeMock.mockResolvedValue(worktreeStatus('task/t-coalesce'));
+
+    // First refresh starts and blocks inside the backend call.
+    refreshTaskStatus('t-coalesce');
+    await flush();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    // A second request while the first is in flight must not spawn another
+    // backend call (each one fans out to ~6 git processes on slow machines).
+    refreshTaskStatus('t-coalesce');
+    await flush();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    release();
+    await flush();
+    await flush();
+    expect(store.taskGitStatus['t-coalesce'].current_branch).toBe('task/t-coalesce');
+  });
+
+  it('does not stack a second all-tasks sweep on top of a running one', async () => {
+    seedTask('t-sweep');
+    setStore('taskOrder', [...store.taskOrder, 't-sweep']);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    invokeMock.mockImplementationOnce(() => gate.then(() => worktreeStatus('task/t-sweep')));
+    invokeMock.mockResolvedValue(worktreeStatus('task/t-sweep'));
+
+    const first = refreshAllTaskGitStatus();
+    await flush();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    await refreshAllTaskGitStatus();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+
+    release();
+    await first;
+    expect(store.taskGitStatus['t-sweep'].current_branch).toBe('task/t-sweep');
+  });
+});

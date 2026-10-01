@@ -198,6 +198,19 @@ describe('matchTerminalPaths', () => {
     expect(matchTerminalPaths('at (src/a.ts).')).toEqual([{ index: 4, text: 'src/a.ts' }]);
     expect(matchTerminalPaths('cd src/store/ then')).toEqual([]);
   });
+
+  it('matches Windows drive, UNC, and backslash-relative paths', () => {
+    expect(matchTerminalPaths('open C:\\w\\a.ts:12 now')).toEqual([
+      { index: 5, text: 'C:\\w\\a.ts:12' },
+    ]);
+    expect(matchTerminalPaths('open C:/w/a.ts here')).toEqual([{ index: 5, text: 'C:/w/a.ts' }]);
+    expect(matchTerminalPaths('open \\\\srv\\share\\a.ts here')).toEqual([
+      { index: 5, text: '\\\\srv\\share\\a.ts' },
+    ]);
+    expect(matchTerminalPaths('edit src\\store\\tasks.ts')).toEqual([
+      { index: 5, text: 'src\\store\\tasks.ts' },
+    ]);
+  });
 });
 
 describe('computeWrappedPathLinks', () => {

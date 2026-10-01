@@ -102,11 +102,14 @@ let mainWindow: BrowserWindow | null = null;
 let quittingForUpdate = false;
 
 function getIconPath(): string | undefined {
+  // macOS draws the icon from the app bundle; Linux and Windows need an
+  // explicit file. The packaged app ships build/icon.png as an extra
+  // resource on every platform (see package.json extraResources).
   if (process.platform === 'darwin') return undefined;
-  if (process.platform === 'win32') {
-    if (app.isPackaged) {
-      return path.join(process.resourcesPath, 'icon.ico');
-    }
+  // Dev on Windows prefers the .ico (taskbar and title bar render it best);
+  // packaged builds use icon.png, the file actually shipped in resources
+  // (icon.ico is build-time only via the win.icon electron-builder setting).
+  if (process.platform === 'win32' && !app.isPackaged) {
     return path.join(__dirname, '..', 'build', 'icon.ico');
   }
   if (app.isPackaged) {

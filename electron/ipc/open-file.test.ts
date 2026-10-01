@@ -15,6 +15,14 @@ describe('editorGotoArgs', () => {
   it('returns null for editors whose line syntax is unknown', () => {
     expect(editorGotoArgs('vim', '/w/a.ts', 7)).toBeNull();
   });
+
+  it('resolves Windows wrapper paths and Notepad++ line syntax', () => {
+    expect(editorGotoArgs('C:\\Program Files\\VS Code\\bin\\code.cmd', 'C:\\w\\a.ts', 12)).toEqual([
+      '--goto',
+      'C:\\w\\a.ts:12',
+    ]);
+    expect(editorGotoArgs('notepad++', 'C:\\w\\a.ts', 7)).toEqual(['-n7', 'C:\\w\\a.ts']);
+  });
 });
 
 describe('validateEditorCommand', () => {
@@ -26,5 +34,10 @@ describe('validateEditorCommand', () => {
     expect(() => validateEditorCommand('')).toThrow('non-empty');
     expect(() => validateEditorCommand(42)).toThrow('non-empty');
     expect(() => validateEditorCommand('code; rm -rf /')).toThrow('metacharacters');
+  });
+
+  it('accepts Windows paths with backslashes and drive letters', () => {
+    expect(validateEditorCommand('C:\\tools\\code.cmd')).toBe('C:\\tools\\code.cmd');
+    expect(() => validateEditorCommand('C:\\tools\\a & evil')).toThrow('metacharacters');
   });
 });

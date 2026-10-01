@@ -16,6 +16,16 @@ describe('worktreeMarkdownPath', () => {
     expect(worktreeMarkdownPath('.claude/plans/p.md', wt)).toBeNull();
     expect(worktreeMarkdownPath(`${wt}/docs/very-long-name…`, wt)).toBeNull();
   });
+
+  it('accepts Windows drive paths inside the worktree, case-insensitively', () => {
+    const winWt = 'C:\\repo\\.worktrees\\task-a';
+    expect(worktreeMarkdownPath('C:\\repo\\.worktrees\\task-a\\docs\\plan.md', winWt)).toBe(
+      'docs/plan.md',
+    );
+    expect(worktreeMarkdownPath('c:/repo/.worktrees/task-a/NOTES.md', winWt)).toBe('NOTES.md');
+    expect(worktreeMarkdownPath('C:\\other\\plan.md', winWt)).toBeNull();
+    expect(worktreeMarkdownPath('C:\\repo\\.worktrees\\task-a\\src\\a.ts', winWt)).toBeNull();
+  });
 });
 
 describe('nextCanvasOpen', () => {

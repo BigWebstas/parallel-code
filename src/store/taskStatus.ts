@@ -1274,7 +1274,39 @@ function maybeAdoptDivergentBranch(taskId: string): void {
   adoptTaskBranch(taskId, divergence.branch);
 }
 
+/** One in-flight git-status refresh per task. Poll ticks (5s active, 30s+
+ *  all-tasks) and event-driven refreshes overlap whenever git is slower than
+ *  the cadence — on Windows a single refresh fans out to ~6 git processes, so
+ *  overlapping runs pile up faster than they drain. Concurrent callers share
+ *  the running refresh instead of spawning another one. */
+const gitRefreshInFlight = new Map<string, Promise<void>>();
+
 async function refreshTaskGitStatus(
+  taskId: string,
+  options: { invalidateExisting?: boolean } = {},
+): Promise<void> {
+  const running = gitRefreshInFlight.get(taskId);
+  if (running) {
+    await running;
+    const newer = gitRefreshInFlight.get(taskId);
+    // A plain poll is satisfied by the refresh that just finished (or the
+    // fresher one already running). An explicit invalidation still wants a
+    // fresh snapshot, unless an even newer pass started while waiting.
+    if (!options.invalidateExisting || newer) {
+      await newer;
+      return;
+    }
+  }
+  const run = refreshTaskGitStatusInner(taskId, options);
+  gitRefreshInFlight.set(taskId, run);
+  try {
+    await run;
+  } finally {
+    if (gitRefreshInFlight.get(taskId) === run) gitRefreshInFlight.delete(taskId);
+  }
+}
+
+async function refreshTaskGitStatusInner(
   taskId: string,
   options: { invalidateExisting?: boolean } = {},
 ): Promise<void> {
@@ -1362,14 +1394,15 @@ async function refreshTaskGitStatus(
 }
 
 let isRefreshingAll = false;
-let refreshAllStartedAt = 0;
 
 /** Refresh git status for inactive tasks (active task is handled by its own 5s timer).
- *  Limits concurrency to avoid spawning too many parallel git processes. */
+ *  Limits concurrency to avoid spawning too many parallel git processes.
+ *  Strictly one sweep at a time: when git is slow a sweep can outlast its
+ *  interval, and starting another on top is exactly how the process pile-up
+ *  happens. Overdue ticks simply skip — the running sweep covers them. */
 export async function refreshAllTaskGitStatus(): Promise<void> {
-  if (isRefreshingAll && Date.now() - refreshAllStartedAt < 60_000) return;
+  if (isRefreshingAll) return;
   isRefreshingAll = true;
-  refreshAllStartedAt = Date.now();
   try {
     const taskIds = store.taskOrder;
     const active = activeAgents();

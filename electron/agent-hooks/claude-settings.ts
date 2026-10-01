@@ -34,10 +34,28 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-export function buildClaudeHookSettings(hookScriptPath: string): ClaudeHookSettings {
+/**
+ * Hook command that runs the hook script. POSIX uses `/bin/sh`; Windows has
+ * no `/bin/sh`, so hooks there run through PowerShell (present since Windows
+ * 10) with a double-quoted `-File` path — cmd.exe only honors double quotes.
+ */
+export function hookCommand(
+  hookScriptPath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform === 'win32') {
+    return `powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "${hookScriptPath.replace(/"/g, '`"')}"`;
+  }
+  return `/bin/sh ${shellQuote(hookScriptPath)}`;
+}
+
+export function buildClaudeHookSettings(
+  hookScriptPath: string,
+  platform: NodeJS.Platform = process.platform,
+): ClaudeHookSettings {
   const hook: CommandHook = {
     type: 'command',
-    command: `/bin/sh ${shellQuote(hookScriptPath)}`,
+    command: hookCommand(hookScriptPath, platform),
     timeout: HOOK_TIMEOUT_SECONDS,
   };
   const hooks: Record<string, HookGroup[]> = {};

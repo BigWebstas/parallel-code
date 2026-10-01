@@ -345,7 +345,9 @@ function fireNotification(entry: TaskEntry): void {
       }
     });
     notification.show();
-    if (process.platform === 'linux') {
+    // macOS notifications dismiss themselves; Linux and Windows keep them
+    // (Windows parks them in Action Center), so dismiss explicitly there.
+    if (process.platform === 'linux' || process.platform === 'win32') {
       setTimeout(() => notification.close(), 30_000);
     }
   } catch (err) {

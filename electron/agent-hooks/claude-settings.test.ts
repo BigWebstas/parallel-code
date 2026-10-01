@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { buildClaudeHookSettings } from './claude-settings.js';
 
 describe('buildClaudeHookSettings', () => {
-  const settings = buildClaudeHookSettings('/Users/me/Library/App Support/hook.sh');
+  // Explicit platform so this POSIX expectation holds on Windows dev machines too.
+  const settings = buildClaudeHookSettings('/Users/me/Library/App Support/hook.sh', 'darwin');
 
   it('registers turn, tool, and notification events', () => {
     expect(Object.keys(settings.hooks).sort()).toEqual(
@@ -34,6 +35,16 @@ describe('buildClaudeHookSettings', () => {
     expect(hook).toEqual({
       type: 'command',
       command: "/bin/sh '/Users/me/Library/App Support/hook.sh'",
+      timeout: 10,
+    });
+  });
+
+  it('runs the script through PowerShell on Windows, where /bin/sh does not exist', () => {
+    const win = buildClaudeHookSettings('C:\\Users\\me\\AppData\\hook.ps1', 'win32');
+    expect(win.hooks.Stop[0].hooks[0]).toEqual({
+      type: 'command',
+      command:
+        'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "C:\\Users\\me\\AppData\\hook.ps1"',
       timeout: 10,
     });
   });

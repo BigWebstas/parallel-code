@@ -10,10 +10,11 @@ import {
   HOOK_ENV_TASK_ID,
   HOOK_ENV_LAUNCH_ID,
   HOOK_LAUNCH_ID_HEADER,
-  HOOK_TASK_ID_HEADER,
   HOOK_TOKEN_HEADER,
+  HOOK_TASK_ID_HEADER,
   buildEndpointFile,
   buildHookScript,
+  buildHookScriptPs1,
 } from './hook-script.js';
 import { isCurrentAgentLaunch } from './observations.js';
 import { mapClaudeHookPayload, type AgentHookEventPayload } from './status.js';
@@ -84,18 +85,29 @@ function writeFiles(
 ): Pick<AgentHookServer, 'hookScriptPath' | 'claudeSettingsPath'> {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const endpointPath = path.join(dir, 'endpoint.env');
-  const hookScriptPath = path.join(dir, 'hook.sh');
+  // Windows has no /bin/sh, so hooks there run a PowerShell script instead.
+  const hookScriptPath =
+    process.platform === 'win32' ? path.join(dir, 'hook.ps1') : path.join(dir, 'hook.sh');
   const claudeSettingsPath = path.join(dir, 'claude-settings.json');
   fs.writeFileSync(endpointPath, buildEndpointFile(port, token), { mode: 0o600 });
-  fs.writeFileSync(hookScriptPath, buildHookScript(), { mode: 0o755 });
+  fs.writeFileSync(
+    hookScriptPath,
+    process.platform === 'win32' ? buildHookScriptPs1() : buildHookScript(),
+    { mode: 0o755 },
+  );
   fs.writeFileSync(
     claudeSettingsPath,
     JSON.stringify(buildClaudeHookSettings(hookScriptPath), null, 2) + '\n',
   );
   // `mode` only applies on creation; a directory or token file left over from
   // an older build (or loosened by hand) must be tightened again every launch.
-  fs.chmodSync(dir, 0o700);
-  fs.chmodSync(endpointPath, 0o600);
+  // Mode bits are meaningless on Windows ACLs — never let that fail startup.
+  try {
+    fs.chmodSync(dir, 0o700);
+    fs.chmodSync(endpointPath, 0o600);
+  } catch {
+    if (process.platform !== 'win32') throw new Error('Failed to tighten hook file permissions');
+  }
   return { hookScriptPath, claudeSettingsPath };
 }
 

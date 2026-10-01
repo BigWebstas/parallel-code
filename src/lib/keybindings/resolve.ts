@@ -1,11 +1,13 @@
 import type { KeyBinding, KeybindingConfig, Modifiers } from './types';
 import { getPreset } from './presets';
-import { isMacPlatform, modifiersMatch } from './match';
+import { isMacPlatform, isWindowsPlatform, modifiersMatch } from './match';
 
 function platformMatches(binding: KeyBinding): boolean {
   if (binding.platform === 'both') return true;
   if (binding.platform === 'mac') return isMacPlatform;
+  // 'linux' bindings are Ctrl-based, so they apply on Windows too.
   if (binding.platform === 'linux') return !isMacPlatform;
+  if (binding.platform === 'windows') return isWindowsPlatform;
   return true;
 }
 

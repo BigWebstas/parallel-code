@@ -72,10 +72,12 @@ export interface TerminalPathLink {
   range: { start: { x: number; y: number }; end: { x: number; y: number } };
 }
 
-// Match file paths: absolute, ./ or ../ relative, and bare relative with a slash.
+// Match file paths: absolute, ./ or ../ relative, and bare relative with a
+// slash — plus Windows drive (`C:\a\b.ts`, `C:/a/b.ts`), UNC
+// (`\\server\share\b.ts`), and backslash-relative (`src\b.ts`) forms.
 // Supports @scoped packages and line:col suffixes like foo.ts:42:10.
 const PATH_REGEX =
-  /(?:\/[\w@./-]+|\.{1,2}\/[\w@./-]+|[\w@.][\w@./-]*\/[\w@./-]+)(?::\d+(?::\d+)?)?/g;
+  /(?:[A-Za-z]:[\\/][\w@./\\-]+|\\\\[\w@./\\-]+|\/[\w@./\\-]+|\.{1,2}\/[\w@./\\-]+|[\w@.][\w@./\\-]*[\\/][\w@./\\-]+)(?::\d+(?::\d+)?)?/g;
 
 /** Find file-path matches within a single (already-joined) line of text. */
 export function matchTerminalPaths(line: string): PathMatch[] {

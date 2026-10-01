@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/SolidJS-2C4F7C?logo=solid&logoColor=white" alt="SolidJS">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey" alt="macOS | Linux">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="macOS | Linux | Windows">
   <img src="https://img.shields.io/github/license/johannesjo/parallel-code" alt="License">
 </p>
 
@@ -90,7 +90,7 @@ When you're happy with the result, merge the branch back to main from the sideba
 - **Canvas per task** — a Markdown file from the worktree rendered live as the agent writes it; edit it in place, or select a passage and send it to the agent with your question
 - **Browser preview in the canvas** — run a local app in the task shell, open **+ → Browser**, and pick elements to reference in your prompt ([usage and limits](docs/browser-preview.md))
 - **PR CI status watcher** — desktop notification when GitHub checks settle
-- **Super Productivity integration** — the task you focus is tracked in Super Productivity (a matching task is created there on first focus, in the Super Productivity project you link in project settings), titles stay in sync, and merging or closing a task marks it done there. A task Super Productivity is already tracking that isn't a Parallel Code task is never replaced — a banner offers to switch instead. Connect in Settings with the token from Super Productivity's Local REST API (Settings → Misc; the API must stay turned on). With Super Productivity's bundled **Parallel Code** plugin enabled, **Start in Parallel Code** on a task opens a pre-filled New Task form here; that link needs the macOS app or the `.deb` (an AppImage only handles it if it was integrated into your desktop).
+- **Super Productivity integration** — the task you focus is tracked in Super Productivity (a matching task is created there on first focus, in the Super Productivity project you link in project settings), titles stay in sync, and merging or closing a task marks it done there. A task Super Productivity is already tracking that isn't a Parallel Code task is never replaced — a banner offers to switch instead. Connect in Settings with the token from Super Productivity's Local REST API (Settings → Misc; the API must stay turned on). With Super Productivity's bundled **Parallel Code** plugin enabled, **Start in Parallel Code** on a task opens a pre-filled New Task form here; that link needs the macOS app, the Windows installer, or the `.deb` (an AppImage only handles it if it was integrated into your desktop).
 - Shell terminals per task, scoped to the worktree
 - **Direct mode** for working on the main branch without isolation, plus support for **folders without a git repo**
 - **Existing worktree import** — bring already-created worktrees into Parallel Code
@@ -99,7 +99,7 @@ When you're happy with the result, merge the branch back to main from the sideba
 - **Configurable keyboard shortcuts** with per-agent presets
 - 10 themes — Islands Dark, Minimal, Graphite, Midnight, Classic, Indigo, Ember, Glacier, Zenburnesque, Workbench
 - State persists across restarts
-- macOS and Linux
+- macOS, Linux, and Windows
 
 </details>
 
@@ -120,6 +120,8 @@ When you're happy with the result, merge the branch back to main from the sideba
 1. **Download** the latest release for your platform from the [releases page](https://github.com/johannesjo/parallel-code/releases/latest):
    - **macOS** — `.dmg` (universal)
    - **Linux** — `.AppImage` or `.deb`
+   - **Windows** — `-setup-*.exe` (nsis installer), or install from PowerShell: `powershell -ExecutionPolicy Bypass -File install.ps1`
+   - Or run `./install.sh` (macOS/Linux) from a checkout
 
 2. **Install at least one AI coding CLI:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Antigravity CLI](https://antigravity.google/), or [Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)
 

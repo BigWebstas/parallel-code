@@ -6,67 +6,88 @@ import { PassThrough } from 'node:stream';
 import type { Notify } from './notify.js';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-const { mockExecFileSync, mockExecFile, mockChildProcessSpawn, mockPtySpawn, mockLogDebug } =
-  vi.hoisted(() => {
-    const mockExecFileSync = vi.fn((command: string, args?: string[]) => {
-      if ((command === 'which' || command === 'where') && args?.[0] === 'nonexistent-binary-xyz') {
-        throw new Error('not found');
-      }
-      return '';
-    });
-
-    const mockExecFile = vi.fn();
-    const mockChildProcessSpawn = vi.fn(() => ({
-      stdout: { on: vi.fn() },
-      stderr: { on: vi.fn() },
-      on: vi.fn(),
-    }));
-
-    const mockPtySpawn = vi.fn(
-      (_command: string, _args: string[], options: { cols: number; rows: number }) => {
-        let onDataHandler: ((data: string) => void) | undefined;
-        const exitHandlers = new Set<
-          (event: { exitCode: number; signal: number | undefined }) => void
-        >();
-
-        const proc = {
-          cols: options.cols,
-          rows: options.rows,
-          write: vi.fn(),
-          resize: vi.fn((cols: number, rows: number) => {
-            proc.cols = cols;
-            proc.rows = rows;
-          }),
-          pause: vi.fn(),
-          resume: vi.fn(),
-          kill: vi.fn(() => {
-            for (const handler of exitHandlers) handler({ exitCode: 0, signal: 15 });
-          }),
-          onData: vi.fn((handler: (data: string) => void) => {
-            onDataHandler = handler;
-          }),
-          onExit: vi.fn(
-            (handler: (event: { exitCode: number; signal: number | undefined }) => void) => {
-              exitHandlers.add(handler);
-              return { dispose: () => exitHandlers.delete(handler) };
-            },
-          ),
-          emitData(data: string) {
-            onDataHandler?.(data);
-          },
-          emitExit(event: { exitCode: number; signal: number | undefined }) {
-            for (const handler of exitHandlers) handler(event);
-          },
-        };
-
-        return proc;
-      },
-    );
-
-    const mockLogDebug = vi.fn();
-
-    return { mockExecFileSync, mockExecFile, mockChildProcessSpawn, mockPtySpawn, mockLogDebug };
+const {
+  mockExecFileSync,
+  mockExecFile,
+  mockChildProcessSpawn,
+  mockPtySpawn,
+  mockLogDebug,
+  mockCommandExists,
+  mockIsExplicitCommandPath,
+} = vi.hoisted(() => {
+  const mockExecFileSync = vi.fn((command: string, args?: string[]) => {
+    if (command === 'which' && args?.[0] === 'nonexistent-binary-xyz') {
+      throw new Error('not found');
+    }
+    return '';
   });
+
+  const mockExecFile = vi.fn();
+  const mockChildProcessSpawn = vi.fn(() => ({
+    stdout: { on: vi.fn() },
+    stderr: { on: vi.fn() },
+    on: vi.fn(),
+  }));
+
+  const mockPtySpawn = vi.fn(
+    (_command: string, _args: string[], options: { cols: number; rows: number }) => {
+      let onDataHandler: ((data: string) => void) | undefined;
+      const exitHandlers = new Set<
+        (event: { exitCode: number; signal: number | undefined }) => void
+      >();
+
+      const proc = {
+        cols: options.cols,
+        rows: options.rows,
+        write: vi.fn(),
+        resize: vi.fn((cols: number, rows: number) => {
+          proc.cols = cols;
+          proc.rows = rows;
+        }),
+        pause: vi.fn(),
+        resume: vi.fn(),
+        kill: vi.fn(() => {
+          for (const handler of exitHandlers) handler({ exitCode: 0, signal: 15 });
+        }),
+        onData: vi.fn((handler: (data: string) => void) => {
+          onDataHandler = handler;
+        }),
+        onExit: vi.fn(
+          (handler: (event: { exitCode: number; signal: number | undefined }) => void) => {
+            exitHandlers.add(handler);
+            return { dispose: () => exitHandlers.delete(handler) };
+          },
+        ),
+        emitData(data: string) {
+          onDataHandler?.(data);
+        },
+        emitExit(event: { exitCode: number; signal: number | undefined }) {
+          for (const handler of exitHandlers) handler(event);
+        },
+      };
+
+      return proc;
+    },
+  );
+
+  const mockLogDebug = vi.fn();
+
+  // Command resolution is hermetic: everything resolves unless a test says
+  // otherwise, mirroring the old mocked-`which` behavior. Real PATH/filesystem
+  // behavior lives in command-path.test.ts.
+  const mockCommandExists = vi.fn((_command: string) => true);
+  const mockIsExplicitCommandPath = vi.fn((_command: string) => false);
+
+  return {
+    mockExecFileSync,
+    mockExecFile,
+    mockChildProcessSpawn,
+    mockPtySpawn,
+    mockLogDebug,
+    mockCommandExists,
+    mockIsExplicitCommandPath,
+  };
+});
 
 vi.mock('child_process', async () => {
   const actual = await vi.importActual<typeof import('child_process')>('child_process');
@@ -80,6 +101,11 @@ vi.mock('child_process', async () => {
 
 vi.mock('node-pty', () => ({
   spawn: mockPtySpawn,
+}));
+
+vi.mock('./command-path.js', () => ({
+  commandExistsOnPath: mockCommandExists,
+  isExplicitCommandPath: mockIsExplicitCommandPath,
 }));
 
 vi.mock('../log.js', () => ({
@@ -304,6 +330,16 @@ describe('buildPtySpawnEnv', () => {
 });
 
 describe('spawnAgent docker mode', () => {
+  // Docker flags depend on the host platform (Windows has no --network host
+  // or --user); pin Linux so these assertions hold on every host.
+  const dockerDescribePlatform = process.platform;
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+  });
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: dockerDescribePlatform });
+  });
+
   it('uses --network host (not --add-host, which is incompatible with host networking on Linux)', async () => {
     await spawnAgent(createMockNotify(), buildSpawnArgs({ cwd: '/workspace/project' }));
     const { args } = getLastSpawnCall();
@@ -312,6 +348,18 @@ describe('spawnAgent docker mode', () => {
     expect(args[netIdx + 1]).toBe('host');
     // --add-host=host.docker.internal:host-gateway is invalid with --network host on Linux
     expect(args.join(' ')).not.toContain('--add-host');
+  });
+
+  it('omits --network host and --user on Windows, where Docker Desktop has neither', async () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await spawnAgent(createMockNotify(), buildSpawnArgs({ cwd: 'C:\\work\\project' }));
+    } finally {
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+    }
+    const { args } = getLastSpawnCall();
+    expect(args).not.toContain('--network');
+    expect(args).not.toContain('--user');
   });
 
   it('sets -w to the worktree cwd so the container starts in the right directory', async () => {
@@ -449,6 +497,8 @@ describe('spawnAgent docker mode', () => {
 
     const containerHome = `${DOCKER_CONTAINER_HOME}/agent-${agentId}`;
     const volumeFlags = getFlagValues(getLastSpawnCall().args, '-v');
+    // The implementation joins these with `/` (valid for Docker on every
+    // host), so the expectations use the same form.
     expect(volumeFlags).toContain(`${home}/.ssh:${containerHome}/.ssh:ro`);
     expect(volumeFlags).toContain(`${home}/.gitconfig:${containerHome}/.gitconfig:ro`);
     expect(volumeFlags).toContain(`${home}/.config/gh:${containerHome}/.config/gh:ro`);
@@ -476,7 +526,13 @@ describe('spawnAgent docker mode', () => {
 
         const containerHome = `${DOCKER_CONTAINER_HOME}/agent-${agentId}`;
         const volumeFlags = getFlagValues(getLastSpawnCall().args, '-v');
-        const expectedHostDir = `${home}/.parallel-code/agent-auth/${command}/${relDir}`;
+        const expectedHostDir = path.join(
+          home,
+          '.parallel-code',
+          'agent-auth',
+          command,
+          ...relDir.split('/'),
+        );
         expect(volumeFlags).toContain(`${expectedHostDir}:${containerHome}/${relDir}`);
       },
     );
@@ -506,7 +562,13 @@ describe('spawnAgent docker mode', () => {
 
       const containerHome = `${DOCKER_CONTAINER_HOME}/agent-${agentId}`;
       const volumeFlags = getFlagValues(getLastSpawnCall().args, '-v');
-      const expectedHostFile = `${home}/.parallel-code/agent-auth/claude/.claude.json`;
+      const expectedHostFile = path.join(
+        home,
+        '.parallel-code',
+        'agent-auth',
+        'claude',
+        '.claude.json',
+      );
       expect(volumeFlags).toContain(`${expectedHostFile}:${containerHome}/.claude.json`);
       expect(JSON.parse(fs.readFileSync(expectedHostFile, 'utf8'))).toMatchObject({
         projects: {
@@ -1464,14 +1526,17 @@ describe('validateCommand', () => {
   });
 
   it('throws a descriptive error for a missing command', () => {
+    mockCommandExists.mockReturnValueOnce(false);
     expect(() => validateCommand('nonexistent-binary-xyz')).toThrow(/not found in PATH/);
   });
 
   it('throws a descriptive error naming the command', () => {
+    mockCommandExists.mockReturnValueOnce(false);
     expect(() => validateCommand('nonexistent-binary-xyz')).toThrow(/nonexistent-binary-xyz/);
   });
 
   it('throws for a nonexistent absolute path', () => {
+    mockIsExplicitCommandPath.mockReturnValueOnce(true);
     expect(() => validateCommand('/nonexistent/path/binary')).toThrow(
       /not found or not executable/,
     );
@@ -1990,25 +2055,29 @@ describe('spawnAgent docker mode — path edge cases', () => {
 // ─── Auth file permission mode ────────────────────────────────────────────────
 
 describe('seedClaudeProjectTrust — file permissions', () => {
-  it('.claude.json is written with mode 0o600 (owner r/w only)', async () => {
-    const home = makeTempHome([]);
-    vi.stubEnv('HOME', home);
+  // Mode bits are emulated on Windows ACLs — the 0o600 check is meaningless there.
+  it.skipIf(process.platform === 'win32')(
+    '.claude.json is written with mode 0o600 (owner r/w only)',
+    async () => {
+      const home = makeTempHome([]);
+      vi.stubEnv('HOME', home);
 
-    await spawnAgent(
-      createMockNotify(),
-      buildSpawnArgs({
-        command: 'claude',
-        cwd: '/workspace/project',
-        shareDockerAgentAuth: true,
-      }),
-    );
+      await spawnAgent(
+        createMockNotify(),
+        buildSpawnArgs({
+          command: 'claude',
+          cwd: '/workspace/project',
+          shareDockerAgentAuth: true,
+        }),
+      );
 
-    const hostFile = `${home}/.parallel-code/agent-auth/claude/.claude.json`;
-    expect(fs.existsSync(hostFile)).toBe(true);
-    const stat = fs.statSync(hostFile);
-    // mode & 0o777 strips file-type bits; 0o600 = owner r/w, no group/other access
-    expect(stat.mode & 0o777).toBe(0o600);
-  });
+      const hostFile = `${home}/.parallel-code/agent-auth/claude/.claude.json`;
+      expect(fs.existsSync(hostFile)).toBe(true);
+      const stat = fs.statSync(hostFile);
+      // mode & 0o777 strips file-type bits; 0o600 = owner r/w, no group/other access
+      expect(stat.mode & 0o777).toBe(0o600);
+    },
+  );
 });
 
 // ─── Read-only auth dir warning ───────────────────────────────────────────────

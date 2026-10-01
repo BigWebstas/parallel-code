@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEndpointFile, buildHookScript } from './hook-script.js';
+import { buildEndpointFile, buildHookScript, buildHookScriptPs1 } from './hook-script.js';
 
 describe('buildHookScript', () => {
   const script = buildHookScript();
@@ -32,6 +32,27 @@ describe('buildHookScript', () => {
   it('never fails the hook, even when curl does', () => {
     expect(script).toContain('|| :');
     expect(script.trimEnd().endsWith('exit 0')).toBe(true);
+  });
+});
+
+describe('buildHookScriptPs1', () => {
+  const script = buildHookScriptPs1();
+
+  it('answers Claude first and never fails the hook', () => {
+    expect(script).toContain("Write-Output '{}'");
+    expect(script.trimEnd().endsWith('exit 0')).toBe(true);
+  });
+
+  it('reads the endpoint file on every run and posts with the token headers', () => {
+    expect(script).toContain('Get-Content -LiteralPath $endpoint');
+    expect(script).toContain('http://127.0.0.1:$port/hook/claude');
+    expect(script).toContain('x-parallel-code-hook-token');
+    expect(script).toContain('x-parallel-code-agent-id');
+    expect(script).toContain('x-parallel-code-launch-id');
+  });
+
+  it('stays quiet for background job workers that inherited the env', () => {
+    expect(script).toContain('CLAUDE_JOB_DIR');
   });
 });
 

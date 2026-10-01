@@ -15,21 +15,41 @@ import { clampPercent, finite, parseResetsAt } from './usage-shared.js';
  * and reading local cache/statusline files (e.g. `quota_cache.json` or `statusline_payload.json`).
  */
 
+/**
+ * Cache root on Windows: `%LOCALAPPDATA%` is where Windows apps keep caches;
+ * `~/.cache` usually does not exist there, so without this the lookup always
+ * misses on Windows.
+ */
+function windowsCacheDir(env: NodeJS.ProcessEnv): string {
+  const localAppData = env.LOCALAPPDATA || env.APPDATA;
+  return localAppData ? path.join(localAppData, 'Cache') : '';
+}
+
+function homeDir(env: NodeJS.ProcessEnv): string {
+  if (env.HOME || env.USERPROFILE) return (env.HOME ?? env.USERPROFILE) as string;
+  try {
+    return os.homedir();
+  } catch {
+    return '';
+  }
+}
+
 export function antigravityQuotaCachePath(env: NodeJS.ProcessEnv = process.env): string {
   if (env.ANTIGRAVITY_QUOTA_CACHE) return env.ANTIGRAVITY_QUOTA_CACHE;
-  const cacheHome = env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
+  const cacheHome = env.XDG_CACHE_HOME || windowsCacheDir(env) || path.join(homeDir(env), '.cache');
   return path.join(cacheHome, 'agy-hud', 'quota_cache.json');
 }
 
 export function antigravityFallbackCachePaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const envCacheHome = env.XDG_CACHE_HOME || windowsCacheDir(env);
   const cacheHome =
-    env.XDG_CACHE_HOME ||
-    (env.HOME
-      ? path.join(env.HOME, '.cache')
+    envCacheHome ||
+    (env.HOME || env.USERPROFILE
+      ? path.join(homeDir(env), '.cache')
       : env === process.env
         ? path.join(os.homedir(), '.cache')
         : '');
-  const home = env.HOME || (env === process.env ? os.homedir() : '');
+  const home = homeDir(env);
   const paths: string[] = [];
   if (cacheHome) {
     paths.push(path.join(cacheHome, 'agy-hud', 'statusline_payload.json'));

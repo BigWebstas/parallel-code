@@ -1,8 +1,5 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { getSkipPermissionsArgs } from '../shared/skip-permissions.js';
-
-const execFileAsync = promisify(execFile);
+import { commandExistsOnPath } from './command-path.js';
 
 interface AgentDef {
   id: string;
@@ -80,16 +77,11 @@ const DEFAULT_AGENTS: AgentDef[] = [
 ];
 
 async function isCommandAvailable(command: string): Promise<boolean> {
-  try {
-    const resolver = process.platform === 'win32' ? 'where' : 'which';
-    await execFileAsync(resolver, [command], { encoding: 'utf8', timeout: 3000 });
-    return true;
-  } catch {
-    return false;
-  }
+  // In-process PATH lookup: no `which` subprocess per agent per refresh.
+  return commandExistsOnPath(command);
 }
 
-// TTL cache to avoid repeated `which`/`where` calls
+// TTL cache to avoid repeated PATH scans
 let cachedAgents: AgentDef[] | null = null;
 let cacheTime = 0;
 const AGENT_CACHE_TTL = 30_000;

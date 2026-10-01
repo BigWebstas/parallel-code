@@ -18,21 +18,22 @@ export interface MenuTemplateOptions {
 // so it does nothing when no pane is focused rather than closing the window out
 // from under a terminal.
 //
-// Linux inverts that ordering — the renderer sees keys first and only unhandled
-// ones fall through to the menu — so the stock roles are harmless there and the
-// Linux template keeps them, zoom and Ctrl+W included. It needs a template at
-// all for one reason: the default `viewMenu` role binds Ctrl+R / Ctrl+Shift+R,
-// and reload must not be bound anywhere. (`setApplicationMenu(null)` would kill
-// every Linux accelerator in one line, but it also kills Ctrl+Q, and
-// hold-to-quit is macOS-only — see src/lib/hold-to-quit.ts — so Linux would lose
-// its only keyboard quit.) Note the Linux window is frameless, so this menu is
-// never drawn; there it is an accelerator table and nothing more.
+// Linux and Windows invert that ordering — the renderer sees keys first and
+// only unhandled ones fall through to the menu — so the stock roles are
+// harmless there and the non-macOS template keeps them, zoom and Ctrl+W
+// included. It needs a template at all for one reason: the default `viewMenu`
+// role binds Ctrl+R / Ctrl+Shift+R, and reload must not be bound anywhere.
+// (`setApplicationMenu(null)` would kill every accelerator in one line, but
+// it also kills Ctrl+Q, and hold-to-quit is macOS-only — see
+// src/lib/hold-to-quit.ts — so other platforms would lose their only keyboard
+// quit.) Note the non-macOS window is frameless, so this menu is never drawn;
+// there it is an accelerator table and nothing more.
 //
-// Reload has no item and no accelerator on either platform. A reload throws away
+// Reload has no item and no accelerator on any platform. A reload throws away
 // every pane's UI state, which is not something to hang off one mistyped
 // keystroke in a terminal app. On macOS that also hands Cmd+R back to the
 // DevTools front-end's own reload-the-inspected-page binding, which the native
-// key equivalent used to preempt; on Linux the renderer already saw the key
+// key equivalent used to preempt; elsewhere the renderer already saw the key
 // first, so DevTools was never affected there.
 export function buildMenuTemplate({
   platform,

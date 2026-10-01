@@ -28,6 +28,7 @@ import {
 } from '../lib/theme';
 import { matchesGlobalShortcut } from '../lib/shortcuts';
 import { isMac } from '../lib/platform';
+import { isAbsolutePath } from '../lib/path';
 import { resolvedBindings } from '../store/keybindings';
 import { matchesKeyEvent } from '../lib/keybindings';
 import {
@@ -498,9 +499,9 @@ export function TerminalView(props: TerminalViewProps) {
               if (!modifierHeld) return;
               // Strip line:col suffix for opening
               const filePath = link.text.replace(/:\d+(:\d+)?$/, '');
-              // Resolve relative paths against the task's working directory
-              const isAbsolutePath = /^([\\/]|[A-Za-z]:[\\/])/.test(filePath);
-              const resolved = isAbsolutePath ? filePath : `${props.cwd}/${filePath}`;
+              // Resolve relative paths against the task's working directory.
+              // Absolute covers POSIX, Windows drive (`C:\…`), and UNC (`\\…`).
+              const resolved = isAbsolutePath(filePath) ? filePath : `${props.cwd}/${filePath}`;
               // .md files open in viewer; Shift held = open externally instead
               if (/\.md$/i.test(resolved) && props.onFileLink && !event.shiftKey) {
                 props.onFileLink(resolved);

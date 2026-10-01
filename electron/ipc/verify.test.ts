@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildVerifyEnv,
   createVerificationRunner,
+  shellSpawnArgs,
   validateVerifyCommand,
   VERIFY_COMMAND_MAX_LENGTH,
 } from './verify.js';
@@ -45,29 +46,38 @@ const defaultShell =
 
 const runner = () => createVerificationRunner({ shell: defaultShell });
 
+// Most runner tests shell out to POSIX utilities (`sleep`, `true`, `>&2`).
+// They run on Linux/macOS CI; where /bin/sh is absent (Windows) they skip
+// instead of failing on a missing interpreter.
+const hasPosixSh = fs.existsSync('/bin/sh');
+const itPosix = hasPosixSh ? it : it.skip;
+
 describe('verification runner', () => {
-  it('reports a passing command with its output and no git pin outside a checkout', async () => {
-    const chunks: string[] = [];
-    const run = await runner().start({
-      key: 't1',
-      worktreePath: tmpDir(),
-      command: 'echo hello; exit 0',
-      onOutput: (chunk) => chunks.push(chunk),
-    });
+  itPosix(
+    'reports a passing command with its output and no git pin outside a checkout',
+    async () => {
+      const chunks: string[] = [];
+      const run = await runner().start({
+        key: 't1',
+        worktreePath: tmpDir(),
+        command: 'echo hello; exit 0',
+        onOutput: (chunk) => chunks.push(chunk),
+      });
 
-    expect(run).toMatchObject({
-      status: 'passed',
-      exitCode: 0,
-      headSha: null,
-      dirty: false,
-      command: 'echo hello; exit 0',
-    });
-    expect(run.outputTail).toContain('hello');
-    expect(chunks.join('')).toContain('hello');
-    expect(run.finishedAt).not.toBeNull();
-  });
+      expect(run).toMatchObject({
+        status: 'passed',
+        exitCode: 0,
+        headSha: null,
+        dirty: false,
+        command: 'echo hello; exit 0',
+      });
+      expect(run.outputTail).toContain('hello');
+      expect(chunks.join('')).toContain('hello');
+      expect(run.finishedAt).not.toBeNull();
+    },
+  );
 
-  it('reports a failing command with its exit code and stderr', async () => {
+  itPosix('reports a failing command with its exit code and stderr', async () => {
     const run = await runner().start({
       key: 't1',
       worktreePath: tmpDir(),
@@ -79,7 +89,7 @@ describe('verification runner', () => {
     expect(run.outputTail).toContain('boom');
   });
 
-  it('strips ANSI colour codes from the captured tail', async () => {
+  itPosix('strips ANSI colour codes from the captured tail', async () => {
     const run = await runner().start({
       key: 't1',
       worktreePath: tmpDir(),
@@ -89,7 +99,7 @@ describe('verification runner', () => {
     expect(run.outputTail).toBe('red');
   });
 
-  it('times out and kills the process tree', async () => {
+  itPosix('times out and kills the process tree', async () => {
     const run = await runner().start({
       key: 't1',
       worktreePath: tmpDir(),
@@ -101,7 +111,7 @@ describe('verification runner', () => {
     expect(run.message).toBe('Timed out after 0 s.');
   });
 
-  it('cancels a running command by key', async () => {
+  itPosix('cancels a running command by key', async () => {
     const r = runner();
     const pending = r.start({ key: 't1', worktreePath: tmpDir(), command: 'sleep 30' });
     await sleep(100);
@@ -115,7 +125,7 @@ describe('verification runner', () => {
     expect(r.cancel('t1')).toBe(false);
   });
 
-  it('starting a run for the same key cancels the previous one', async () => {
+  itPosix('starting a run for the same key cancels the previous one', async () => {
     const r = runner();
     const first = r.start({ key: 't1', worktreePath: tmpDir(), command: 'sleep 30' });
     await sleep(100);
@@ -127,7 +137,7 @@ describe('verification runner', () => {
     expect(secondRun.outputTail).toContain('second');
   });
 
-  it('queues runs beyond the concurrency cap in FIFO order', async () => {
+  itPosix('queues runs beyond the concurrency cap in FIFO order', async () => {
     const r = createVerificationRunner({ shell: defaultShell, maxConcurrent: 1 });
     const order: string[] = [];
     const a = r.start({
@@ -160,7 +170,7 @@ describe('verification runner', () => {
     await blocker;
   });
 
-  it('cancelAll stops running and queued runs', async () => {
+  itPosix('cancelAll stops running and queued runs', async () => {
     const r = createVerificationRunner({ shell: defaultShell, maxConcurrent: 1 });
     const a = r.start({ key: 'a', worktreePath: tmpDir(), command: 'sleep 30' });
     const b = r.start({ key: 'b', worktreePath: tmpDir(), command: 'echo never' });
@@ -199,7 +209,7 @@ describe('verification runner', () => {
     expect(run.message).toContain('Worktree directory is missing');
   });
 
-  it('pins the run to HEAD and records a dirty tree inside a git checkout', async () => {
+  itPosix('pins the run to HEAD and records a dirty tree inside a git checkout', async () => {
     const { repo, head } = initRepo();
 
     const clean = await runner().start({ key: 't1', worktreePath: repo, command: 'true' });
@@ -210,7 +220,7 @@ describe('verification runner', () => {
     expect(dirty).toMatchObject({ status: 'passed', headSha: head, dirty: true });
   });
 
-  it('keeps the HEAD pin and counts the tree as dirty when git status fails', async () => {
+  itPosix('keeps the HEAD pin and counts the tree as dirty when git status fails', async () => {
     const { repo, head } = initRepo();
     fs.writeFileSync(path.join(repo, '.git', 'index'), 'not an index');
 
@@ -238,5 +248,51 @@ describe('verify helpers', () => {
       'too long',
     );
     expect(() => validateVerifyCommand('npm test')).not.toThrow();
+  });
+});
+
+describe('shellSpawnArgs', () => {
+  it('uses -c for POSIX shells', () => {
+    expect(shellSpawnArgs('/bin/sh', 'echo hi')).toEqual(['-c', 'echo hi']);
+    expect(shellSpawnArgs('/bin/bash', 'echo hi')).toEqual(['-c', 'echo hi']);
+  });
+
+  // cmd.exe has no -c flag: it would treat "-c" as a file name and fail.
+  it('uses /d /s /c for cmd.exe', () => {
+    expect(shellSpawnArgs('cmd.exe', 'echo hi')).toEqual(['/d', '/s', '/c', 'echo hi']);
+    expect(shellSpawnArgs('C:\\Windows\\System32\\cmd.exe', 'echo hi')).toEqual([
+      '/d',
+      '/s',
+      '/c',
+      'echo hi',
+    ]);
+  });
+
+  it('uses -Command for PowerShell', () => {
+    expect(shellSpawnArgs('powershell.exe', 'echo hi')).toEqual([
+      '-NoLogo',
+      '-NoProfile',
+      '-Command',
+      'echo hi',
+    ]);
+    expect(shellSpawnArgs('pwsh', 'echo hi')).toEqual([
+      '-NoLogo',
+      '-NoProfile',
+      '-Command',
+      'echo hi',
+    ]);
+  });
+
+  // The POSIX-heavy runner tests above need /bin/sh; this one runs the real
+  // platform shell with a command both shells understand.
+  it('runs a trivial command through the platform shell', async () => {
+    const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+    const run = await createVerificationRunner({ shell }).start({
+      key: 't1',
+      worktreePath: tmpDir(),
+      command: 'echo hello',
+    });
+    expect(run.status).toBe('passed');
+    expect(run.outputTail).toContain('hello');
   });
 });
