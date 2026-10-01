@@ -3,10 +3,11 @@ import { Portal } from 'solid-js/web';
 import { store, refreshUsage, USAGE_PROVIDERS } from '../store/store';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
-import type { UsageProvider, UsageWindow } from '../ipc/types';
+import type { CreditUsage, UsageProvider, UsageWindow } from '../ipc/types';
 import type { UsageState } from '../store/types';
 import {
   USAGE_WARN_PERCENT,
+  formatCurrency,
   formatFetchedAt,
   formatReset,
   hasUsageSnapshot,
@@ -14,8 +15,12 @@ import {
   usageVisible,
 } from './usage-format';
 
-const PROVIDER_LABELS: Record<UsageProvider, string> = { claude: 'Claude', codex: 'Codex' };
-const POPOVER_WIDTH = 300;
+const PROVIDER_LABELS: Record<UsageProvider, string> = {
+  claude: 'Claude',
+  codex: 'Codex',
+  antigravity: 'Antigravity',
+};
+const POPOVER_WIDTH = 320;
 
 function UsageMeter(props: { label: string; window: UsageWindow; width?: number }) {
   const warn = () => props.window.usedPercent >= USAGE_WARN_PERCENT;
@@ -56,6 +61,55 @@ function UsageMeter(props: { label: string; window: UsageWindow; width?: number 
       </span>
       <Show when={reset()}>
         <span style={{ color: theme.fgSubtle }}>{reset()}</span>
+      </Show>
+    </span>
+  );
+}
+
+function CreditMeter(props: { credit: CreditUsage; width?: number }) {
+  const usedText = () => formatCurrency(props.credit.used, props.credit.currency);
+  const limitText = () =>
+    props.credit.limit !== null ? formatCurrency(props.credit.limit, props.credit.currency) : null;
+  const percent = () => (props.credit.limit !== null ? props.credit.usedPercent : null);
+  const warn = () => (props.credit.usedPercent ?? 0) >= USAGE_WARN_PERCENT;
+  const color = () => (warn() ? theme.warning : theme.accent);
+
+  return (
+    <span style={{ display: 'inline-flex', 'align-items': 'center', gap: '6px' }}>
+      <span style={{ color: theme.fgSubtle }}>Credits</span>
+      <Show when={percent()}>
+        {(pct) => (
+          <span
+            role="progressbar"
+            aria-label="Credit usage"
+            aria-valuenow={Math.round(pct())}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            style={{
+              width: `${props.width ?? 80}px`,
+              height: '5px',
+              'border-radius': 'var(--radius-xs)',
+              background: theme.bgInput,
+              border: `1px solid ${theme.border}`,
+              overflow: 'hidden',
+            }}
+          >
+            <span
+              style={{
+                display: 'block',
+                height: '100%',
+                width: `${Math.min(100, Math.max(0, pct()))}%`,
+                background: color(),
+              }}
+            />
+          </span>
+        )}
+      </Show>
+      <span style={{ color: warn() ? theme.warning : theme.fg, 'font-weight': '500' }}>
+        {limitText() ? `${usedText()} / ${limitText()}` : `${usedText()} used`}
+      </span>
+      <Show when={percent()}>
+        {(pct) => <span style={{ color: theme.fgSubtle }}>({Math.round(pct())}%)</span>}
       </Show>
     </span>
   );
@@ -115,6 +169,7 @@ function UsagePopover(props: {
         <Show when={props.usage.sevenDay}>
           {(w) => <UsageMeter label="7d" window={w()} width={120} />}
         </Show>
+        <Show when={props.usage.creditUsage}>{(c) => <CreditMeter credit={c()} />}</Show>
         <div
           style={{
             color: props.usage.status === 'error' ? theme.warning : theme.fgSubtle,
@@ -188,7 +243,7 @@ function ProviderUsage(props: { provider: UsageProvider }) {
 
 /**
  * Bottom bar with the rate-limit windows of every agent subscription the app
- * can read (Claude Code, Codex). Hidden until the first successful read, and
+ * can read (Claude Code, Codex, Antigravity). Hidden until the first successful read, and
  * permanently when no agent has a subscription login (API-key users).
  */
 export function UsageStatusBar() {

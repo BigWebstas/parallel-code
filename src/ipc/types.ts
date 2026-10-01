@@ -7,6 +7,7 @@ export type {
   CoverageMetricSummary,
   CoverageSummary,
   CreateTaskResult,
+  CreditUsage,
   EslintQualityFinding,
   EslintQualityResult,
   FileDiffResult,

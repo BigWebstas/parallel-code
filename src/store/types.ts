@@ -14,6 +14,7 @@ import type { AgentTourPayload } from '../../electron/shared/agent-tour';
 import type { CanvasTaskLink, CanvasTaskSource } from '../lib/canvas-task-links';
 import type {
   AgentDef,
+  CreditUsage,
   StepEntry,
   UsageProvider,
   UsageWindow,
@@ -500,6 +501,7 @@ export interface MCPStatus {
 export interface UsageState {
   fiveHour: UsageWindow | null;
   sevenDay: UsageWindow | null;
+  creditUsage?: CreditUsage | null;
   /** When the current windows were fetched; null until the first success. */
   fetchedAt: number | null;
   /** `unavailable` means no subscription login — the bar hides. `error` keeps the last snapshot. */
