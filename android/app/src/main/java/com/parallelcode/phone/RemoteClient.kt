@@ -53,6 +53,21 @@ class ApiException(message: String, val status: Int = 0, val json: JSONObject? =
 
 data class MobileProject(val id: String, val name: String, val agentName: String?)
 
+/** One row of the desktop's merge-readiness panel, as that panel labels it. */
+data class ReadinessCheck(val label: String, val status: String, val detail: String)
+
+/**
+ * The desktop's merge readiness for a task. [canMerge] is false only for a merge-safety
+ * blocker, never for a warning, so a warning still leaves merging possible.
+ */
+data class MergeReadiness(
+    val overall: String,
+    val canMerge: Boolean,
+    val baseBranch: String,
+    val branchName: String,
+    val checks: List<ReadinessCheck>,
+)
+
 /**
  * Client for the desktop's Remote Access server (electron/remote/server.ts). Mirrors the phone web
  * UI in src/remote/ws.ts: authenticate with the first WebSocket message, prefer the paired token,
@@ -206,15 +221,40 @@ class RemoteClient(private val credentials: CredentialStore) {
     }
 
     /** The task's changes against its base branch; readable with the view-only token. */
-    suspend fun fetchDiff(taskId: String): Pair<String, Boolean> {
+    suspend fun fetchDiff(taskId: String): TaskDiff {
         val json = api("GET", "/api/mobile/tasks/${encodePath(taskId)}/diff", null, credentials.pairedToken ?: credentials.link?.token)
-        return json.optString("diff") to json.optBoolean("truncated")
+        return TaskDiff.from(json)
     }
 
     /** The desktop status bar's subscription usage; readable with the view-only token. */
     suspend fun fetchUsage(): List<ProviderUsage> =
         parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
             .also { _usage.value = it }
+
+    /**
+     * The desktop's merge-readiness checks for a task, built by the same
+     * `buildMergeReadiness` the desktop dialog uses. Read-only, so the view-only
+     * token may read it.
+     */
+    suspend fun fetchMergeReadiness(taskId: String): MergeReadiness =
+        parseMergeReadiness(
+            api(
+                "GET",
+                "/api/mobile/tasks/${encodePath(taskId)}/readiness",
+                null,
+                credentials.pairedToken ?: credentials.link?.token,
+            ),
+        )
+
+    /** Merge a task into its base branch. Runs real git, so it needs the paired token. */
+    suspend fun mergeTask(taskId: String, squash: Boolean, cleanup: Boolean) {
+        api(
+            "POST",
+            "/api/mobile/tasks/${encodePath(taskId)}/merge",
+            JSONObject().put("squash", squash).put("cleanup", cleanup),
+            pairedTokenOrThrow(),
+        )
+    }
 
     private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
 

@@ -1,5 +1,6 @@
 package com.parallelcode.phone
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,5 +40,28 @@ class TaskDiffTest {
     @Test
     fun emptyDiffHasNoFiles() {
         assertEquals(emptyList<DiffFile>(), parseUnifiedDiff(""))
+    }
+
+    @Test
+    fun readsTheDiffFlagsFromTheDesktop() {
+        val plain = TaskDiff.from(JSONObject("""{"diff":"x","truncated":false}"""))
+        assertEquals("x", plain.diff)
+        assertEquals(false, plain.truncated)
+        assertEquals(false, plain.unsupported)
+
+        // A task with no branch of its own: an empty diff plus the flag, so the
+        // phone explains itself rather than reporting "no changes".
+        val none = TaskDiff.from(JSONObject("""{"diff":"","truncated":false,"unsupported":true}"""))
+        assertEquals("", none.diff)
+        assertEquals(true, none.unsupported)
+    }
+
+    @Test
+    fun aDiffWithoutFlagsDefaultsToVisibleAndSupported() {
+        // An older desktop omits both fields; the phone must still show the diff.
+        val legacy = TaskDiff.from(JSONObject("{}"))
+        assertEquals("", legacy.diff)
+        assertEquals(false, legacy.truncated)
+        assertEquals(false, legacy.unsupported)
     }
 }

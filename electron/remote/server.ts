@@ -30,6 +30,7 @@ import {
   type RemoteAttentionState,
   type RemoteTaskContext,
   type RemoteCloseResult,
+  type RemoteMergeReadiness,
   type RemoteTaskDiff,
 } from './protocol.js';
 import {
@@ -960,6 +961,14 @@ export function startRemoteServer(opts: {
   publishTour?: (taskId: string, payload: AgentTourPayload) => Promise<unknown>;
   /** Read a task's notes (renderer-backed). */
   getTaskNotes?: (taskId: string) => Promise<string>;
+  /** Read merge readiness for the phone's merge dialog (renderer-backed). */
+  getMergeReadiness?: (taskId: string) => Promise<RemoteMergeReadiness>;
+  /** Merge a task on behalf of a paired phone (renderer-backed). */
+  mergeTaskFromMobile?: (req: {
+    taskId: string;
+    squash: boolean;
+    cleanup: boolean;
+  }) => Promise<void>;
   /** Persist a task's notes (renderer-backed). */
   setTaskNotes?: (taskId: string, notes: string) => Promise<void>;
   /** The desktop's last agent-subscription usage snapshot (renderer-backed). */
@@ -1525,6 +1534,69 @@ export function startRemoteServer(opts: {
         }
 
         return jsonEnd(405, { error: 'method not allowed' });
+      }
+
+      // --- Merge readiness (read: mobile + paired) ---
+      // Read-only, so it follows diff/notes. Phones render these checks verbatim
+      // before merging; the merge itself is the paired-only write below.
+      const readinessMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/readiness$/);
+      if (readinessMatch) {
+        if (tokenClass !== 'mobile' && tokenClass !== 'paired')
+          return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'GET') return jsonEnd(405, { error: 'method not allowed' });
+        const getMergeReadiness = opts.getMergeReadiness;
+        if (!getMergeReadiness) return jsonEnd(503, { error: 'readiness unavailable' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(readinessMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        getMergeReadiness(taskId)
+          .then((result) => jsonEnd(200, result))
+          .catch((err) => jsonEnd(500, { error: String(err) }));
+        return;
+      }
+
+      // --- Paired-mobile task merge ---
+      // Merging runs real git against the base branch, so it needs the paired
+      // token. `cleanup` is opt-in and defaults off, so a tap never deletes a
+      // worktree or branch the way the desktop checkbox explicitly allows.
+      const mergeMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/merge$/);
+      if (mergeMatch) {
+        if (tokenClass !== 'paired') return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'POST') return jsonEnd(405, { error: 'method not allowed' });
+        const mergeTaskFromMobile = opts.mergeTaskFromMobile;
+        if (!mergeTaskFromMobile) return jsonEnd(503, { error: 'task merge unavailable' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(mergeMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        readJsonBody(req)
+          .then((body) => {
+            if (body.squash !== undefined && typeof body.squash !== 'boolean')
+              return jsonEnd(400, { error: 'squash must be a boolean' });
+            if (body.cleanup !== undefined && typeof body.cleanup !== 'boolean')
+              return jsonEnd(400, { error: 'cleanup must be a boolean' });
+            return mergeTaskFromMobile({
+              taskId,
+              squash: body.squash === true,
+              cleanup: body.cleanup === true,
+            }).then(
+              () => jsonEnd(200, { ok: true }),
+              (err: unknown) => jsonEnd(500, { error: String(err) }),
+            );
+          })
+          .catch(() => jsonEnd(400, { error: 'bad request' }));
+        return;
       }
 
       // Coordinator agents reach their own tasks and canvases, never other agents' terminals.

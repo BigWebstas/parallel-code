@@ -74,6 +74,7 @@ import type { UsageProvider, UsageState } from './shared-types.js';
 import type {
   RemoteAttentionState,
   RemoteCloseResult,
+  RemoteMergeReadiness,
   RemoteTaskContext,
   RemoteTaskDiff,
 } from '../remote/protocol.js';
@@ -1675,6 +1676,10 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<RemoteCloseResult>(IPC.Remote_CloseTaskRequest, { taskId, force }),
     getTaskDiff: (taskId: string) =>
       callRenderer<RemoteTaskDiff>(IPC.Remote_GetDiffRequest, { taskId }),
+    getMergeReadiness: (taskId: string) =>
+      callRenderer<RemoteMergeReadiness>(IPC.Remote_GetMergeReadinessRequest, { taskId }),
+    mergeTaskFromMobile: (req: { taskId: string; squash: boolean; cleanup: boolean }) =>
+      callRenderer<{ ok: boolean }>(IPC.Remote_MergeTaskRequest, req).then(() => {}),
     getTaskAttention: (taskId: string): RemoteAttentionState => taskAttention.get(taskId) ?? 'idle',
     getTaskContext: (taskId: string) => taskContext.get(taskId),
     getCollapsedTaskIds: (): string[] => {

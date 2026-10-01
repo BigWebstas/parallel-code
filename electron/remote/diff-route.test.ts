@@ -135,6 +135,15 @@ describe('GET /api/mobile/tasks/:taskId/diff', () => {
     expect(getTaskDiff).toHaveBeenCalledWith('task-1');
   });
 
+  it('passes the unsupported flag through for a task with no branch', async () => {
+    // A 'none' task edits the project folder in place, so the desktop answers
+    // with an empty diff and this flag rather than an error.
+    getTaskDiff.mockResolvedValueOnce({ diff: '', truncated: false, unsupported: true });
+    const res = await request('GET', PATH, { token: mobileToken });
+    expect(res.status).toBe(200);
+    expect(res.json).toEqual({ diff: '', truncated: false, unsupported: true });
+  });
+
   it('rejects a malformed escape and prototype keys', async () => {
     for (const id of ['%', '__proto__']) {
       const res = await request('GET', `/api/mobile/tasks/${id}/diff`, { token: mobileToken });

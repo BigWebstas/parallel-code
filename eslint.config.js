@@ -105,6 +105,20 @@ export default [
     },
   },
 
+  // The look generator is a command-line tool: it reports what it wrote or why it
+  // refused, which is the whole output of a --check run in CI.
+  {
+    files: ['scripts/generate-android-looks.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+      },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+
   // CJS files (electron/preload.cjs): allow require(), CommonJS globals
   {
     files: ['**/*.cjs'],

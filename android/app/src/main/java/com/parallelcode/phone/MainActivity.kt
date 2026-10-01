@@ -1,5 +1,6 @@
 package com.parallelcode.phone
 import android.Manifest
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,9 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
@@ -33,13 +37,16 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -88,6 +95,12 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     private val _themeMode = MutableStateFlow(settingsStore.themeMode)
     val themeMode: StateFlow<String> = _themeMode.asStateFlow()
 
+    private val _darkThemePreset = MutableStateFlow(settingsStore.darkThemePreset)
+    val darkThemePreset: StateFlow<String> = _darkThemePreset.asStateFlow()
+
+    private val _lightThemePreset = MutableStateFlow(settingsStore.lightThemePreset)
+    val lightThemePreset: StateFlow<String> = _lightThemePreset.asStateFlow()
+
     private val _showMinimizedTasks = MutableStateFlow(settingsStore.showMinimizedTasks)
     val showMinimizedTasks: StateFlow<Boolean> = _showMinimizedTasks.asStateFlow()
 
@@ -130,9 +143,38 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
         _themeMode.value = value
     }
 
+    fun setDarkThemePreset(value: String) {
+        settingsStore.darkThemePreset = value
+        _darkThemePreset.value = settingsStore.darkThemePreset
+    }
+
+    fun setLightThemePreset(value: String) {
+        settingsStore.lightThemePreset = value
+        _lightThemePreset.value = settingsStore.lightThemePreset
+    }
+
     fun setShowMinimizedTasks(value: Boolean) {
         settingsStore.showMinimizedTasks = value
         _showMinimizedTasks.value = value
+    }
+
+    private val _widgetTransparency = MutableStateFlow(settingsStore.widgetTransparency)
+    val widgetTransparency: StateFlow<Int> = _widgetTransparency.asStateFlow()
+
+    fun setWidgetTransparency(value: Int) {
+        settingsStore.widgetTransparency = value
+        _widgetTransparency.value = settingsStore.widgetTransparency
+        // The widget draws on its own schedule, so push the new card to it right away.
+        AgentWidget.refresh(getApplication())
+    }
+
+    private val _widgetPalette = MutableStateFlow(settingsStore.widgetPalette)
+    val widgetPalette: StateFlow<String> = _widgetPalette.asStateFlow()
+
+    fun setWidgetPalette(value: String) {
+        settingsStore.widgetPalette = value
+        _widgetPalette.value = settingsStore.widgetPalette
+        AgentWidget.refresh(getApplication())
     }
 }
 
@@ -148,6 +190,8 @@ class MainActivity : ComponentActivity() {
             val keepScreenOnOnlyActive by model.keepScreenOnOnlyWhenActive.collectAsState()
             val agents by model.client.agents.collectAsState()
             val themeMode by model.themeMode.collectAsState()
+            val darkThemePreset by model.darkThemePreset.collectAsState()
+            val lightThemePreset by model.lightThemePreset.collectAsState()
 
             val hasActiveAgent = agents.any { it.running && (it.attention == "active" || it.attention == "shell_busy") }
             val shouldKeepAwake = keepScreenOn && (!keepScreenOnOnlyActive || hasActiveAgent)
@@ -169,7 +213,27 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            ParallelCodeTheme(darkTheme = darkTheme) {
+            val palette = resolveLookPalette(
+                darkPresetId = darkThemePreset,
+                lightPresetId = lightThemePreset,
+                darkTheme = darkTheme,
+            )
+
+            // enableEdgeToEdge() in onCreate follows the system tone, but a look can
+            // differ from it (Always light on a dark phone), so the system bar icon
+            // tint is re-applied for the palette actually on screen.
+            val view = LocalView.current
+            if (!view.isInEditMode) {
+                SideEffect {
+                    val window = (view.context as? Activity)?.window ?: return@SideEffect
+                    WindowCompat.getInsetsController(window, view).apply {
+                        isAppearanceLightStatusBars = !palette.dark
+                        isAppearanceLightNavigationBars = !palette.dark
+                    }
+                }
+            }
+
+            ParallelCodeTheme(palette = palette) {
                 PhoneApp(model)
             }
         }
@@ -291,6 +355,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                 fadeIn(tween(200)).togetherWith(fadeOut(tween(200)))
             }
         },
+        // Swiping between tasks changes which agent is open without leaving the task pager.
+        contentKey = { if (it is Screen.Agent) "agent" else it },
         label = "screenTransition",
     ) { currentScreen ->
         when (currentScreen) {
@@ -312,6 +378,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                 val keepScreenOn by model.keepScreenOn.collectAsState()
                 val keepScreenOnOnlyActive by model.keepScreenOnOnlyWhenActive.collectAsState()
                 val themeMode by model.themeMode.collectAsState()
+                val darkThemePreset by model.darkThemePreset.collectAsState()
+                val lightThemePreset by model.lightThemePreset.collectAsState()
                 val showMinimizedTasks by model.showMinimizedTasks.collectAsState()
                 val latencyMs by model.client.latencyMs.collectAsState()
                 val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
@@ -328,12 +396,20 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onKeepScreenOnOnlyActiveChange = model::setKeepScreenOnOnlyWhenActive,
                     themeMode = themeMode,
                     onThemeModeChange = model::setThemeMode,
+                    darkThemePreset = darkThemePreset,
+                    onDarkThemePresetChange = model::setDarkThemePreset,
+                    lightThemePreset = lightThemePreset,
+                    onLightThemePresetChange = model::setLightThemePreset,
                     showMinimizedTasks = showMinimizedTasks,
                     onShowMinimizedTasksChange = model::setShowMinimizedTasks,
                     alwaysFollowOutput = alwaysFollowOutput,
                     onAlwaysFollowOutputChange = model::setAlwaysFollowOutput,
                     fitTerminalToPhone = model.fitTerminalToPhone.collectAsState().value,
                     onFitTerminalToPhoneChange = model::setFitTerminalToPhone,
+                    widgetTransparency = model.widgetTransparency.collectAsState().value,
+                    onWidgetTransparencyChange = model::setWidgetTransparency,
+                    widgetPalette = model.widgetPalette.collectAsState().value,
+                    onWidgetPaletteChange = model::setWidgetPalette,
                     quickReplies = quickReplies,
                     onQuickRepliesChange = model::setQuickReplies,
                     notifications = notifications,
@@ -373,30 +449,61 @@ private fun PhoneApp(model: PhoneViewModel) {
                 onNeedsPairing = { screenKey = "pair" },
             )
             is Screen.Agent -> {
-                val agent = agents.firstOrNull { it.agentId == currentScreen.agentId }
                 val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
                 val quickReplies by model.quickReplies.collectAsState()
-                if (agent?.isChat == true) {
-                    ChatScreen(
+                val fitTerminalToPhone by model.fitTerminalToPhone.collectAsState()
+                // The tasks in the order the list shows them: swipe sideways to move between them.
+                val pages = remember(agents) { agents.filter { !it.collapsed } + agents.filter { it.collapsed } }
+                val openIndex = pages.indexOfFirst { it.agentId == currentScreen.agentId }
+
+                @Composable
+                fun Task(agentId: String, active: Boolean, pageLabel: String?) {
+                    val agent = agents.firstOrNull { it.agentId == agentId }
+                    if (agent?.isChat == true) {
+                        ChatScreen(
+                            agent = agent,
+                            agentId = agentId,
+                            state = state,
+                            client = model.client,
+                            quickReplies = quickReplies,
+                            pageLabel = pageLabel,
+                            onBack = { screenKey = "agents" },
+                            onPair = { screenKey = "pair" },
+                        )
+                    } else AgentScreen(
                         agent = agent,
-                        agentId = currentScreen.agentId,
+                        agentId = agentId,
                         state = state,
                         client = model.client,
+                        alwaysFollowOutput = alwaysFollowOutput,
+                        fitTerminalToPhone = fitTerminalToPhone && active,
                         quickReplies = quickReplies,
+                        pageLabel = pageLabel,
                         onBack = { screenKey = "agents" },
                         onPair = { screenKey = "pair" },
                     )
-                } else AgentScreen(
-                    agent = agent,
-                    agentId = currentScreen.agentId,
-                    state = state,
-                    client = model.client,
-                    alwaysFollowOutput = alwaysFollowOutput,
-                    fitTerminalToPhone = model.fitTerminalToPhone.collectAsState().value,
-                    quickReplies = quickReplies,
-                    onBack = { screenKey = "agents" },
-                    onPair = { screenKey = "pair" },
-                )
+                }
+
+                if (openIndex < 0 || pages.size < 2) {
+                    // A task that left the list (or the only one) has nothing to swipe to.
+                    Task(currentScreen.agentId, active = true, pageLabel = null)
+                } else {
+                    val pager = rememberPagerState(initialPage = openIndex) { pages.size }
+                    LaunchedEffect(pager, pages) {
+                        snapshotFlow { pager.settledPage }.collect { page ->
+                            pages.getOrNull(page)?.let { screenKey = "agent:${it.agentId}" }
+                        }
+                    }
+                    HorizontalPager(
+                        state = pager,
+                        key = { pages[it].agentId },
+                        pageSpacing = 8.dp,
+                    ) { page ->
+                        // Only the settled page may resize the desktop terminal; a neighbour
+                        // composed mid-swipe just shows its output.
+                        Task(pages[page].agentId, active = page == pager.settledPage, pageLabel = "${page + 1} of ${pages.size}")
+                    }
+                }
             }
         }
     }

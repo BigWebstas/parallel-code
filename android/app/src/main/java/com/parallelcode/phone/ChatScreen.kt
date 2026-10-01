@@ -84,6 +84,7 @@ fun ChatScreen(
     state: ConnectionState,
     client: RemoteClient,
     quickReplies: List<String>,
+    pageLabel: String? = null,
     onBack: () -> Unit,
     onPair: () -> Unit,
 ) {
@@ -130,7 +131,7 @@ fun ChatScreen(
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                chat?.let { chatStatusLabel(it) } ?: statusLabel(state),
+                                (chat?.let { chatStatusLabel(it) } ?: statusLabel(state)) + (pageLabel?.let { " · $it" } ?: ""),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = AppTheme.extra.textMuted,
                             )
