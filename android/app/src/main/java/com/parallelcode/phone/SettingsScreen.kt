@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -94,12 +95,15 @@ fun SettingsScreen(
     onWidgetPaletteChange: (String) -> Unit,
     quickReplies: List<String>,
     onQuickRepliesChange: (List<String>) -> Unit,
+    sendQuickReplies: Boolean,
+    onSendQuickRepliesChange: (Boolean) -> Unit,
     notifications: NotificationPrefs,
     onNotificationsChange: (NotificationPrefs) -> Unit,
     latencyMs: Long?,
     state: ConnectionState,
     computers: List<SavedComputer>,
     onSwitchComputer: (String) -> Unit,
+    onRenameComputer: (String, String?) -> Unit,
     onForgetComputer: (String) -> Unit,
     onAddComputer: () -> Unit,
     onPair: () -> Unit,
@@ -433,6 +437,13 @@ fun SettingsScreen(
                         QuickRepliesEditor(quickReplies, onQuickRepliesChange)
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(vertical = 14.dp))
                         SettingSwitchRow(
+                            title = "Send quick replies immediately",
+                            description = "Tapping a quick reply sends it straight to the agent. Off, it is added to your draft first.",
+                            checked = sendQuickReplies,
+                            onCheckedChange = onSendQuickRepliesChange,
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(vertical = 14.dp))
+                        SettingSwitchRow(
                             title = "Always scroll to latest output",
                             description = "Jump to new output even after scrolling up. Off, the terminal follows output only while you are at the bottom.",
                             checked = alwaysFollowOutput,
@@ -566,6 +577,8 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         val host = state.link?.baseUrl ?: "Not connected"
+                        val hostLabel = computers.firstOrNull { it.baseUrl == state.link?.baseUrl }?.label
+                            ?: host.substringAfter("://")
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -573,7 +586,7 @@ fun SettingsScreen(
                         ) {
                             Text("Computer", style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.textMuted)
                             Text(
-                                host.substringAfter("://"),
+                                hostLabel,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Medium,
@@ -679,6 +692,7 @@ fun SettingsScreen(
                                 computer = computer,
                                 inUse = computer.baseUrl == state.link?.baseUrl,
                                 onSelect = { onSwitchComputer(computer.baseUrl) },
+                                onRename = { onRenameComputer(computer.baseUrl, it) },
                                 onForget = { onForgetComputer(computer.baseUrl) },
                             )
                             HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(horizontal = 8.dp))
@@ -990,7 +1004,24 @@ private fun QuickRepliesEditor(replies: List<String>, onChange: (List<String>) -
 
 /** A saved computer: tap to switch to it; the one in use is marked and cannot be forgotten here. */
 @Composable
-private fun ComputerRow(computer: SavedComputer, inUse: Boolean, onSelect: () -> Unit, onForget: () -> Unit) {
+private fun ComputerRow(
+    computer: SavedComputer,
+    inUse: Boolean,
+    onSelect: () -> Unit,
+    onRename: (String?) -> Unit,
+    onForget: () -> Unit,
+) {
+    var renaming by remember(computer.baseUrl) { mutableStateOf(false) }
+    if (renaming) {
+        RenameComputerDialog(
+            computer = computer,
+            onConfirm = {
+                onRename(it)
+                renaming = false
+            },
+            onDismiss = { renaming = false },
+        )
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1007,15 +1038,64 @@ private fun ComputerRow(computer: SavedComputer, inUse: Boolean, onSelect: () ->
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+            if (computer.alias?.isNotBlank() == true) {
+                Text(
+                    computer.baseUrl.substringAfter("://"),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTheme.extra.textMuted,
+                )
+            }
             Text(
                 (if (inUse) "In use · " else "") + if (computer.pairedToken != null) "Paired" else "View only",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppTheme.extra.textMuted,
             )
         }
+        TextButton(onClick = { renaming = true }) { Text("Label") }
         if (!inUse) {
             TextButton(onClick = onForget) { Text("Forget", color = MaterialTheme.colorScheme.error) }
         }
     }
+}
+
+/** Name a saved computer so it reads as something friendlier than its address. */
+@Composable
+private fun RenameComputerDialog(
+    computer: SavedComputer,
+    onConfirm: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(computer.baseUrl) { mutableStateOf(computer.alias.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        title = { Text("Label this computer") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Shown in the header, the switch menu and this list instead of the address.",
+                    color = AppTheme.extra.textMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Label (optional)") },
+                    placeholder = { Text(computer.baseUrl.substringAfter("://")) },
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text.takeIf { it.isNotBlank() }) }) {
+                Text("Save", fontWeight = FontWeight.SemiBold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 

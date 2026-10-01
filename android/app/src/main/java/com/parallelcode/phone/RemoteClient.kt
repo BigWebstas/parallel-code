@@ -143,6 +143,12 @@ class RemoteClient(private val credentials: CredentialStore) {
         useActiveComputer()
     }
 
+    /** Name a saved computer; a blank name clears the one it had. */
+    fun rename(baseUrl: String, alias: String?) {
+        credentials.rename(baseUrl, alias)
+        _computers.value = credentials.computers
+    }
+
     /** Forget a saved computer; forgetting the one in use leaves the phone unlinked. */
     fun forget(baseUrl: String? = credentials.link?.baseUrl) {
         if (baseUrl == null) return

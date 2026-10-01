@@ -70,6 +70,11 @@ class SettingsStore(private val prefs: SharedPreferences) {
             .lines().map { it.trim() }.filter { it.isNotEmpty() }
         set(value) = prefs.edit { putString(KEY_QUICK_REPLIES, value.joinToString("\n")) }
 
+    /** Send a quick reply immediately when tapped, instead of adding it to the draft. */
+    var sendQuickReplies: Boolean
+        get() = prefs.getBoolean(KEY_SEND_QUICK_REPLIES, false)
+        set(value) = prefs.edit { putBoolean(KEY_SEND_QUICK_REPLIES, value) }
+
     /**
      * How opaque the home-screen widget's card is, as one of [WIDGET_TRANSPARENCY_STEPS]. Lower
      * values show more wallpaper through the card; its border fades with the fill.
@@ -117,6 +122,7 @@ class SettingsStore(private val prefs: SharedPreferences) {
         const val KEY_ALWAYS_FOLLOW_OUTPUT = "alwaysFollowOutput"
         const val KEY_FIT_TERMINAL = "fitTerminalToPhone"
         const val KEY_QUICK_REPLIES = "quickReplies"
+        const val KEY_SEND_QUICK_REPLIES = "sendQuickReplies"
         val DEFAULT_QUICK_REPLIES = listOf("continue", "yes", "run the tests", "commit this")
         const val KEY_NOTIFICATIONS = "notifications"
         const val KEY_NOTIFY_NEEDS_INPUT = "notifyNeedsInput"

@@ -17,6 +17,8 @@ class PhoneApplication : Application() {
         private set
     lateinit var settings: SettingsStore
         private set
+    lateinit var promptHistory: PromptHistoryStore
+        private set
 
     /** True while the app is on screen; agent notifications stay quiet then. */
     @Volatile
@@ -26,6 +28,7 @@ class PhoneApplication : Application() {
         super.onCreate()
         client = RemoteClient(CredentialStore(getSharedPreferences("desktop", Context.MODE_PRIVATE)))
         settings = SettingsStore(getSharedPreferences(SettingsStore.PREFS_NAME, Context.MODE_PRIVATE))
+        promptHistory = PromptHistoryStore(getSharedPreferences(PromptHistoryStore.PREFS_NAME, Context.MODE_PRIVATE))
         // Keep the home-screen widget current whenever the connection is open.
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
             combine(client.agents, client.usage, client.state) { agents, usage, state ->

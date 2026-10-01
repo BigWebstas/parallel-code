@@ -24,6 +24,30 @@ class CredentialStoreTest {
     }
 
     @Test
+    fun labelsDefaultToTheAddressAndRenamePersists() {
+        val store = CredentialStore(FakeSharedPreferences())
+        store.saveLink(home)
+        assertEquals("192.168.1.20:7777", store.computers.single().label)
+
+        store.rename(home.baseUrl, "Home server")
+        assertEquals("Home server", store.computers.single().label)
+
+        store.rename(home.baseUrl, "  ")
+        assertEquals("192.168.1.20:7777", store.computers.single().label)
+    }
+
+    @Test
+    fun rescanningAnAddressKeepsItsLabelButDropsPairing() {
+        val store = CredentialStore(FakeSharedPreferences())
+        store.saveLink(home)
+        store.savePairedToken("old")
+        store.rename(home.baseUrl, "Home server")
+        store.saveLink(home.copy(token = "new"))
+        assertEquals("Home server", store.computers.single().label)
+        assertNull(store.pairedToken)
+    }
+
+    @Test
     fun forgettingTheComputerInUseLeavesNoneSelected() {
         val store = CredentialStore(FakeSharedPreferences())
         store.saveLink(home)
