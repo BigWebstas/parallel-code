@@ -11,6 +11,7 @@ const core = vi.hoisted(() => ({
 const IDLE: UsageState = {
   fiveHour: null,
   sevenDay: null,
+  creditUsage: null,
   fetchedAt: null,
   status: 'idle',
   error: null,
@@ -70,6 +71,7 @@ describe('usage store slice', () => {
     expect(state('codex')).toEqual({
       fiveHour: OK.fiveHour,
       sevenDay: OK.sevenDay,
+      creditUsage: null,
       fetchedAt: 500,
       status: 'ok',
       error: null,
@@ -85,6 +87,7 @@ describe('usage store slice', () => {
     expect(state()).toEqual({
       fiveHour: null,
       sevenDay: null,
+      creditUsage: null,
       fetchedAt: null,
       status: 'unavailable',
       error: 'logged out',
@@ -149,5 +152,24 @@ describe('usage store slice', () => {
     expect(slice.usageProviderForAgent('codex')).toBe('codex');
     expect(slice.usageProviderForAgent('antigravity')).toBe('antigravity');
     expect(slice.usageProviderForAgent('gemini')).toBeNull();
+  });
+
+  it('stores creditUsage when returned on an ok result', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      ...OK,
+      creditUsage: {
+        used: 2.12,
+        limit: 30,
+        currency: 'USD',
+        usedPercent: 7.07,
+      },
+    });
+    await slice.refreshUsage('claude');
+    expect(state('claude').creditUsage).toEqual({
+      used: 2.12,
+      limit: 30,
+      currency: 'USD',
+      usedPercent: 7.07,
+    });
   });
 });
