@@ -105,6 +105,11 @@ class SettingsStore(private val prefs: SharedPreferences) {
         get() = prefs.getBoolean(KEY_NOTIFY_FINISHED, false)
         set(value) = prefs.edit { putBoolean(KEY_NOTIFY_FINISHED, value) }
 
+    /** Wait to connect until an active VPN (such as Tailscale or WireGuard) is up. */
+    var waitForVpn: Boolean
+        get() = prefs.getBoolean(KEY_WAIT_FOR_VPN, false)
+        set(value) = prefs.edit { putBoolean(KEY_WAIT_FOR_VPN, value) }
+
     fun notifiesFor(event: AgentEvent): Boolean = when (event) {
         AgentEvent.NEEDS_INPUT -> notifyNeedsInput
         AgentEvent.ERROR -> notifyErrors
@@ -113,6 +118,7 @@ class SettingsStore(private val prefs: SharedPreferences) {
 
     companion object {
         const val PREFS_NAME = "settings"
+        const val KEY_WAIT_FOR_VPN = "waitForVpn"
         const val KEY_KEEP_SCREEN_ON = "keepScreenOn"
         const val KEY_KEEP_SCREEN_ON_ONLY_ACTIVE = "keepScreenOnOnlyActive"
         const val KEY_THEME_MODE = "themeMode"

@@ -387,7 +387,7 @@ fun AgentsScreen(
                             ) {
                                 val statusDotColor = when (state.status) {
                                     ConnectionStatus.CONNECTED -> AppTheme.extra.success
-                                    ConnectionStatus.CONNECTING -> AppTheme.extra.warningText
+                                    ConnectionStatus.CONNECTING, ConnectionStatus.WAITING_FOR_VPN -> AppTheme.extra.warningText
                                     ConnectionStatus.DISCONNECTED -> MaterialTheme.colorScheme.error
                                 }
                                 val infiniteTransition = rememberInfiniteTransition(label = "connPulse")
@@ -541,7 +541,7 @@ fun AgentsScreen(
                             )
                             Spacer(Modifier.width(12.dp))
                             Text(
-                                "Reaching your computer…",
+                                if (state.status == ConnectionStatus.WAITING_FOR_VPN) "Waiting for VPN connection…" else "Reaching your computer…",
                                 color = AppTheme.extra.textMuted,
                             )
                         }
@@ -1618,6 +1618,7 @@ private fun ReplyBox(
 fun statusLabel(state: ConnectionState) = when (state.status) {
     ConnectionStatus.CONNECTED -> if (state.canControl) "Connected" else "Connected, view only"
     ConnectionStatus.CONNECTING -> "Connecting…"
+    ConnectionStatus.WAITING_FOR_VPN -> "Waiting for VPN…"
     ConnectionStatus.DISCONNECTED -> "Offline"
 }
 

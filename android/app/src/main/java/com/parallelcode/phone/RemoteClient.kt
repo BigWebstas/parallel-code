@@ -29,7 +29,7 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
-enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED }
+enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED, WAITING_FOR_VPN }
 
 /** What the UI needs to know about the link to the desktop. */
 data class ConnectionState(
@@ -73,7 +73,11 @@ data class MergeReadiness(
  * UI in src/remote/ws.ts: authenticate with the first WebSocket message, prefer the paired token,
  * and fall back to view-only when the desktop revokes it. All state changes on the main thread.
  */
-class RemoteClient(private val credentials: CredentialStore) {
+class RemoteClient(
+    private val credentials: CredentialStore,
+    private val vpnActive: StateFlow<Boolean> = MutableStateFlow(true),
+    private val waitForVpn: () -> Boolean = { false },
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -82,6 +86,26 @@ class RemoteClient(private val credentials: CredentialStore) {
 
     private val _state = MutableStateFlow(ConnectionState(link = credentials.link))
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
+
+    init {
+        scope.launch {
+            vpnActive.collect { active ->
+                if (!started) return@collect
+                if (waitForVpn()) {
+                    if (active) {
+                        if (_state.value.status == ConnectionStatus.WAITING_FOR_VPN || _state.value.status == ConnectionStatus.DISCONNECTED) {
+                            connect()
+                        }
+                    } else {
+                        if (socket != null || _state.value.status == ConnectionStatus.CONNECTING) {
+                            closeSocket()
+                        }
+                        _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+                    }
+                }
+            }
+        }
+    }
     private val _agents = MutableStateFlow<List<RemoteAgent>>(emptyList())
     val agents: StateFlow<List<RemoteAgent>> = _agents.asStateFlow()
     private val _computers = MutableStateFlow(credentials.computers)
@@ -185,6 +209,21 @@ class RemoteClient(private val credentials: CredentialStore) {
     fun reconnect() {
         closeSocket()
         if (started) connect()
+    }
+
+    /** Called when the wait-for-VPN setting changes to pause or resume connecting. */
+    fun onVpnPolicyChanged() {
+        if (!started) return
+        if (waitForVpn()) {
+            if (!vpnActive.value) {
+                closeSocket()
+                _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+            }
+        } else {
+            if (_state.value.status == ConnectionStatus.WAITING_FOR_VPN) {
+                connect()
+            }
+        }
     }
 
     /** Trade the desktop's six-digit PIN for a paired token, then reconnect with it. */
@@ -297,6 +336,9 @@ class RemoteClient(private val credentials: CredentialStore) {
     private suspend fun apiRaw(method: String, path: String, body: JSONObject?, token: String?): String {
         val link = credentials.link ?: throw ApiException("Not connected to a computer.")
         if (token == null) throw ApiException("Not connected to a computer.")
+        if (waitForVpn() && !vpnActive.value) {
+            throw ApiException("Waiting for VPN connection. Connect your VPN and try again.")
+        }
         val request = Request.Builder()
             .url(link.baseUrl + path)
             .header("Authorization", "Bearer $token")
@@ -490,6 +532,11 @@ class RemoteClient(private val credentials: CredentialStore) {
     private fun connect() {
         if (socket != null) return
         val link = credentials.link ?: return
+        if (waitForVpn() && !vpnActive.value) {
+            reconnectJob?.cancel()
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false, linkExpired = false) }
+            return
+        }
         val paired = credentials.pairedToken
         authKind = if (paired != null) TokenKind.PAIRED else TokenKind.MOBILE
         val token = paired ?: link.token
@@ -614,6 +661,10 @@ class RemoteClient(private val credentials: CredentialStore) {
             }
         }
         if (!started) return
+        if (waitForVpn() && !vpnActive.value) {
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+            return
+        }
         reconnectJob = scope.launch {
             delay(RECONNECT_DELAY_MS)
             connect()

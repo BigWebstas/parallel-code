@@ -25,6 +25,27 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun defaultsToWaitForVpnDisabled() {
+        assertFalse(store.waitForVpn)
+    }
+
+    @Test
+    fun enablesWaitForVpnAndPersists() {
+        store.waitForVpn = true
+        assertTrue(store.waitForVpn)
+        assertTrue(prefs.getBoolean(SettingsStore.KEY_WAIT_FOR_VPN, false))
+    }
+
+    @Test
+    fun togglesWaitForVpnBackToDisabled() {
+        store.waitForVpn = true
+        assertTrue(store.waitForVpn)
+        store.waitForVpn = false
+        assertFalse(store.waitForVpn)
+        assertFalse(prefs.getBoolean(SettingsStore.KEY_WAIT_FOR_VPN, true))
+    }
+
+    @Test
     fun enablesKeepScreenOnAndPersists() {
         store.keepScreenOn = true
         assertTrue(store.keepScreenOn)

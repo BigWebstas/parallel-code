@@ -90,6 +90,15 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     private val _keepScreenOn = MutableStateFlow(settingsStore.keepScreenOn)
     val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
 
+    private val _waitForVpn = MutableStateFlow(settingsStore.waitForVpn)
+    val waitForVpn: StateFlow<Boolean> = _waitForVpn.asStateFlow()
+
+    fun setWaitForVpn(value: Boolean) {
+        settingsStore.waitForVpn = value
+        _waitForVpn.value = value
+        client.onVpnPolicyChanged()
+    }
+
     private val _keepScreenOnOnlyWhenActive = MutableStateFlow(settingsStore.keepScreenOnOnlyWhenActive)
     val keepScreenOnOnlyWhenActive: StateFlow<Boolean> = _keepScreenOnOnlyWhenActive.asStateFlow()
 
@@ -434,6 +443,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                         if (needsPermission) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         else model.setNotifications(prefs)
                     },
+                    waitForVpn = model.waitForVpn.collectAsState().value,
+                    onWaitForVpnChange = model::setWaitForVpn,
                     latencyMs = latencyMs,
                     state = state,
                     computers = computers,

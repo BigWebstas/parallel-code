@@ -99,6 +99,8 @@ fun SettingsScreen(
     onSendQuickRepliesChange: (Boolean) -> Unit,
     notifications: NotificationPrefs,
     onNotificationsChange: (NotificationPrefs) -> Unit,
+    waitForVpn: Boolean,
+    onWaitForVpnChange: (Boolean) -> Unit,
     latencyMs: Long?,
     state: ConnectionState,
     computers: List<SavedComputer>,
@@ -601,17 +603,22 @@ fun SettingsScreen(
                         ) {
                             Text("Status", style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.textMuted)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val statusColor = when (state.status) {
+                                    ConnectionStatus.CONNECTED -> AppTheme.extra.success
+                                    ConnectionStatus.WAITING_FOR_VPN -> AppTheme.extra.warningText
+                                    else -> AppTheme.extra.textMuted
+                                }
                                 Box(
                                     modifier = Modifier
                                         .size(8.dp)
                                         .clip(CircleShape)
-                                        .background(if (state.status == ConnectionStatus.CONNECTED) AppTheme.extra.success else AppTheme.extra.textMuted),
+                                        .background(statusColor),
                                 )
                                 Text(
                                     statusLabel(state),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
-                                    color = if (state.status == ConnectionStatus.CONNECTED) AppTheme.extra.success else AppTheme.extra.textMuted,
+                                    color = statusColor,
                                 )
                             }
                         }
@@ -659,6 +666,44 @@ fun SettingsScreen(
                             ) {
                                 Text("Pair with PIN to enable replies", fontWeight = FontWeight.SemiBold)
                             }
+                        }
+
+                        HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 16.dp),
+                            ) {
+                                Text(
+                                    "Wait for VPN",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "Pause connection until a VPN (such as Tailscale or WireGuard) is active.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = AppTheme.extra.textMuted,
+                                )
+                            }
+                            Switch(
+                                checked = waitForVpn,
+                                onCheckedChange = onWaitForVpnChange,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedThumbColor = AppTheme.extra.textMuted,
+                                    uncheckedTrackColor = AppTheme.extra.inputBg,
+                                    uncheckedBorderColor = AppTheme.extra.border,
+                                ),
+                            )
                         }
 
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.border)
