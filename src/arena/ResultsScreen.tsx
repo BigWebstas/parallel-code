@@ -20,6 +20,7 @@ import { IPC } from '../../electron/ipc/channels';
 import { store, toggleNewTaskPanel, toggleArena, setNewTaskPrefillPrompt } from '../store/store';
 import type { ArenaMatch } from './types';
 import type { ChangedFile } from '../ipc/types';
+import { pathBasename } from '../lib/path';
 
 function formatTime(startTime: number, endTime: number | null): string {
   if (endTime === null) return 'DNF';
@@ -36,7 +37,7 @@ export function ResultsScreen() {
     const cwd = arenaStore.cwd;
     if (!cwd) return null;
     const project = store.projects.find((p) => p.path === cwd);
-    return project?.name ?? cwd.split('/').pop() ?? null;
+    return project?.name ?? (pathBasename(cwd) || null);
   });
 
   // When viewing from history, pre-populate ratings from saved match

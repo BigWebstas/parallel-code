@@ -44,8 +44,6 @@ const PURPOSES = [
   },
 ] as const;
 
-const STRUCTURED = PURPOSES.filter((entry) => entry.purpose !== undefined);
-
 function mockProc() {
   const proc = Object.assign(new EventEmitter(), {
     stdin: Object.assign(new EventEmitter(), { end: vi.fn() }),
@@ -78,7 +76,7 @@ describe('Claude code Q&A deadlines', () => {
         provider: 'claude',
         purpose,
       });
-      expect(proc.stdin.end).toHaveBeenCalledTimes(purpose ? 1 : 0);
+      expect(proc.stdin.end).toHaveBeenCalledExactlyOnceWith('Explain this code');
       expect(spawn).toHaveBeenCalledWith(
         'claude',
         expect.arrayContaining([systemPrompt]),
@@ -100,12 +98,13 @@ describe('Claude code Q&A deadlines', () => {
     },
   );
 
-  it.each(STRUCTURED)(
+  it.each(PURPOSES)(
     'pipes a large $purpose prompt to Claude and handles an early stdin failure once',
     ({ purpose, promptLimit }) => {
       const proc = mockProc();
       const send = vi.fn();
       const win = { isDestroyed: () => false, webContents: { send } } as unknown as BrowserWindow;
+      // Every limit is past Windows' ~32k-character command line.
       const prompt = 'x'.repeat(promptLimit);
       askAboutCode(win, {
         requestId: `large-${purpose}`,
@@ -124,7 +123,7 @@ describe('Claude code Q&A deadlines', () => {
       proc.emit('close', 1);
       expect(send).toHaveBeenCalledWith('channel:test', {
         type: 'error',
-        text: 'Could not send tour prompt: broken pipe',
+        text: 'Could not send the prompt to Claude: broken pipe',
       });
       expect(send.mock.calls.filter(([, message]) => message.type === 'done')).toHaveLength(1);
       expect(proc.kill).toHaveBeenCalledWith('SIGTERM');

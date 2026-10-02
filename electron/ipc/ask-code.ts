@@ -2,12 +2,12 @@ import { spawn, type ChildProcess } from 'child_process';
 import type { BrowserWindow } from 'electron';
 import { validateCommand, ENV_BLOCK_LIST } from './pty.js';
 import { loadEnvFile } from './env-file.js';
+import { resolveWindowsLaunch } from '../windows-launch.js';
 import { ASK_CODE_MODELS, type AskCodeProvider } from '../shared/ask-code-models.js';
 import {
   askCodePromptLimit,
   askCodeSystemPrompt,
   askCodeTimeoutMs,
-  isStructuredPurpose,
   type AskCodePurpose,
 } from './ask-code-purpose.js';
 import {
@@ -74,8 +74,6 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
     return;
   }
 
-  // Structured purposes (tours) pipe their prompt over stdin and answer with JSON.
-  const isStructured = isStructuredPurpose(args.purpose);
   assertPromptWithinLimit(prompt, askCodePromptLimit(args.purpose));
   assertCanStart(activeRequests, requestId);
 
@@ -93,11 +91,11 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
 
   validateCommand('claude');
 
-  const proc = spawn(
+  const env = askCodeEnv(envFile);
+  const launch = resolveWindowsLaunch(
     'claude',
     [
       '-p',
-      ...(isStructured ? [] : [prompt]),
       '--output-format',
       'text',
       '--model',
@@ -109,12 +107,13 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
       '--append-system-prompt',
       askCodeSystemPrompt(args.purpose),
     ],
-    {
-      cwd,
-      env: askCodeEnv(envFile),
-      stdio: [isStructured ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-    },
+    env,
   );
+  const proc = spawn(launch.file, launch.args, {
+    cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
 
   const send = sendToChannel;
 
@@ -150,17 +149,16 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
     }
   });
 
-  if (isStructured) {
-    // Large diffs exceed OS argument-size limits; Claude supports piped input.
-    proc.stdin?.on('error', (err: Error) => {
-      if (!session.complete()) return;
-      session.cleanup();
-      send({ type: 'error', text: `Could not send tour prompt: ${err.message}` });
-      send({ type: 'done', exitCode: 1 });
-      proc.kill('SIGTERM');
-    });
-    proc.stdin?.end(prompt);
-  }
+  // Prompts can exceed OS argument-size limits (about 32k characters on
+  // Windows, and large diffs anywhere), so Claude reads them from stdin.
+  proc.stdin?.on('error', (err: Error) => {
+    if (!session.complete()) return;
+    session.cleanup();
+    send({ type: 'error', text: `Could not send the prompt to Claude: ${err.message}` });
+    send({ type: 'done', exitCode: 1 });
+    proc.kill('SIGTERM');
+  });
+  proc.stdin?.end(prompt);
 }
 
 type ChannelMessage = { type: 'chunk' | 'error'; text: string };
@@ -224,7 +222,8 @@ function asText(value: unknown): string {
  */
 function askAboutCodeCodex(args: AskCodeRequest, send: (msg: unknown) => void): void {
   validateCommand('codex');
-  const proc = spawn(
+  const env = askCodeEnv(args.envFile);
+  const launch = resolveWindowsLaunch(
     'codex',
     [
       'exec',
@@ -239,8 +238,13 @@ function askAboutCodeCodex(args: AskCodeRequest, send: (msg: unknown) => void): 
       ...(args.model ? ['-m', args.model] : []),
       '-',
     ],
-    { cwd: args.cwd, env: askCodeEnv(args.envFile), stdio: ['pipe', 'pipe', 'pipe'] },
+    env,
   );
+  const proc = spawn(launch.file, launch.args, {
+    cwd: args.cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
 
   const session = AskCodeSession.start(
     activeRequests,

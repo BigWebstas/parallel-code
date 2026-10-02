@@ -10,6 +10,7 @@ import { clearAgentActivity } from './taskStatus';
 import { assignFreshSessionId } from './session-ids';
 import { forgetAgentPrompts } from '../lib/prompt-history';
 import { delegationRequest, registerTaskAuthority } from './delegation';
+import { pathBasename } from '../lib/path';
 
 export const PASTEL_HUES = [0, 30, 60, 120, 180, 210, 260, 300, 330];
 
@@ -205,8 +206,7 @@ export async function pickAndAddProject(): Promise<string | null> {
 
   const isGitRepo = await invoke<boolean>(IPC.CheckIsGitRepo, { path });
 
-  const segments = path.split('/');
-  const name = segments[segments.length - 1] || path;
+  const name = pathBasename(path) || path;
   return addProject(name, path, isGitRepo);
 }
 

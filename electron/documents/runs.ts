@@ -13,6 +13,7 @@ import type { BrowserWindow } from 'electron';
 import { IPC } from '../ipc/channels.js';
 import { errMessage } from '../log.js';
 import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
+import { resolveWindowsLaunch } from '../windows-launch.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
@@ -940,7 +941,8 @@ function spawnCandidate(
   const env = buildPtySpawnEnv({}, fileEnv);
   const parser = createHeadlessParser(spec.agentId);
 
-  const proc = spawn(launch.command, launch.args, {
+  const target = resolveWindowsLaunch(launch.command, launch.args, env);
+  const proc = spawn(target.file, target.args, {
     cwd: candidate.worktreePath,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

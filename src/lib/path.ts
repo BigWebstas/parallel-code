@@ -15,3 +15,13 @@ export function abbreviateHomePath(input: string): string {
   if (rest === '' || rest === '/') return '~';
   return input.includes('\\') ? `~${rest.replace(/\//g, '\\')}` : `~${rest}`;
 }
+
+/** Last path segment, splitting on both `/` and `\` so Windows paths work; trailing separators are ignored. */
+export function pathBasename(p: string): string {
+  return (
+    p
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() ?? ''
+  );
+}

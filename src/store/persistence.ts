@@ -61,6 +61,7 @@ import { showNotification, NOTIFICATION_ERROR_MS } from './notification';
 import { errMessage, warn as logWarn } from '../lib/log';
 import { canvasTabKey } from '../lib/canvas-tabs';
 import { documentAgentTaskIds } from '../documents/task-id';
+import { pathBasename } from '../lib/path';
 
 function restoredCodexHandoff(value: unknown): Task['codexChatHandoff'] {
   if (!value || typeof value !== 'object') return;
@@ -671,8 +672,7 @@ export async function loadState(): Promise<void> {
   }
 
   if (projects.length === 0 && raw.projectRoot) {
-    const segments = raw.projectRoot.split('/');
-    const name = segments[segments.length - 1] || raw.projectRoot;
+    const name = pathBasename(raw.projectRoot) || raw.projectRoot;
     const id = crypto.randomUUID();
     projects = [{ id, name, path: raw.projectRoot, color: randomPastelColor() }];
     lastProjectId = id;

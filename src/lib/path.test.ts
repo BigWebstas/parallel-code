@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { abbreviateHomePath } from './path';
+import { abbreviateHomePath, pathBasename } from './path';
 
 describe('abbreviateHomePath', () => {
   it('shortens macOS home paths', () => {
@@ -23,5 +23,13 @@ describe('abbreviateHomePath', () => {
     expect(abbreviateHomePath('C:/Users/liang/projects/app')).toBe('~/projects/app');
     expect(abbreviateHomePath('C:\\Users\\liang')).toBe('~');
     expect(abbreviateHomePath('D:\\work\\app')).toBe('D:\\work\\app');
+  });
+});
+
+describe('pathBasename', () => {
+  it('handles POSIX and Windows separators', () => {
+    expect(pathBasename('/home/me/app')).toBe('app');
+    expect(pathBasename('C:\\Git\\parallel-code')).toBe('parallel-code');
+    expect(pathBasename('C:/Git/parallel-code/')).toBe('parallel-code');
   });
 });

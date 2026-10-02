@@ -12,6 +12,7 @@ import { fileURLToPath } from 'url';
 import type { Notify } from './notify.js';
 import { RingBuffer } from '../remote/ring-buffer.js';
 import { resolveUserShell } from '../user-shell.js';
+import { launchProgram, locateWindowsCommand } from '../windows-launch.js';
 import {
   detectRepoRoot,
   ensureClaudeSandboxFiles,
@@ -450,10 +451,10 @@ function cmdShimTarget(shimPath: string, args: string[], env: Record<string, str
  *
  * POSIX passes through unchanged: node-pty's Unix backend uses execvp, which
  * does its own PATH search. On Windows the conpty backend calls CreateProcessW
- * directly, so it needs a real image and cannot search PATH. `where` also
- * reports the extensionless bash shim that npm writes next to `claude.cmd`,
- * which is a shell script no Windows loader will accept, so prefer a real
- * executable and fall back to running a batch shim through `cmd.exe`.
+ * directly, so it needs a real image and cannot search PATH. An npm shim is
+ * replaced by the program it wraps (shared with the non-terminal launches), so
+ * arguments never pass through cmd.exe; only a batch file that is not an npm
+ * shim still runs through `cmd.exe`.
  */
 export function resolveSpawnTarget(
   command: string,
@@ -462,32 +463,16 @@ export function resolveSpawnTarget(
 ): SpawnTarget {
   if (process.platform !== 'win32') return { file: command, args };
 
-  // An explicitly configured path still needs the shim treatment, since users
-  // point at the `claude.cmd` npm writes. `path.win32` rather than `path` so the
-  // check matches the platform this branch actually runs on.
-  if (path.win32.isAbsolute(command)) {
-    return /\.(cmd|bat)$/i.test(command)
-      ? cmdShimTarget(command, args, env)
-      : { file: command, args };
+  const lookupEnv = { ...process.env, ...env };
+  const located = locateWindowsCommand(command, lookupEnv);
+  if (located.program) {
+    const launch = launchProgram(located.program, args);
+    // conpty cannot search PATH for `node` either.
+    if (launch.file === 'node')
+      launch.file = locateWindowsCommand('node', lookupEnv).program ?? 'node';
+    return launch;
   }
-
-  let candidates: string[];
-  try {
-    const output = execFileSync('where', [command], { encoding: 'utf8', timeout: 3000 });
-    candidates = output
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  } catch {
-    return { file: command, args };
-  }
-
-  const executable = candidates.find((candidate) => /\.(exe|com)$/i.test(candidate));
-  if (executable) return { file: executable, args };
-
-  const shim = candidates.find((candidate) => /\.(cmd|bat)$/i.test(candidate));
-  if (shim) return cmdShimTarget(shim, args, env);
-
+  if (located.batch) return cmdShimTarget(located.batch, args, env);
   // Nothing launchable (e.g. only the extensionless bash shim). Keep the bare
   // name so the spawn fails with the usual "not found" rather than a 193.
   return { file: command, args };

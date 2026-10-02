@@ -58,6 +58,8 @@ import {
   onTaskRenamed,
   onTaskNotesChanged,
 } from './superProductivity';
+import { pathBasename } from '../lib/path';
+import { commandName } from '../../electron/shared/command-name';
 
 export function createAgentRecord(args: {
   id: string;
@@ -390,7 +392,7 @@ function deriveImportedTaskName(branchName: string, worktreePath: string): strin
   const branchTail = branchName.split('/').pop()?.trim() ?? '';
   const normalized = branchTail.replace(/[-_]+/g, ' ').trim();
   if (normalized) return cleanTaskName(normalized);
-  return worktreePath.split('/').pop()?.trim() || branchName;
+  return pathBasename(worktreePath).trim() || branchName;
 }
 
 function hasTaskForWorktreePath(worktreePath: string): boolean {
@@ -1150,7 +1152,7 @@ export function uncollapseTask(taskId: string): void {
 function matchProject(repoName: string): string | null {
   const lower = repoName.toLowerCase();
   for (const project of store.projects) {
-    const basename = project.path.split('/').pop() ?? '';
+    const basename = pathBasename(project.path);
     if (basename.toLowerCase() === lower) return project.id;
   }
   return null;
@@ -1548,11 +1550,11 @@ export function setTaskMcpLaunchArgs(taskId: string, args: string[] | undefined)
 }
 
 function isCodexCommand(command: string | undefined): boolean {
-  return command?.split('/').pop()?.includes('codex') === true;
+  return command !== undefined && commandName(command).includes('codex');
 }
 
 function isAntigravityCommand(command: string | undefined): boolean {
-  return command?.split('/').pop() === 'agy';
+  return command !== undefined && commandName(command) === 'agy';
 }
 
 function taskRequiresMcpLaunchArgs(taskId: string): boolean {

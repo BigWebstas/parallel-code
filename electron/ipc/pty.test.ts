@@ -1613,7 +1613,31 @@ describe('resolveSpawnTarget', () => {
     });
   });
 
-  it('runs a .cmd shim through cmd.exe instead of handing it to CreateProcess', () => {
+  it('launches the program an npm shim wraps, keeping arguments out of cmd.exe', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-shim-'));
+    tempPaths.push(dir);
+    const shim = path.join(dir, 'claude.cmd');
+    fs.writeFileSync(
+      shim,
+      '@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\r\n',
+    );
+    withPlatform('win32', () => {
+      mockExecFileSync
+        .mockImplementationOnce(() => `${shim}\r\n`)
+        .mockImplementationOnce(() => 'C:\\Program Files\\nodejs\\node.exe\r\n');
+      const prompt = 'line one\nline two with % and ^';
+      expect(resolveSpawnTarget('claude', ['-p', prompt], WIN_ENV)).toEqual({
+        file: 'C:\\Program Files\\nodejs\\node.exe',
+        args: [
+          path.win32.join(dir, 'node_modules\\@anthropic-ai\\claude-code\\cli.js'),
+          '-p',
+          prompt,
+        ],
+      });
+    });
+  });
+
+  it('runs a batch file that is not an npm shim through cmd.exe', () => {
     // CreateProcessW cannot execute a batch file; spawning one directly is the
     // "Cannot create process, error code: 193" (ERROR_BAD_EXE_FORMAT) failure.
     withPlatform('win32', () => {
