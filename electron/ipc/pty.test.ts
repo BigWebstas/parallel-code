@@ -142,6 +142,7 @@ import {
   subscribeToAgent,
   subscribeToAgentRendered,
   validateCommand,
+  waitForAgentExit,
   writeToAgent,
   writeAgentPrompt,
 } from './pty.js';
@@ -1820,6 +1821,31 @@ describe('killAgent — Docker container lifecycle', () => {
       (c) => c[0] === 'docker' && Array.isArray(c[1]) && (c[1] as string[])[0] === 'stop',
     );
     expect(stopCall).toBeUndefined();
+  });
+});
+
+describe('waitForAgentExit', () => {
+  it('resolves immediately for an unknown agent', async () => {
+    await expect(waitForAgentExit('no-such-agent', 50)).resolves.toBeUndefined();
+  });
+
+  it('resolves once a killed agent exits', async () => {
+    const agentId = nextAgentId();
+    await spawnAgent(createMockNotify(), buildSpawnArgs({ agentId, dockerMode: false }));
+    killAgent(agentId);
+    // The mocked PTY fires its exit handlers synchronously inside kill, so the
+    // session is already gone — this must resolve well before the timeout.
+    await expect(waitForAgentExit(agentId, 2000)).resolves.toBeUndefined();
+  });
+
+  it('resolves after the timeout when the agent is still running', async () => {
+    const agentId = nextAgentId();
+    await spawnAgent(createMockNotify(), buildSpawnArgs({ agentId, dockerMode: false }));
+    try {
+      await expect(waitForAgentExit(agentId, 150)).resolves.toBeUndefined();
+    } finally {
+      killAgent(agentId);
+    }
   });
 });
 

@@ -31,6 +31,7 @@ import {
 import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
 import { commandExistsOnPath, isExplicitCommandPath } from './command-path.js';
+import { signalProcessGroup } from '../process-group.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -672,8 +673,48 @@ function cleanupExistingSession(agentId: string, existing: PtySession | undefine
   if (existing.flushTimer) clearTimeout(existing.flushTimer);
   existing.subscribers.clear();
   retireAgentLaunch(agentId, existing.launchId);
-  existing.proc.kill();
+  killPtyProc(existing);
   sessions.delete(agentId);
+}
+
+/**
+ * End a PTY's process. On Windows `proc.kill()` only ends the console wrapper —
+ * grandchildren (agent CLIs, git, node) survive and keep the task worktree's
+ * files locked, so closing the task later fails with EPERM/EBUSY. End the whole
+ * tree with `taskkill /T /F` instead, falling back to `proc.kill()`.
+ */
+function killPtyProc(session: PtySession): void {
+  if (process.platform === 'win32' && typeof session.proc.pid === 'number') {
+    try {
+      signalProcessGroup(session.proc, 'SIGKILL');
+      return;
+    } catch {
+      // Process already gone — fall through to proc.kill().
+    }
+  }
+  try {
+    session.proc.kill();
+  } catch {
+    /* already dead */
+  }
+}
+
+/**
+ * Resolve once the agent's PTY session has exited (its `onExit` cleanup ran),
+ * or after `timeoutMs` — whichever comes first. Never rejects: callers treat a
+ * timeout as "proceed anyway" because worktree removal retries on its own.
+ */
+export function waitForAgentExit(agentId: string, timeoutMs = 8000): Promise<void> {
+  if (!sessions.has(agentId) && !pendingSpawns.has(agentId)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (!sessions.has(agentId) || Date.now() - started >= timeoutMs) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 100);
+  });
 }
 
 function attachPtyOutputHandlers(
@@ -1185,7 +1226,7 @@ export function killAgent(agentId: string): void {
     if (session.containerName) {
       stopDockerContainer(session.containerName);
     }
-    session.proc.kill();
+    killPtyProc(session);
   }
 }
 
@@ -1212,7 +1253,7 @@ export function killAllAgents(): void {
         // Intentionally ignore: container may not exist or may have already stopped.
       }
     }
-    session.proc.kill();
+    killPtyProc(session);
   }
   // Let onExit handlers clean up sessions individually
 }

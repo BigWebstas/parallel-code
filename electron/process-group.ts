@@ -7,7 +7,8 @@ export const OWN_PROCESS_GROUP = process.platform !== 'win32';
 
 interface Killable {
   pid?: number;
-  kill(signal?: NodeJS.Signals): boolean;
+  // `unknown` covers both ChildProcess.kill (boolean) and node-pty's kill (void).
+  kill(signal?: NodeJS.Signals): unknown;
 }
 
 /**

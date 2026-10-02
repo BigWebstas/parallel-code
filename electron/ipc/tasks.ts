@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { createWorktree, removeWorktree, worktreePathFor } from './git.js';
-import { killAgent, notifyAgentListChanged } from './pty.js';
+import { killAgent, notifyAgentListChanged, waitForAgentExit } from './pty.js';
 import { stopPlanWatcher } from './plans.js';
 import { stopStepsWatcher } from './steps.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
@@ -82,6 +82,11 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
       /* already dead */
     }
   }
+  // A killed process tree releases its file handles asynchronously — on Windows
+  // a ConPTY tree can hold the worktree's files for seconds after the kill.
+  // Removing the worktree before the processes exit fails with EPERM/EBUSY and
+  // leaves the task stuck in its closing state, so wait (bounded) first.
+  await Promise.all(opts.agentIds.map((agentId) => waitForAgentExit(agentId)));
   await removeWorktree(opts.projectRoot, opts.branchName, opts.deleteBranch, opts.worktreePath);
   notifyAgentListChanged();
 }

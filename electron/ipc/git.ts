@@ -966,7 +966,7 @@ async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promis
   const rmError = await removeDirWithRetries(worktreePath);
   if (!rmError) return;
 
-  if (process.platform === 'win32') throw rmError;
+  if (process.platform === 'win32') throw lockedRemovalError(worktreePath, rmError);
 
   const uid = process.getuid?.() ?? -1;
   const gid = process.getgid?.() ?? -1;
@@ -989,7 +989,10 @@ async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promis
 
 /** Delete a directory tree, retrying with backoff. Returns the last error, or undefined on success. */
 async function removeDirWithRetries(dirPath: string): Promise<unknown> {
-  const delays = [0, 500, 1500, 3000];
+  // On Windows, killed processes, antivirus scanners and Explorer can hold file
+  // handles for seconds after the agents exit — retry longer than on POSIX.
+  const delays =
+    process.platform === 'win32' ? [0, 500, 1000, 2000, 3000, 4000] : [0, 500, 1500, 3000];
   let lastErr: unknown;
   for (const delay of delays) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
@@ -1001,6 +1004,19 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
     }
   }
   return lastErr;
+}
+
+/**
+ * Explain a Windows worktree removal failure in actionable terms: the raw
+ * EPERM/EBUSY/ENOTEMPTY error alone gives the user nothing to act on.
+ */
+function lockedRemovalError(worktreePath: string, cause: unknown): Error {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return new Error(
+    `Cannot remove worktree "${worktreePath}": ${detail}. ` +
+      'A process (agent, editor, or terminal) may still hold files open inside it. ' +
+      'Close anything using that folder, then close the task again to retry.',
+  );
 }
 
 // --- Public functions (used by tasks.ts and register.ts) ---
