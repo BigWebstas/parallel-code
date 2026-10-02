@@ -497,6 +497,10 @@ export async function closeTask(taskId: string): Promise<void> {
     }
 
     // Skip git cleanup for direct mode (no worktree/branch) and imported worktrees (user-owned).
+    // Proactively stop watchers so open file handles are released before deleting worktree files.
+    await invoke(IPC.StopPlanWatcher, { taskId }).catch(console.error);
+    await invoke(IPC.StopStepsWatcher, { taskId }).catch(console.error);
+
     // Their checkout stays, so the task's reasoning reports must be removed on their own.
     if (task.gitIsolation !== 'worktree' || task.externalWorktree) {
       if (task.worktreePath)

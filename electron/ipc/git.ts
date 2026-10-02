@@ -15,6 +15,7 @@ import {
   foreignOwnedRemovalError,
   prepareTreeForRemoval,
   reclaimOwnership,
+  stripReadOnlyAttributesWindows,
 } from './worktree-cleanup.js';
 import {
   ensureNodeModulesEntryLinks,
@@ -957,21 +958,31 @@ async function forceRemoveWorktreeDir(repoRoot: string, worktreePath: string): P
 }
 
 async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promise<void> {
-  // On Windows, prepare the tree first by unlinking node_modules junctions and clearing
-  // read-only attributes so git worktree remove does not fail on directory junctions or read-only files.
+  logDebug('git', `removeWorktreeDir starting for ${worktreePath}`);
+  // On Windows, prepare the tree first by clearing read-only attributes and unlinking node_modules junctions
+  // so git worktree remove does not fail on directory junctions or read-only files.
   if (process.platform === 'win32') {
+    stripReadOnlyAttributesWindows(worktreePath);
     prepareTreeForRemoval(worktreePath);
   }
 
   try {
     await exec('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot });
+    logDebug('git', `removeWorktreeDir: git worktree remove succeeded for ${worktreePath}`);
     return;
-  } catch {
-    // Fall through to direct removal.
+  } catch (err) {
+    logDebug(
+      'git',
+      `removeWorktreeDir: git worktree remove failed, falling back to direct removal for ${worktreePath}`,
+      { err: String(err) },
+    );
   }
 
   const rmError = await removeDirWithRetries(worktreePath);
-  if (!rmError) return;
+  if (!rmError) {
+    logDebug('git', `removeWorktreeDir: direct removal succeeded for ${worktreePath}`);
+    return;
+  }
 
   if (process.platform === 'win32') throw lockedRemovalError(worktreePath, rmError);
 
@@ -996,20 +1007,48 @@ async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promis
 
 /** Delete a directory tree, retrying with backoff. Returns the last error, or undefined on success. */
 async function removeDirWithRetries(dirPath: string): Promise<unknown> {
-  // On Windows, killed processes, antivirus scanners and Explorer can hold file
+  // On Windows, killed processes, antivirus scanners, file watchers and Explorer can hold file
   // handles for seconds after the agents exit — retry with backoff.
   const delays =
-    process.platform === 'win32' ? [0, 100, 300, 600, 1200, 2000, 3000] : [0, 500, 1500, 3000];
+    process.platform === 'win32' ? [150, 300, 600, 1200, 2000, 3000, 4000] : [0, 500, 1500, 3000];
   let lastErr: unknown;
-  for (const delay of delays) {
+  for (const [index, delay] of delays.entries()) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
       prepareTreeForRemoval(dirPath);
       fs.rmSync(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
-      return undefined;
+      if (!fs.existsSync(dirPath)) {
+        logDebug('git', `removeDirWithRetries succeeded on attempt ${index + 1} for ${dirPath}`);
+        return undefined;
+      }
     } catch (e) {
       if (!fs.existsSync(dirPath)) return undefined;
       lastErr = e;
+      logDebug('git', `removeDirWithRetries attempt ${index + 1} failed for ${dirPath}`, {
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
+
+    // On Windows, if fs.rmSync failed, try native Windows rmdir fallback
+    if (process.platform === 'win32' && fs.existsSync(dirPath)) {
+      try {
+        await exec('cmd.exe', ['/d', '/s', '/c', `rmdir /s /q "${dirPath}"`]);
+        if (!fs.existsSync(dirPath)) {
+          logDebug(
+            'git',
+            `removeDirWithRetries native rmdir succeeded on attempt ${index + 1} for ${dirPath}`,
+          );
+          return undefined;
+        }
+      } catch (cmdErr) {
+        logDebug(
+          'git',
+          `removeDirWithRetries native rmdir attempt ${index + 1} failed for ${dirPath}`,
+          {
+            err: cmdErr instanceof Error ? cmdErr.message : String(cmdErr),
+          },
+        );
+      }
     }
   }
   return lastErr;
@@ -1417,10 +1456,40 @@ export async function removeWorktree(
 
   if (deleteBranch) {
     try {
+      const { stdout: rootBranch } = await exec('git', ['symbolic-ref', '--short', '-q', 'HEAD'], {
+        cwd: repoRoot,
+      }).catch(() => ({ stdout: '' }));
+      if (rootBranch.trim() && rootBranch.trim() === branchName) {
+        logDebug(
+          'git',
+          `Skipping branch deletion for '${branchName}' because it is checked out in repoRoot`,
+        );
+        return;
+      }
       await exec('git', ['branch', '-D', '--', branchName], { cwd: repoRoot });
     } catch (e: unknown) {
       const msg = String(e);
-      if (!msg.toLowerCase().includes('not found')) throw e;
+      const lower = msg.toLowerCase();
+      if (lower.includes('not found')) {
+        return;
+      }
+      // If git refuses because the branch is checked out in repoRoot (e.g. main/windows),
+      // skip deletion cleanly without failing the task removal. Other worktree leaks still throw.
+      if (lower.includes('used by worktree') || lower.includes('checked out at')) {
+        const match = msg.match(/used by worktree at ['"]?([^'"\r\n]+)['"]?/i);
+        if (match) {
+          const usedPath = safeRealpath(path.resolve(match[1].trim()));
+          const rootPath = safeRealpath(path.resolve(repoRoot));
+          if (usedPath.toLowerCase() === rootPath.toLowerCase()) {
+            logDebug(
+              'git',
+              `Skipping branch deletion for '${branchName}' because it is checked out in repoRoot (${match[1]})`,
+            );
+            return;
+          }
+        }
+      }
+      throw e;
     }
   }
 }

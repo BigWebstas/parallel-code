@@ -91,7 +91,7 @@ export const [store, setStore] = createStore<AppStore>({
   keybindingMigrationDismissed: false,
   focusMode: false,
   taskSplitMode: {},
-  verboseLogging: false,
+  verboseLogging: typeof navigator !== 'undefined' && navigator.userAgent.includes('Win'),
   mcpOrchestrationEnabled: true,
   documentWorkspacesEnabled: false,
   documentFullWidth: false,

@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -164,6 +164,23 @@ export function foreignOwnedRemovalError(
 function firstLine(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   return msg.split('\n')[0].trim() || 'unknown error';
+}
+
+/**
+ * Strips the NTFS read-only attribute recursively from files and directories
+ * under `dirPath` on Windows using `attrib -r /s /d`.
+ */
+export function stripReadOnlyAttributesWindows(dirPath: string): void {
+  if (process.platform !== 'win32') return;
+  try {
+    execFileSync('attrib', ['-r', path.join(dirPath, '*'), '/s', '/d'], {
+      stdio: 'ignore',
+      windowsHide: true,
+      timeout: 5000,
+    });
+  } catch {
+    /* best-effort attrib */
+  }
 }
 
 /**

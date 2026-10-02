@@ -4,7 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IPC } from './channels.js';
-import { readPlanForWorktree, startPlanWatcher, stopAllPlanWatchers } from './plans.js';
+import {
+  readPlanForWorktree,
+  startPlanWatcher,
+  stopAllPlanWatchers,
+  stopPlanWatchersForPath,
+} from './plans.js';
 
 let worktreePath: string;
 
@@ -216,4 +221,15 @@ describe('root-level plan files', () => {
       );
     },
   );
+});
+
+describe('stopPlanWatchersForPath', () => {
+  it('stops watchers matching the worktree path', async () => {
+    const send = vi.fn();
+    startPlanWatcher(send, 'task-path-stop', worktreePath);
+    stopPlanWatchersForPath(worktreePath);
+    writeFile('docs/plans/design.md');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(send).not.toHaveBeenCalled();
+  });
 });

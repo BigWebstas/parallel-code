@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   notifyAgentListChanged: vi.fn(),
   waitForAgentExit: vi.fn(async () => {}),
   cancelVerify: vi.fn(),
+  stopPlanWatcher: vi.fn(),
+  stopPlanWatchersForPath: vi.fn(),
+  stopStepsWatcher: vi.fn(),
+  stopStepsWatchersForPath: vi.fn(),
 }));
 
 vi.mock('./git.js', async (importOriginal) => ({
@@ -23,8 +27,14 @@ vi.mock('./pty.js', () => ({
   notifyAgentListChanged: mocks.notifyAgentListChanged,
   waitForAgentExit: mocks.waitForAgentExit,
 }));
-vi.mock('./plans.js', () => ({ stopPlanWatcher: vi.fn() }));
-vi.mock('./steps.js', () => ({ stopStepsWatcher: vi.fn() }));
+vi.mock('./plans.js', () => ({
+  stopPlanWatcher: mocks.stopPlanWatcher,
+  stopPlanWatchersForPath: mocks.stopPlanWatchersForPath,
+}));
+vi.mock('./steps.js', () => ({
+  stopStepsWatcher: mocks.stopStepsWatcher,
+  stopStepsWatchersForPath: mocks.stopStepsWatchersForPath,
+}));
 vi.mock('./verify.js', () => ({ verificationRunner: { cancel: mocks.cancelVerify } }));
 
 import { createTask, deleteTask } from './tasks.js';
@@ -90,6 +100,14 @@ describe('deleteTask', () => {
     });
 
     expect(mocks.cancelVerify).toHaveBeenCalledWith('t-123');
+    expect(mocks.stopPlanWatcher).toHaveBeenCalledWith('t-123');
+    expect(mocks.stopStepsWatcher).toHaveBeenCalledWith('t-123');
+    expect(mocks.stopPlanWatchersForPath).toHaveBeenCalledWith(
+      path.join('/nonexistent-root', '.worktrees', 'task/x'),
+    );
+    expect(mocks.stopStepsWatchersForPath).toHaveBeenCalledWith(
+      path.join('/nonexistent-root', '.worktrees', 'task/x'),
+    );
     expect(mocks.killAgent).toHaveBeenCalledTimes(2);
     expect(mocks.waitForAgentExit).toHaveBeenCalledTimes(2);
     expect(mocks.waitForAgentExit).toHaveBeenCalledWith('a1');

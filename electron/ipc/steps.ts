@@ -14,6 +14,7 @@ import {
 interface StepsWatcher {
   fsWatcher: fs.FSWatcher | null;
   timeout: ReturnType<typeof setTimeout> | null;
+  worktreePath: string;
   stepsDir: string;
   stepsFile: string;
 }
@@ -155,6 +156,7 @@ export function startStepsWatcher(notify: Notify, taskId: string, worktreePath: 
   const entry: StepsWatcher = {
     fsWatcher: null,
     timeout: null,
+    worktreePath,
     stepsDir,
     stepsFile,
   };
@@ -233,6 +235,16 @@ export function stopStepsWatcher(taskId: string): void {
   if (entry.fsWatcher) entry.fsWatcher.close();
   watchers.delete(taskId);
   processedCount.delete(taskId);
+}
+
+/** Stops and removes any steps watchers associated with the given worktree path. */
+export function stopStepsWatchersForPath(worktreePath: string): void {
+  const target = path.resolve(worktreePath);
+  for (const [taskId, entry] of watchers) {
+    if (path.resolve(entry.worktreePath) === target) {
+      stopStepsWatcher(taskId);
+    }
+  }
 }
 
 /** Read steps.json from a worktree. Used for one-shot restore. */

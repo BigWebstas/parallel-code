@@ -6,7 +6,14 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { registerAllHandlers } from './ipc/register.js';
-import { registerLogHandler, warn as logWarn, error as logError } from './log.js';
+import {
+  registerLogHandler,
+  initFileLogging,
+  getLogFilePath,
+  info as logInfo,
+  warn as logWarn,
+  error as logError,
+} from './log.js';
 import { loadAppState } from './ipc/persistence.js';
 import { reconcileWorktreeIntents } from './ipc/worktree-intents.js';
 import { getUserDataDir } from './user-data-dir.js';
@@ -28,6 +35,14 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize file logging as early as possible so all startup logs and
+// uncaught exceptions are captured to disk.
+try {
+  initFileLogging(getUserDataDir());
+} catch {
+  // Best effort if userData is unavailable
+}
 
 process.on('uncaughtException', (err) => {
   logError('main', 'Uncaught exception in main process', {
@@ -73,6 +88,18 @@ if (!shouldStartApp) app.quit();
 // eviction for GPU-process crashes on weak GPUs. The switch also raises the
 // worker-context limit to the same value (unused — no WebGL in our workers).
 app.commandLine.appendSwitch('max-active-webgl-contexts', '64');
+
+// Enable console logging on Windows or when debugging so CLI/terminal stdout/stderr
+// is visible and not swallowed by the Windows GUI subsystem.
+if (
+  process.platform === 'win32' ||
+  process.argv.includes('--debug') ||
+  process.argv.includes('--enable-logging') ||
+  process.argv.includes('--verbose') ||
+  Boolean(process.env.DEBUG || process.env.PARALLEL_CODE_DEBUG)
+) {
+  app.commandLine.appendSwitch('enable-logging');
+}
 
 // Verify that preload.cjs ALLOWED_CHANNELS stays in sync with the IPC enum.
 // Logs a warning in dev if they drift — catches mismatches before they hit users.
@@ -307,6 +334,10 @@ if (shouldStartApp) {
     reportOrphanedWorktrees();
     createWindow();
     registerParallelCodeProtocol();
+    const logFile = getLogFilePath();
+    if (logFile) {
+      logInfo('main', `Debug log initialized at: ${logFile}`);
+    }
     // Linux/Windows cold start: the link is a launch argument.
     const launchUrl = findProtocolUrl(process.argv);
     if (launchUrl) handleProtocolUrl(launchUrl, mainWindow);
@@ -334,6 +365,7 @@ app.on('before-quit', (event) => {
 // Runs only on a quit that got through the check above, so it cannot destroy
 // anything the user still had a chance to cancel.
 app.on('will-quit', () => {
+  logInfo('main', 'App will-quit: shutting down background services and killing agents');
   // Hand the lock over before the blocking teardown below, not at process exit.
   // electron-updater's AppImage path spawns the replacement *before* quitting
   // (`doInstall` → `spawnLog(destination)`, then `setImmediate(() =>
@@ -356,6 +388,7 @@ app.on('will-quit', () => {
   stopAllPlanWatchers();
   stopAllDocumentWork();
   stopAllStepsWatchers();
+  logInfo('main', 'App will-quit: teardown complete');
 });
 
 // "Keep them alive in the background" hides the window; without this the dock

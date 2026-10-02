@@ -830,7 +830,10 @@ export async function loadState(): Promise<void> {
 
       s.focusMode = raw.focusMode === true;
 
-      s.verboseLogging = typeof raw.verboseLogging === 'boolean' ? raw.verboseLogging : false;
+      s.verboseLogging =
+        typeof raw.verboseLogging === 'boolean'
+          ? raw.verboseLogging
+          : typeof navigator !== 'undefined' && navigator.userAgent.includes('Win');
 
       const rawDelay = raw.coordinatorNotificationDelayMs;
       s.coordinatorNotificationDelayMs =

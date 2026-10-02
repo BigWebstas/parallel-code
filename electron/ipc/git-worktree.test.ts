@@ -594,6 +594,17 @@ describe('sandbox setup lifecycle', () => {
       'export const a = 1;\n',
     );
   });
+
+  it('does not throw and skips branch deletion when deleteBranch is true for repo root active branch', async () => {
+    const root = initRepository();
+    const taskBranch = 'task-root-branch-protection';
+    const worktree = (await createWorktree(root, taskBranch, [])).path;
+    expect(fs.existsSync(worktree)).toBe(true);
+
+    // Attempting to remove worktree while passing 'main' with deleteBranch: true must not throw or delete main
+    await expect(removeWorktree(root, 'main', true, worktree)).resolves.not.toThrow();
+    expect(git(root, ['branch', '--list', 'main'])).toContain('main');
+  });
 });
 
 describe('refreshWorktreeNodeModules', () => {

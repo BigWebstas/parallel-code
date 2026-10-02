@@ -33,7 +33,7 @@ import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
 import { commandExistsOnPath, isExplicitCommandPath } from './command-path.js';
 import { signalProcessGroup } from '../process-group.js';
-import { debug as logDebug, warn as logWarn } from '../log.js';
+import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -692,6 +692,8 @@ function killPtyProc(session: PtySession): void {
   if (session.killed) return;
   session.killed = true;
 
+  logDebug('pty', `killPtyProc pid=${session.proc.pid} platform=${process.platform}`);
+
   if (
     process.platform === 'win32' &&
     typeof session.proc.pid === 'number' &&
@@ -699,15 +701,23 @@ function killPtyProc(session: PtySession): void {
   ) {
     try {
       signalProcessGroup(session.proc, 'SIGKILL');
+      logDebug('pty', `killPtyProc signalProcessGroup succeeded for pid=${session.proc.pid}`);
       return;
-    } catch {
-      // Process already gone or signal failed — fall through to proc.kill().
+    } catch (err) {
+      logDebug(
+        'pty',
+        `killPtyProc signalProcessGroup failed for pid=${session.proc.pid}, falling back to proc.kill()`,
+        { err: errMessage(err) },
+      );
     }
   }
   try {
     session.proc.kill();
-  } catch {
-    /* already dead */
+    logDebug('pty', `killPtyProc proc.kill() called for pid=${session.proc.pid}`);
+  } catch (err) {
+    logDebug('pty', `killPtyProc proc.kill() failed or already dead for pid=${session.proc.pid}`, {
+      err: errMessage(err),
+    });
   }
 }
 
@@ -718,11 +728,16 @@ function killPtyProc(session: PtySession): void {
  */
 export function waitForAgentExit(agentId: string, timeoutMs = 8000): Promise<void> {
   if (!sessions.has(agentId) && !pendingSpawns.has(agentId)) return Promise.resolve();
+  logDebug('pty', `waitForAgentExit starting for ${agentId} timeoutMs=${timeoutMs}`);
   return new Promise((resolve) => {
     const started = Date.now();
     const timer = setInterval(() => {
       if (!sessions.has(agentId) || Date.now() - started >= timeoutMs) {
         clearInterval(timer);
+        logDebug(
+          'pty',
+          `waitForAgentExit finished for ${agentId} elapsed=${Date.now() - started}ms stillRunning=${sessions.has(agentId)}`,
+        );
         resolve();
       }
     }, 100);
@@ -832,6 +847,10 @@ function attachPtyOutputHandlers(
   }
 
   session.proc.onExit(({ exitCode, signal }) => {
+    logDebug(
+      'pty',
+      `agent PTY onExit agentId=${args.agentId} code=${exitCode} signal=${signal ?? 'none'}`,
+    );
     session.queries.dispose();
     retireAgentLaunch(args.agentId, session.launchId);
     if (sessions.get(args.agentId) !== session) return;
@@ -1232,11 +1251,15 @@ export function resumeAgent(agentId: string): void {
 }
 
 export function killAgent(agentId: string): void {
+  const session = sessions.get(agentId);
+  logDebug('pty', `killAgent ${agentId}`, {
+    hasSession: Boolean(session),
+    pid: session?.proc.pid,
+  });
   pendingSpawns.delete(agentId);
   codexExitIds.delete(agentId);
   carriedScrollback.delete(agentId);
   stopAgentChat(agentId);
-  const session = sessions.get(agentId);
   if (session) {
     if (session.flushTimer) {
       clearTimeout(session.flushTimer);
