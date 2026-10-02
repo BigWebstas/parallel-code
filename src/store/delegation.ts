@@ -77,11 +77,18 @@ export async function registerTaskAuthority(task: Task, agent?: AgentDef): Promi
   });
   if (!registeredTask || store.tasks[task.id] !== registeredTask) return;
   void refreshDelegationState(task.id).catch((error: unknown) => {
+    if (isClosing(task.id)) return;
     logWarn('delegation.hydration', 'Delegation state hydration failed', {
       taskId: task.id,
       error: String(error),
     });
   });
+}
+
+/** The main process rejects state reads for a closing task; that is expected, not a failure. */
+function isClosing(taskId: string): boolean {
+  const status = store.tasks[taskId]?.closingStatus;
+  return status === 'closing' || status === 'removing';
 }
 
 let nextStateRevision = 0;
@@ -156,7 +163,7 @@ export function startDelegationStateHydration(): () => void {
         for (const [taskId, task] of tasks) {
           if (previous.get(taskId) === task) continue;
           void loadDelegationState(taskId, () => !disposed).catch((error: unknown) => {
-            if (!disposed && store.tasks[taskId] === task)
+            if (!disposed && store.tasks[taskId] === task && !isClosing(taskId))
               logWarn('delegation.hydration', 'Delegation state hydration failed', {
                 taskId,
                 error: String(error),

@@ -3,7 +3,7 @@ import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import type { Notify } from './notify.js';
-import { debug as logDebug } from '../log.js';
+import { debug as logDebug, warn as logWarn } from '../log.js';
 import {
   appendGitInfoExcludeBlock,
   appendGitInfoExcludeBlockAtPath,
@@ -1416,6 +1416,13 @@ export async function removeWorktree(
   }
 
   if (deleteBranch) {
+    // The main checkout's own branch belongs to the user; git refuses to
+    // delete it, and that refusal must not block closing the task.
+    const mainBranch = await getCurrentBranchName(repoRoot).catch(() => '');
+    if (mainBranch === branchName) {
+      logWarn('git', 'Kept task branch checked out in the main checkout', { branchName });
+      return;
+    }
     try {
       await exec('git', ['branch', '-D', '--', branchName], { cwd: repoRoot });
     } catch (e: unknown) {

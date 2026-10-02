@@ -108,6 +108,17 @@ describe('branch adoption against real git', () => {
     expect(fs.existsSync(worktreePath)).toBe(true);
   });
 
+  it('close keeps a task branch the main checkout has checked out', async () => {
+    const { root, worktreePath } = makeRepo('close-main-branch');
+    run(worktreePath, ['checkout', '--detach']);
+    run(root, ['checkout', TASK_BRANCH]);
+
+    await removeWorktree(root, TASK_BRANCH, true, worktreePath);
+
+    expect(fs.existsSync(worktreePath)).toBe(false);
+    expect(run(root, ['branch', '--list', TASK_BRANCH])).toContain(TASK_BRANCH);
+  });
+
   it('merge after adoption: guard passes, work lands on main, cleanup runs', async () => {
     const { root, worktreePath } = makeRepo('merge');
     agentSwitchesBranch(worktreePath);
