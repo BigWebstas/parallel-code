@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import type { BrowserWindow } from 'electron';
 import { validateCommand, ENV_BLOCK_LIST } from './pty.js';
 import { loadEnvFile } from './env-file.js';
+import { resolveWindowsLaunch } from '../windows-launch.js';
 import { ASK_CODE_MODELS, type AskCodeProvider } from '../shared/ask-code-models.js';
 import {
   askCodePromptLimit,
@@ -93,7 +94,8 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
 
   validateCommand('claude');
 
-  const proc = spawn(
+  const env = askCodeEnv(envFile);
+  const launch = resolveWindowsLaunch(
     'claude',
     [
       '-p',
@@ -109,12 +111,13 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
       '--append-system-prompt',
       askCodeSystemPrompt(args.purpose),
     ],
-    {
-      cwd,
-      env: askCodeEnv(envFile),
-      stdio: [isStructured ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-    },
+    env,
   );
+  const proc = spawn(launch.file, launch.args, {
+    cwd,
+    env,
+    stdio: [isStructured ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+  });
 
   const send = sendToChannel;
 
@@ -224,7 +227,8 @@ function asText(value: unknown): string {
  */
 function askAboutCodeCodex(args: AskCodeRequest, send: (msg: unknown) => void): void {
   validateCommand('codex');
-  const proc = spawn(
+  const env = askCodeEnv(args.envFile);
+  const launch = resolveWindowsLaunch(
     'codex',
     [
       'exec',
@@ -239,8 +243,13 @@ function askAboutCodeCodex(args: AskCodeRequest, send: (msg: unknown) => void): 
       ...(args.model ? ['-m', args.model] : []),
       '-',
     ],
-    { cwd: args.cwd, env: askCodeEnv(args.envFile), stdio: ['pipe', 'pipe', 'pipe'] },
+    env,
   );
+  const proc = spawn(launch.file, launch.args, {
+    cwd: args.cwd,
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
 
   const session = AskCodeSession.start(
     activeRequests,

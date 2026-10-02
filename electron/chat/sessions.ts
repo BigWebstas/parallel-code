@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'node:child_process';
 import { isAbsolute, resolve } from 'node:path';
 import { OWN_PROCESS_GROUP } from '../process-group.js';
+import { resolveWindowsLaunch, resolveWindowsProgram } from '../windows-launch.js';
 import { promisify } from 'node:util';
 import { ClaudeChat } from './claude.js';
 import { CodexChat } from '../ipc/codex-chat.js';
@@ -33,11 +34,17 @@ function notifyListChanged(): void {
 /** Use the user's unmodified executable and its own authentication flow. */
 async function resolveExecutable(opts: ChatStartOptions): Promise<string> {
   if (isExplicitCommandPath(opts.command) || isAbsolute(opts.command)) {
-    return resolve(opts.cwd, opts.command);
+    return resolveWindowsProgram(resolve(opts.cwd, opts.command), opts.env);
+  }
+  // `where` lists npm's extensionless bash shim first; the SDK needs the real
+  // binary or the `.js` entry (which it runs with node).
+  if (process.platform === 'win32') {
+    const program = resolveWindowsProgram(opts.command, opts.env);
+    if (program !== opts.command) return program;
+    throw new Error(`Could not find "${opts.command}" on PATH. Use its full path instead.`);
   }
   try {
-    const resolver = process.platform === 'win32' ? 'where' : 'which';
-    const { stdout } = await promisify(execFile)(resolver, [opts.command], {
+    const { stdout } = await promisify(execFile)('which', [opts.command], {
       env: opts.env,
       encoding: 'utf8',
       timeout: 3000,
@@ -99,12 +106,16 @@ export async function startAgentChat(
         chat = claude;
         start = () => claude.start();
       } else {
-        const proc = spawn(command, ['app-server', ...(resources?.args ?? [])], {
+        const launch = resolveWindowsLaunch(
+          command,
+          ['app-server', ...(resources?.args ?? [])],
+          opts.env,
+        );
+        const proc = spawn(launch.file, launch.args, {
           cwd: opts.cwd,
           env: opts.env,
           stdio: 'pipe',
           detached: OWN_PROCESS_GROUP,
-          shell: process.platform === 'win32',
         });
         const codex = new CodexChat(proc, publish);
         chat = codex;

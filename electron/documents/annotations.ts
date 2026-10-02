@@ -11,6 +11,7 @@ import type { BrowserWindow } from 'electron';
 import { IPC } from '../ipc/channels.js';
 import { errMessage } from '../log.js';
 import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
+import { resolveWindowsLaunch } from '../windows-launch.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
@@ -394,7 +395,8 @@ export async function askAnnotation(
   });
   const env = buildPtySpawnEnv({}, envFile?.trim() ? loadEnvFile(envFile) : {});
   const parser = createHeadlessParser(agentId);
-  const proc = spawn(launch.command, launch.args, {
+  const target = resolveWindowsLaunch(launch.command, launch.args, env);
+  const proc = spawn(target.file, target.args, {
     cwd: projectRoot,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
