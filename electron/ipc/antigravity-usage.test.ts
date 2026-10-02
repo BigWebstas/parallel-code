@@ -1,10 +1,11 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   antigravityFallbackCachePaths,
   antigravityQuotaCachePath,
+  clearRememberedCredentials,
   discoverAllLanguageServerCredentials,
   discoverLanguageServerCredentials,
   fetchAntigravityUsage,
@@ -13,6 +14,10 @@ import {
 } from './antigravity-usage.js';
 
 const NOW = 1_700_000_000_000;
+
+beforeEach(() => {
+  clearRememberedCredentials();
+});
 
 describe('antigravityQuotaCachePath', () => {
   it('honours ANTIGRAVITY_QUOTA_CACHE when set', () => {
@@ -502,5 +507,58 @@ describe('fetchAntigravityUsage', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: origPlatform });
     }
+  });
+
+  it('remembers active language server credentials for subsequent queries when discovery returns empty', async () => {
+    const http = await import('node:http');
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          userStatus: {
+            cascadeModelConfigData: {
+              clientModelConfigs: [
+                {
+                  label: 'Gemini 3.8 Flash (High)',
+                  quotaInfo: { remainingFraction: 0.8, resetTime: '2026-09-29T03:00:00Z' },
+                },
+              ],
+            },
+          },
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+
+    try {
+      const liveCred = { address: `127.0.0.1:${port}`, token: 'live-token' };
+      const missing = path.join(tempDir(), 'quota_cache.json');
+      const isolatedEnv = { HOME: tempDir() };
+
+      // First query discovers and remembers credentials
+      const first = await fetchAntigravityUsage(missing, isolatedEnv, () => [liveCred]);
+      expect(first.status).toBe('ok');
+
+      // Second query with empty discovery reuses the remembered credentials
+      const second = await fetchAntigravityUsage(missing, isolatedEnv, () => []);
+      expect(second.status).toBe('ok');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('prunes dead remembered credentials when querying fails', async () => {
+    const missing = path.join(tempDir(), 'quota_cache.json');
+    const isolatedEnv = { HOME: tempDir() };
+    // First query with dead port remembers nothing because query fails
+    const deadCred = { address: '127.0.0.1:1', token: 'dead-token' };
+    const first = await fetchAntigravityUsage(missing, isolatedEnv, () => [deadCred]);
+    expect(first.status).toBe('unavailable');
+
+    // Second query with empty discovery finds no candidates
+    const second = await fetchAntigravityUsage(missing, isolatedEnv, () => []);
+    expect(second.status).toBe('unavailable');
   });
 });
