@@ -55,10 +55,8 @@ jobs:
       - name: Test (coordinator against a real pty)
         run: npm run test:coordinator-pty
 
-  # Windows never had coverage: POSIX-only suites (git worktrees, pty,
-  # coordinator) need /bin/sh and fail there, so this job runs the static
-  # checks plus the platform-agnostic unit tests that Windows support added
-  # or touched.
+  # The full unit and client suites on Windows. Tests that exercise POSIX-only
+  # behaviour (a /bin/sh, process groups, file modes) skip themselves there.
   quality-windows:
     runs-on: windows-latest
     env:
@@ -87,18 +85,8 @@ jobs:
       - name: Check static (typecheck + lint + dead code + architecture)
         run: npm run check:static
 
-      - name: Test (Windows-compatible unit tests)
-        run: >
-          npx vitest run electron/agent-hooks electron/ipc/verify.test.ts
-          electron/ipc/symlink.test.ts electron/ipc/open-file.test.ts
-          electron/ipc/mcp-paths.test.ts electron/ipc/command-path.test.ts
-          electron/shared/command-name.test.ts electron/sessions/transcripts.test.ts
-          electron/sessions/scan.test.ts electron/ipc/tasks.test.ts
-          electron/install-script.test.ts electron/ipc/antigravity-usage.test.ts
-          electron/ipc/validate.test.ts electron/ipc/worktree-node-modules.test.ts
-          electron/mcp/delegation.test.ts electron/windows-launch.test.ts electron/docker-paths.test.ts
-          src/lib/path.test.ts src/lib/terminalLinks.test.ts
-          src/lib/canvas-auto-open.test.ts src/lib/keybindings
+      - name: Test (unit suite)
+        run: npm run test:unit
 
       - name: Test (client suite)
         run: npm run test:client
