@@ -125,6 +125,7 @@
   "build": {
     "appId": "com.parallel-code.app",
     "productName": "Parallel Code",
+    "npmRebuild": false,
     "afterPack": "./scripts/after-pack.cjs",
     "directories": {
       "buildResources": "build",
