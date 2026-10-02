@@ -26,7 +26,7 @@ const LOG = 'updater';
 
 // The Linux AppImage runtime sets APPIMAGE to the mounted image path. Its
 // absence on Linux means a non-updatable target (e.g. an installed `.deb`).
-// Windows nsis installs update through electron-updater's squirrel channel.
+// Windows NSIS installs update through electron-updater's NSIS updater.
 // `app` is undefined when this module is loaded outside an Electron runtime
 // (e.g. a unit test), so guard every access.
 function isAutoUpdateSupported(): boolean {

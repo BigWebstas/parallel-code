@@ -11,7 +11,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { Notify } from './notify.js';
 import { RingBuffer } from '../remote/ring-buffer.js';
-import { resolveUserShell } from '../user-shell.js';
+import { resolveTerminalShell } from '../user-shell.js';
 import { launchProgram, locateWindowsCommand } from '../windows-launch.js';
 import {
   bindMount,
@@ -955,7 +955,7 @@ export async function spawnAgent(
 ): Promise<void> {
   if (handingOff.has(args.agentId)) throw new Error('Wait for the view switch to finish.');
   const channelId = args.onOutput.__CHANNEL_ID__;
-  const command = args.command || resolveUserShell();
+  const command = args.command || resolveTerminalShell();
   // HOME is frequently unset on Windows and '/' is drive-relative there;
   // fall back to USERPROFILE / the OS home directory instead.
   const cwd = args.cwd || process.env.HOME || process.env.USERPROFILE || safeHomedir();
