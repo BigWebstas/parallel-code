@@ -350,6 +350,16 @@ export function stopPlanWatcher(taskId: string): void {
   watchers.delete(taskId);
 }
 
+/** Stops and removes any plan watchers associated with the given worktree path. */
+export function stopPlanWatchersForPath(worktreePath: string): void {
+  const target = path.resolve(worktreePath);
+  for (const [taskId, entry] of watchers) {
+    if (path.resolve(entry.worktreePath) === target) {
+      stopPlanWatcher(taskId);
+    }
+  }
+}
+
 /** Read a specific plan file from a worktree, or the newest if no name given. */
 export function readPlanForWorktree(worktreePath: string, fileName?: string): PlanFile | null {
   const plansDirs = PLAN_DIRS.map((rel) => path.join(worktreePath, rel));

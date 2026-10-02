@@ -10,6 +10,9 @@
 
 /* eslint-disable no-console */
 
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import type { IpcMain } from 'electron';
 import { IPC } from './ipc/channels.js';
 
@@ -26,6 +29,13 @@ export type LogFromRendererPayload = {
   ts: number;
 };
 
+export interface InitFileLoggingOptions {
+  /** Target directory or full file path. If directory, 'debug.log' is appended. */
+  dirOrPath?: string;
+  /** Maximum bytes before rotation. Defaults to 10 MB. */
+  maxBytes?: number;
+}
+
 const LEVEL_RANK: Record<LogLevel, number> = { debug: 0, info: 1, warn: 2, error: 3 };
 
 const CTX_MAX_BYTES = 4 * 1024;
@@ -33,9 +43,164 @@ const STACK_MAX_LINES = 50;
 const RENDERER_MALFORMED_SHAPES = new Set<string>();
 
 const isProd = process.env.NODE_ENV === 'production';
-let minLevel: LogLevel = isProd ? 'warn' : 'debug';
+
+export function isDebugForced(): boolean {
+  if (process.platform === 'win32') return true;
+  if (process.env.DEBUG || process.env.PARALLEL_CODE_DEBUG) return true;
+  if (process.argv.some((arg) => arg === '--debug' || arg === '--verbose' || arg === '-v')) {
+    return true;
+  }
+  return !isProd;
+}
+
+export function determineInitialMinLevel(): LogLevel {
+  const envLevel = process.env.PARALLEL_CODE_LOG_LEVEL?.toLowerCase();
+  if (envLevel === 'debug' || envLevel === 'info' || envLevel === 'warn' || envLevel === 'error') {
+    return envLevel;
+  }
+  return isDebugForced() ? 'debug' : 'warn';
+}
+
+let minLevel: LogLevel = determineInitialMinLevel();
 
 let inLogger = false;
+let logFilePath: string | null = null;
+let logFileBytes = 0;
+let maxLogFileBytes = 10 * 1024 * 1024; // 10 MB
+
+export function setMinLevel(level: LogLevel): void {
+  minLevel = level;
+}
+
+function rotateLogFile(filePath: string): void {
+  try {
+    const oldPath = filePath.replace(/\.log$/i, '') + '.old.log';
+    if (fs.existsSync(oldPath)) {
+      try {
+        fs.unlinkSync(oldPath);
+      } catch {
+        // Best effort
+      }
+    }
+    fs.renameSync(filePath, oldPath);
+  } catch {
+    // If rename fails (e.g. file lock on Windows), truncate the existing file
+    try {
+      fs.writeFileSync(filePath, '', { flag: 'w' });
+    } catch {
+      // Best effort
+    }
+  }
+}
+
+export function initFileLogging(target?: string | InitFileLoggingOptions): string | null {
+  try {
+    let targetPath: string | undefined;
+    let maxBytes = 10 * 1024 * 1024;
+    if (typeof target === 'string') {
+      targetPath = target;
+    } else if (target && typeof target === 'object') {
+      targetPath = target.dirOrPath;
+      if (typeof target.maxBytes === 'number' && target.maxBytes > 0) {
+        maxBytes = target.maxBytes;
+      }
+    }
+
+    maxLogFileBytes = maxBytes;
+
+    const envFile = process.env.PARALLEL_CODE_LOG_FILE;
+    const resolvedPath =
+      envFile ||
+      (targetPath
+        ? targetPath.endsWith('.log')
+          ? targetPath
+          : path.join(targetPath, 'debug.log')
+        : null);
+
+    if (!resolvedPath) {
+      return null;
+    }
+
+    const dir = path.dirname(resolvedPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    try {
+      if (fs.existsSync(resolvedPath)) {
+        const stat = fs.statSync(resolvedPath);
+        if (stat.size >= maxLogFileBytes) {
+          rotateLogFile(resolvedPath);
+          logFileBytes = 0;
+        } else {
+          logFileBytes = stat.size;
+        }
+      } else {
+        logFileBytes = 0;
+      }
+    } catch {
+      logFileBytes = 0;
+    }
+
+    logFilePath = resolvedPath;
+
+    const electronVer = (process.versions as Record<string, string | undefined>).electron ?? 'N/A';
+    const banner = [
+      '',
+      '================================================================================',
+      `Parallel Code Debug Log Started: ${new Date().toISOString()}`,
+      `Platform: ${process.platform} (${process.arch}) | OS: ${os.release()}`,
+      `Node: ${process.versions.node} | Electron: ${electronVer} | PID: ${process.pid}`,
+      `CWD: ${process.cwd()}`,
+      `Args: ${process.argv.join(' ')}`,
+      '================================================================================',
+      '',
+    ].join('\n');
+
+    fs.appendFileSync(logFilePath, banner, 'utf8');
+    logFileBytes += Buffer.byteLength(banner, 'utf8');
+
+    return logFilePath;
+  } catch {
+    return null;
+  }
+}
+
+export function getLogFilePath(): string | null {
+  return logFilePath;
+}
+
+export function closeFileLogging(): void {
+  logFilePath = null;
+  logFileBytes = 0;
+  maxLogFileBytes = 10 * 1024 * 1024;
+}
+
+function writeFile(
+  now: Date,
+  level: LogLevel,
+  category: string,
+  msg: string,
+  ctxStr: string,
+  stack: string | null,
+): void {
+  if (!logFilePath) return;
+  try {
+    const isoTs = now.toISOString();
+    let text = `[${isoTs}] ${level.toUpperCase().padEnd(5)} [${category}] ${msg}${ctxStr}\n`;
+    if (stack !== null) {
+      text += `${stack}\n`;
+    }
+    fs.appendFileSync(logFilePath, text, 'utf8');
+    logFileBytes += Buffer.byteLength(text, 'utf8');
+    if (logFileBytes >= maxLogFileBytes) {
+      rotateLogFile(logFilePath);
+      logFileBytes = 0;
+    }
+  } catch {
+    // Logger never throws
+  }
+}
 
 // `console.*` writes to process.stdout/stderr asynchronously; if the parent
 // pipe closes mid-shutdown (e.g. `concurrently` SIGTERMs us after vite dies),
@@ -90,13 +255,17 @@ function emit(
   if (LEVEL_RANK[level] < LEVEL_RANK[minLevel]) return;
   inLogger = true;
   try {
-    const ts = formatTimestamp(Date.now());
+    const now = new Date();
+    const ts = formatTimestamp(now.getTime());
     const ctxStr = serialiseCtx(ctx);
     const head = `[${ts}] ${level.toUpperCase()} ${category} — ${msg}${ctxStr}`;
     writeConsole(level, head);
-    if (level === 'error') {
-      const stack = stackFrom(err);
-      if (stack !== null) writeConsole(level, stack);
+    const stack = level === 'error' ? stackFrom(err) : null;
+    if (stack !== null) {
+      writeConsole(level, stack);
+    }
+    if (logFilePath) {
+      writeFile(now, level, category, msg, ctxStr, stack);
     }
   } catch {
     // Logger never throws into the caller.
@@ -263,12 +432,13 @@ export function registerLogHandler(ipc: IpcMain): void {
       }
       return;
     }
-    // Reconcile main's level from the renderer's reported minimum so a
-    // verbose-toggle change in the renderer converges in one round-trip.
-    // We assign rather than only-lower so flipping verbose OFF actually
-    // restores main's floor (a previous version only lowered, which left
-    // main stuck at debug forever).
-    minLevel = raw.level_min;
+    // Reconcile main's level from the renderer's reported minimum when debug
+    // is not forced so a verbose-toggle change in the renderer converges in
+    // one round-trip. When debug is forced (Windows, dev mode, CLI flags),
+    // retain the debug floor so main logs are not silenced.
+    if (!isDebugForced()) {
+      minLevel = raw.level_min;
+    }
     // Forward the entry through main's normal pipeline.
     emit(raw.level, `r.${raw.category}`, raw.msg, raw.ctx);
   });

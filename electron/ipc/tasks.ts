@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto';
 import { createWorktree, removeWorktree, worktreePathFor } from './git.js';
 import { killAgent, notifyAgentListChanged, waitForAgentExit } from './pty.js';
-import { stopPlanWatcher } from './plans.js';
-import { stopStepsWatcher } from './steps.js';
+import { stopPlanWatcher, stopPlanWatchersForPath } from './plans.js';
+import { stopStepsWatcher, stopStepsWatchersForPath } from './steps.js';
 import { verificationRunner } from './verify.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
+import { debug as logDebug } from '../log.js';
 
 const MAX_SLUG_LEN = 72;
 
@@ -74,10 +75,24 @@ interface DeleteTaskOpts {
 }
 
 export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
+  logDebug(
+    'tasks',
+    `deleteTask starting for task=${opts.taskId ?? 'unknown'} branch=${opts.branchName}`,
+    {
+      agentIds: opts.agentIds,
+      deleteBranch: opts.deleteBranch,
+      worktreePath: opts.worktreePath,
+    },
+  );
   if (opts.taskId) {
     verificationRunner.cancel(opts.taskId);
     stopPlanWatcher(opts.taskId);
     stopStepsWatcher(opts.taskId);
+  }
+  const targetWorktree = opts.worktreePath ?? worktreePathFor(opts.projectRoot, opts.branchName);
+  if (targetWorktree) {
+    stopPlanWatchersForPath(targetWorktree);
+    stopStepsWatchersForPath(targetWorktree);
   }
   for (const agentId of opts.agentIds) {
     try {
@@ -91,6 +106,14 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
   // Removing the worktree before the processes exit fails with EPERM/EBUSY and
   // leaves the task stuck in its closing state, so wait (bounded) first.
   await Promise.all(opts.agentIds.map((agentId) => waitForAgentExit(agentId)));
+  // Yield to the event loop macrotask queue so libuv can process uv_close callbacks
+  // for any closed watchers and killed processes before attempting directory removal.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  logDebug(
+    'tasks',
+    `deleteTask: agents exited or timed out, removing worktree for branch=${opts.branchName}`,
+  );
   await removeWorktree(opts.projectRoot, opts.branchName, opts.deleteBranch, opts.worktreePath);
+  logDebug('tasks', `deleteTask: worktree removed successfully for branch=${opts.branchName}`);
   notifyAgentListChanged();
 }

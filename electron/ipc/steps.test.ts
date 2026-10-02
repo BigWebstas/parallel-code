@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { parseStepsContent } from './steps.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  parseStepsContent,
+  startStepsWatcher,
+  stopAllStepsWatchers,
+  stopStepsWatchersForPath,
+} from './steps.js';
 
 describe('parseStepsContent', () => {
   it('preserves the canonical JSON array format', () => {
@@ -39,5 +47,31 @@ describe('parseStepsContent', () => {
     expect(
       parseStepsContent('{"summary":"Inspecting the repo","status":"investigating"}\n42'),
     ).toBeNull();
+  });
+});
+
+describe('stopStepsWatchersForPath', () => {
+  let worktreePath: string;
+
+  beforeEach(() => {
+    worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'steps-test-'));
+  });
+
+  afterEach(() => {
+    stopAllStepsWatchers();
+    fs.rmSync(worktreePath, { recursive: true, force: true });
+  });
+
+  it('stops watchers matching the worktree path', async () => {
+    const notify = vi.fn();
+    startStepsWatcher(notify, 'task-steps-stop', worktreePath);
+    stopStepsWatchersForPath(worktreePath);
+
+    const stepsDir = path.join(worktreePath, '.claude');
+    fs.mkdirSync(stepsDir, { recursive: true });
+    fs.writeFileSync(path.join(stepsDir, 'steps.json'), JSON.stringify([{ summary: 'test' }]));
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(notify).not.toHaveBeenCalled();
   });
 });
