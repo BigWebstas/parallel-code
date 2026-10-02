@@ -45,9 +45,18 @@ describe('signalProcessGroup', () => {
     expect(kill).toHaveBeenCalledWith();
   });
 
-  it('falls back to the child when there is no pid', () => {
+  it('falls back to the child when there is no pid or pid <= 0', () => {
     const kill = vi.fn();
     signalProcessGroup({ kill }, 'SIGTERM');
     expect(kill).toHaveBeenCalledWith('SIGTERM');
+
+    const killZero = vi.fn();
+    signalProcessGroup({ pid: 0, kill: killZero }, 'SIGTERM');
+    expect(killZero).toHaveBeenCalledWith('SIGTERM');
+  });
+
+  it('refuses to kill Electron own process.pid with taskkill', () => {
+    withPlatform('win32', () => signalProcessGroup({ pid: process.pid, kill: vi.fn() }, 'SIGKILL'));
+    expect(execFileSyncMock).not.toHaveBeenCalled();
   });
 });

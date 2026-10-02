@@ -19,11 +19,18 @@ interface Killable {
  */
 export function signalProcessGroup(proc: Killable, signal: NodeJS.Signals): void {
   const pid = proc.pid;
-  if (!pid) {
-    proc.kill(process.platform === 'win32' ? undefined : signal);
+  if (!pid || pid <= 0) {
+    try {
+      proc.kill(process.platform === 'win32' ? undefined : signal);
+    } catch {
+      /* already dead */
+    }
     return;
   }
   if (process.platform === 'win32') {
+    if (pid === process.pid) {
+      return;
+    }
     try {
       execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
         stdio: 'ignore',

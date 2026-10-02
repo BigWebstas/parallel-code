@@ -6,7 +6,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { registerAllHandlers } from './ipc/register.js';
-import { registerLogHandler, warn as logWarn } from './log.js';
+import { registerLogHandler, warn as logWarn, error as logError } from './log.js';
 import { loadAppState } from './ipc/persistence.js';
 import { reconcileWorktreeIntents } from './ipc/worktree-intents.js';
 import { getUserDataDir } from './user-data-dir.js';
@@ -28,6 +28,18 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+process.on('uncaughtException', (err) => {
+  logError('main', 'Uncaught exception in main process', {
+    err: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
+  });
+});
+process.on('unhandledRejection', (reason) => {
+  logWarn('main', 'Unhandled promise rejection in main process', {
+    reason: reason instanceof Error ? reason.message : String(reason),
+  });
+});
 
 // One running copy per profile, and the lock is taken here rather than beside the
 // window wiring because Electron's guidance is to take it as early as possible and

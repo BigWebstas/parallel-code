@@ -5,6 +5,7 @@ import { stopAgentChat, stopAllAgentChats, runningAgentChatIds } from '../chat/s
 import { execFileSync, execFile, spawn as cpSpawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
+import { EventEmitter } from 'events';
 import * as os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -45,6 +46,7 @@ interface PtySession {
   taskId: string;
   agentId: string;
   isShell: boolean;
+  killed?: boolean;
   canvasTools?: boolean;
   flushTimer: ReturnType<typeof setTimeout> | null;
   subscribers: Set<(encoded: string) => void>;
@@ -681,15 +683,25 @@ function cleanupExistingSession(agentId: string, existing: PtySession | undefine
  * End a PTY's process. On Windows `proc.kill()` only ends the console wrapper —
  * grandchildren (agent CLIs, git, node) survive and keep the task worktree's
  * files locked, so closing the task later fails with EPERM/EBUSY. End the whole
- * tree with `taskkill /T /F` via `signalProcessGroup`, and always invoke `proc.kill()`
- * to close the node-pty socket and ConPTY agent process.
+ * tree with `taskkill /T /F` via `signalProcessGroup`, falling back to `proc.kill()`.
+ * Do NOT invoke `proc.kill()` after `taskkill /T /F`: in node-pty on Windows,
+ * calling native kill on an already-terminated ConPTY process causes access
+ * violation crashes or uncaught exceptions.
  */
 function killPtyProc(session: PtySession): void {
-  if (process.platform === 'win32' && typeof session.proc.pid === 'number') {
+  if (session.killed) return;
+  session.killed = true;
+
+  if (
+    process.platform === 'win32' &&
+    typeof session.proc.pid === 'number' &&
+    session.proc.pid > 0
+  ) {
     try {
       signalProcessGroup(session.proc, 'SIGKILL');
+      return;
     } catch {
-      // Process already gone — fall through to proc.kill().
+      // Process already gone or signal failed — fall through to proc.kill().
     }
   }
   try {
@@ -804,6 +816,20 @@ function attachPtyOutputHandlers(
       session.flushTimer = setTimeout(flush, BATCH_INTERVAL);
     }
   });
+
+  // node-pty on Windows throws an unhandled exception if fewer than 2 error
+  // listeners exist on the socket when a process is killed (ECONNRESET/EPIPE).
+  // Registering error handlers prevents uncaught exceptions from terminating the process.
+  const handlePtyError = (err: unknown) => {
+    logDebug('pty', 'PTY process socket error', { agentId: args.agentId, err });
+  };
+  try {
+    const emitter = session.proc as unknown as EventEmitter;
+    emitter.on?.('error', handlePtyError);
+    emitter.on?.('error', handlePtyError);
+  } catch {
+    /* best effort */
+  }
 
   session.proc.onExit(({ exitCode, signal }) => {
     session.queries.dispose();

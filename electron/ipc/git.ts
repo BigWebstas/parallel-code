@@ -1398,6 +1398,12 @@ export async function removeWorktree(
 
   if (!fs.existsSync(repoRoot)) return;
 
+  const resolvedWorktree = path.resolve(worktreePath);
+  const resolvedRepo = path.resolve(repoRoot);
+  if (resolvedWorktree === resolvedRepo || resolvedWorktree === path.resolve(process.cwd())) {
+    return;
+  }
+
   if (fs.existsSync(worktreePath)) {
     await forceRemoveWorktreeDir(repoRoot, worktreePath);
   }
