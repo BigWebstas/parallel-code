@@ -324,6 +324,12 @@ export async function queryAntigravityLanguageServer(
   return res;
 }
 
+const rememberedCredentials = new Map<string, { address: string; token: string }>();
+
+export function clearRememberedCredentials(): void {
+  rememberedCredentials.clear();
+}
+
 /** Discovers active Language Server address and CSRF token from running processes on Linux. */
 export function discoverAllLanguageServerCredentials(): Array<{ address: string; token: string }> {
   if (process.platform !== 'linux') return [];
@@ -350,6 +356,7 @@ export function discoverAllLanguageServerCredentials(): Array<{ address: string;
             if (!seenAddresses.has(address)) {
               seenAddresses.add(address);
               credentials.push({ address, token });
+              rememberedCredentials.set(address, { address, token });
             }
           }
         }
@@ -424,18 +431,37 @@ export async function fetchAntigravityUsage(
     candidateList = [{ address: lsAddress, token: csrfToken }];
   } else if (discoverCredentials) {
     const discovered = discoverCredentials();
-    if (discovered) {
-      candidateList = Array.isArray(discovered) ? discovered : [discovered];
+    const list = discovered ? (Array.isArray(discovered) ? discovered : [discovered]) : [];
+    const seen = new Set<string>();
+    candidateList = [];
+    for (const cred of [...list, ...rememberedCredentials.values()]) {
+      if (!seen.has(cred.address)) {
+        seen.add(cred.address);
+        candidateList.push(cred);
+      }
     }
   } else if (env === process.env && !env.ANTIGRAVITY_DISABLE_DISCOVERY) {
-    candidateList = discoverAllLanguageServerCredentials();
+    const fresh = discoverAllLanguageServerCredentials();
+    const seen = new Set<string>();
+    candidateList = [];
+    for (const cred of [...fresh, ...rememberedCredentials.values()]) {
+      if (!seen.has(cred.address)) {
+        seen.add(cred.address);
+        candidateList.push(cred);
+      }
+    }
   }
 
   // Query discovered candidates in order until an active language server responds
   let live: UsageSnapshot | null = null;
   for (const cred of candidateList) {
     live = await queryLiveUsage(cred);
-    if (live) break;
+    if (live) {
+      rememberedCredentials.set(cred.address, cred);
+      break;
+    } else {
+      rememberedCredentials.delete(cred.address);
+    }
   }
   const cached = await readCachedUsage(cachePath, env);
   if (!live) return cached;

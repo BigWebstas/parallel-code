@@ -11,9 +11,11 @@ const core = vi.hoisted(() => ({
 const IDLE: UsageState = {
   fiveHour: null,
   sevenDay: null,
+  creditUsage: null,
   fetchedAt: null,
   status: 'idle',
   error: null,
+  refreshing: false,
 };
 
 vi.mock('./core', async () => {
@@ -70,9 +72,11 @@ describe('usage store slice', () => {
     expect(state('codex')).toEqual({
       fiveHour: OK.fiveHour,
       sevenDay: OK.sevenDay,
+      creditUsage: null,
       fetchedAt: 500,
       status: 'ok',
       error: null,
+      refreshing: false,
     });
     expect(state('claude')).toEqual(IDLE);
   });
@@ -85,9 +89,11 @@ describe('usage store slice', () => {
     expect(state()).toEqual({
       fiveHour: null,
       sevenDay: null,
+      creditUsage: null,
       fetchedAt: null,
       status: 'unavailable',
       error: 'logged out',
+      refreshing: false,
     });
   });
 
@@ -127,7 +133,7 @@ describe('usage store slice', () => {
     expect(mockInvoke).toHaveBeenCalledTimes(4);
   });
 
-  it('polls every provider every five minutes, starts once, and stops cleanly', async () => {
+  it('polls every provider on the 60-second interval, starts once, and stops cleanly', async () => {
     mockInvoke.mockResolvedValue(OK);
     slice.startUsagePolling();
     slice.startUsagePolling();
@@ -137,11 +143,25 @@ describe('usage store slice', () => {
       'get_codex_usage',
       'get_antigravity_usage',
     ]);
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(mockInvoke).toHaveBeenCalledTimes(6);
     slice.stopUsagePolling();
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await vi.advanceTimersByTimeAsync(120_000);
     expect(mockInvoke).toHaveBeenCalledTimes(6);
+  });
+
+  it('sets refreshing true while request is in flight and false on completion', async () => {
+    let resolveRequest: (result: UsageResult) => void = () => {};
+    mockInvoke.mockReturnValueOnce(
+      new Promise<UsageResult>((res) => {
+        resolveRequest = res;
+      }),
+    );
+    const refreshPromise = slice.refreshUsage('claude');
+    expect(state('claude').refreshing).toBe(true);
+    resolveRequest(OK);
+    await refreshPromise;
+    expect(state('claude').refreshing).toBe(false);
   });
 
   it('maps the bundled Claude Code, Codex, and Antigravity agents to their meters', () => {
@@ -149,5 +169,24 @@ describe('usage store slice', () => {
     expect(slice.usageProviderForAgent('codex')).toBe('codex');
     expect(slice.usageProviderForAgent('antigravity')).toBe('antigravity');
     expect(slice.usageProviderForAgent('gemini')).toBeNull();
+  });
+
+  it('stores creditUsage when returned on an ok result', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      ...OK,
+      creditUsage: {
+        used: 2.12,
+        limit: 30,
+        currency: 'USD',
+        usedPercent: 7.07,
+      },
+    });
+    await slice.refreshUsage('claude');
+    expect(state('claude').creditUsage).toEqual({
+      used: 2.12,
+      limit: 30,
+      currency: 'USD',
+      usedPercent: 7.07,
+    });
   });
 });

@@ -3,10 +3,9 @@ import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { UsageProvider, UsageResult } from '../ipc/types';
 
-// The usage endpoints rate-limit eager pollers, so refresh slowly and let
-// agent session exits and manual clicks fill in between ticks.
-const POLL_INTERVAL_MS = 5 * 60_000;
-const MIN_REFRESH_GAP_MS = 30_000;
+// Refresh every minute to keep meters current mid-session.
+const POLL_INTERVAL_MS = 60_000;
+const MIN_REFRESH_GAP_MS = 15_000;
 
 /** Render order of the providers in the status bar. */
 export const USAGE_PROVIDERS: readonly UsageProvider[] = ['claude', 'codex', 'antigravity'];
@@ -38,21 +37,25 @@ function applyResult(provider: UsageProvider, result: UsageResult): void {
     setStore('usage', provider, {
       fiveHour: result.fiveHour,
       sevenDay: result.sevenDay,
+      creditUsage: result.creditUsage ?? null,
       fetchedAt: result.fetchedAt,
       status: 'ok',
       error: null,
+      refreshing: false,
     });
   } else if (result.status === 'unavailable') {
     // Full reset: setStore merges, and a surviving snapshot would keep the bar visible after logout.
     setStore('usage', provider, {
       fiveHour: null,
       sevenDay: null,
+      creditUsage: null,
       fetchedAt: null,
       status: 'unavailable',
       error: result.reason,
+      refreshing: false,
     });
   } else {
-    setStore('usage', provider, { status: 'error', error: result.message });
+    setStore('usage', provider, { status: 'error', error: result.message, refreshing: false });
   }
 }
 
@@ -69,15 +72,18 @@ export function refreshUsage(
     return Promise.resolve();
   }
   lastRequestAt[provider] = Date.now();
+  setStore('usage', provider, 'refreshing', true);
   const request = invoke<UsageResult>(CHANNELS[provider])
     .then((result) => applyResult(provider, result))
     .catch((err: unknown) => {
       setStore('usage', provider, {
         status: 'error',
         error: err instanceof Error ? err.message : String(err),
+        refreshing: false,
       });
     })
     .finally(() => {
+      setStore('usage', provider, 'refreshing', false);
       delete inFlight[provider];
     });
   inFlight[provider] = request;

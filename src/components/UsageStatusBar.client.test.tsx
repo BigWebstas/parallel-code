@@ -1,5 +1,6 @@
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { UsageProvider } from '../ipc/types';
 import type { UsageState } from '../store/types';
 import { UsageStatusBar } from './UsageStatusBar';
 
@@ -7,24 +8,34 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
   const idle: UsageState = {
     fiveHour: null,
     sevenDay: null,
+    creditUsage: null,
     fetchedAt: null,
     status: 'idle',
     error: null,
+    refreshing: false,
   };
   const inAnHour = Date.now() + 3_600_000;
+  const initialUsage: Record<UsageProvider, UsageState> = {
+    claude: {
+      fiveHour: { usedPercent: 40, resetsAt: inAnHour },
+      sevenDay: { usedPercent: 10, resetsAt: inAnHour },
+      creditUsage: {
+        used: 2.12,
+        limit: 30,
+        currency: 'USD',
+        usedPercent: 7.07,
+      },
+      fetchedAt: Date.now(),
+      status: 'ok',
+      error: null,
+      refreshing: false,
+    },
+    codex: idle,
+    antigravity: idle,
+  };
   return {
     mockRefreshUsage: vi.fn(),
-    usage: {
-      claude: {
-        fiveHour: { usedPercent: 40, resetsAt: inAnHour },
-        sevenDay: { usedPercent: 10, resetsAt: inAnHour },
-        fetchedAt: Date.now(),
-        status: 'ok',
-        error: null,
-      } satisfies UsageState,
-      codex: idle,
-      antigravity: idle,
-    },
+    usage: initialUsage,
   };
 });
 
@@ -80,6 +91,9 @@ describe('UsageStatusBar', () => {
     expect(card?.textContent).toContain('5h');
     expect(card?.textContent).toContain('7d');
     expect(card?.textContent).toContain('90% left');
+    expect(card?.textContent).toContain('Credits');
+    expect(card?.textContent).toContain('$2.12 / $30.00');
+    expect(card?.textContent).toContain('(7%)');
     expect(card?.textContent).toContain('Updated');
     expect(card?.style.pointerEvents).toBe('none');
 
@@ -97,6 +111,7 @@ describe('UsageStatusBar', () => {
     usage.antigravity = {
       fiveHour: { usedPercent: 0, resetsAt: Date.now() - 60_000 },
       sevenDay: null,
+      creditUsage: null,
       fetchedAt: Date.now(),
       status: 'ok',
       error: null,
@@ -106,5 +121,59 @@ describe('UsageStatusBar', () => {
     const agyEntry = Array.from(entries).find((e) => e.textContent?.includes('Antigravity'));
     expect(agyEntry?.textContent).toContain('100% left');
     expect(agyEntry?.textContent).not.toContain('reset due');
+  });
+
+  it('renders Antigravity usage when a snapshot is present', () => {
+    usage.antigravity = {
+      fiveHour: { usedPercent: 15, resetsAt: Date.now() + 3_600_000 },
+      sevenDay: { usedPercent: 30, resetsAt: null },
+      creditUsage: null,
+      fetchedAt: Date.now(),
+      status: 'ok',
+      error: null,
+    };
+
+    const container = mount();
+    const entries = container.querySelectorAll('[role="status"]');
+    expect(entries).toHaveLength(2);
+    expect(entries[1].textContent).toContain('Antigravity');
+    expect(entries[1].textContent).toContain('85% left');
+
+    entries[1].dispatchEvent(new MouseEvent('mouseenter'));
+    const card = popover();
+    expect(card?.textContent).toContain('Antigravity usage');
+    expect(card?.textContent).toContain('5h');
+    expect(card?.textContent).toContain('7d');
+    expect(card?.textContent).toContain('70% left');
+    expect(card?.textContent).not.toContain('Credits');
+  });
+
+  it('shows credit usage without a limit as "$X used"', () => {
+    usage.claude.creditUsage = {
+      used: 5,
+      limit: null,
+      currency: 'USD',
+      usedPercent: null,
+    };
+
+    const container = mount();
+    const entry = container.querySelector<HTMLElement>('[role="status"]');
+    entry?.dispatchEvent(new MouseEvent('mouseenter'));
+    const card = popover();
+    expect(card?.textContent).toContain('Credits');
+    expect(card?.textContent).toContain('$5.00 used');
+    expect(card?.querySelector('[aria-label="Credit usage"]')).toBeNull();
+  });
+
+  it('renders an inline spinner and indicates busy state when refreshing is in flight', () => {
+    usage.claude.refreshing = true;
+    const container = mount();
+    const entry = container.querySelector<HTMLElement>('[role="status"]');
+    expect(entry?.getAttribute('aria-busy')).toBe('true');
+    expect(entry?.querySelector('.inline-spinner')).not.toBeNull();
+
+    entry?.dispatchEvent(new MouseEvent('mouseenter'));
+    const card = popover();
+    expect(card?.textContent).toContain('Refreshing usage…');
   });
 });

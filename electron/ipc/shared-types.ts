@@ -210,11 +210,23 @@ export interface UsageWindow {
   resetsAt: number | null;
 }
 
+export interface CreditUsage {
+  /** Amount used in standard currency units (e.g. 2.12 for $2.12). */
+  used: number;
+  /** Spending limit in standard currency units, null if unlimited or not set. */
+  limit: number | null;
+  /** Currency code, e.g. "USD". */
+  currency: string;
+  /** Percent of limit used (0–100), null if limit is not set. */
+  usedPercent: number | null;
+}
+
 export type UsageResult =
   | {
       status: 'ok';
       fiveHour: UsageWindow | null;
       sevenDay: UsageWindow | null;
+      creditUsage?: CreditUsage | null;
       fetchedAt: number;
     }
   /** No subscription login to read — the status bar hides itself. */
@@ -226,11 +238,14 @@ export type UsageResult =
 export interface UsageState {
   fiveHour: UsageWindow | null;
   sevenDay: UsageWindow | null;
+  creditUsage?: CreditUsage | null;
   /** When the current windows were fetched; null until the first success. */
   fetchedAt: number | null;
   /** `unavailable` means no subscription login — the bar hides. `error` keeps the last snapshot. */
   status: 'idle' | 'ok' | 'error' | 'unavailable';
   error: string | null;
+  /** Whether a background or user-initiated refresh is currently in flight. */
+  refreshing?: boolean;
 }
 
 export type UpdatePhase =
