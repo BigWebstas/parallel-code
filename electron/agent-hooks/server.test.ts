@@ -213,5 +213,7 @@ describe('startAgentHookServer', () => {
       await vi.waitFor(() => expect(events).toHaveLength(1));
       expect(events[0]).toMatchObject({ state: 'working', agentId: 'agent-ps', taskId: 'task-ps' });
     },
+    // PowerShell takes seconds to start on a cold CI runner.
+    30_000,
   );
 });
