@@ -13,6 +13,7 @@ import {
   validateAnnotationInput,
 } from './annotations.js';
 import type { DocumentAnnotation, DocumentAnnotationEvent } from './types.js';
+import { writeFakeAgent } from './fake-agent-harness.js';
 
 const anchor = {
   path: 'docs/spec.md',
@@ -172,16 +173,15 @@ describe('annotations file and asking', () => {
   beforeAll(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-ann-'));
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-ann-bin-'));
-    fakeAgent = path.join(binDir, 'fake-claude.sh');
-    fs.writeFileSync(
-      fakeAgent,
-      [
-        '#!/bin/sh',
-        // Prove read-only tools were requested and answer.
-        'case "$*" in *"Read,Glob,Grep"*) ;; *) echo "wrong tools" >&2; exit 2;; esac',
-        'printf \'%s\\n\' \'{"type":"result","subtype":"success","session_id":"s","result":"The passage assumes **nothing**."}\'',
-      ].join('\n') + '\n',
-      { mode: 0o755 },
+    // Prove read-only tools were requested and answer.
+    fakeAgent = writeFakeAgent(
+      binDir,
+      'fake-claude',
+      `if (!process.argv.slice(2).join(' ').includes('Read,Glob,Grep')) {
+  process.stderr.write('wrong tools\\n');
+  process.exit(2);
+}
+emit({ type: 'result', subtype: 'success', session_id: 's', result: 'The passage assumes **nothing**.' });`,
     );
   });
 
@@ -212,39 +212,35 @@ describe('annotations file and asking', () => {
     expect(readAnnotations(root).map((a) => a.id)).toEqual(['a-2']);
   });
 
-  // The fake agent is a shell script, which Windows cannot run.
-  it.skipIf(process.platform === 'win32')(
-    'asks a read-only agent and stores the answer in the bubble',
-    async () => {
-      const pending = await askAnnotation(win, {
-        projectRoot: root,
-        documentPath: 'docs/spec.md',
-        annotationId: 'a-2',
-        agentId: 'claude-code',
-        agentName: 'Fake Claude',
-        command: fakeAgent,
-      });
-      expect(pending.answerStatus).toBe('pending');
-      const answered = await new Promise<DocumentAnnotation>((resolve, reject) => {
-        const started = Date.now();
-        const tick = () => {
-          const done = events.find(
-            (e) => e.annotation.id === 'a-2' && e.annotation.answerStatus !== 'pending',
-          );
-          if (done) return resolve(done.annotation);
-          if (Date.now() - started > 10_000) return reject(new Error('no answer'));
-          setTimeout(tick, 50);
-        };
-        tick();
-      });
-      expect(answered.answerStatus).toBe('answered');
-      expect(answered.answer?.text).toContain('assumes **nothing**');
-      expect(answered.answer?.agentName).toBe('Fake Claude');
-      expect(readAnnotations(root)[0].answer?.text).toContain('nothing');
-      // Question and answer both survive: the question text is untouched.
-      expect(readAnnotations(root)[0].text).toBe('Why?');
-    },
-  );
+  it('asks a read-only agent and stores the answer in the bubble', async () => {
+    const pending = await askAnnotation(win, {
+      projectRoot: root,
+      documentPath: 'docs/spec.md',
+      annotationId: 'a-2',
+      agentId: 'claude-code',
+      agentName: 'Fake Claude',
+      command: fakeAgent,
+    });
+    expect(pending.answerStatus).toBe('pending');
+    const answered = await new Promise<DocumentAnnotation>((resolve, reject) => {
+      const started = Date.now();
+      const tick = () => {
+        const done = events.find(
+          (e) => e.annotation.id === 'a-2' && e.annotation.answerStatus !== 'pending',
+        );
+        if (done) return resolve(done.annotation);
+        if (Date.now() - started > 10_000) return reject(new Error('no answer'));
+        setTimeout(tick, 50);
+      };
+      tick();
+    });
+    expect(answered.answerStatus).toBe('answered');
+    expect(answered.answer?.text).toContain('assumes **nothing**');
+    expect(answered.answer?.agentName).toBe('Fake Claude');
+    expect(readAnnotations(root)[0].answer?.text).toContain('nothing');
+    // Question and answer both survive: the question text is untouched.
+    expect(readAnnotations(root)[0].text).toBe('Why?');
+  });
 
   it('refuses agents without a headless mode and unknown annotations', async () => {
     await expect(
