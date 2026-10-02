@@ -52,7 +52,8 @@ function asEpoch(value: unknown): number | undefined {
  * ones, because `cwd` is then re-read from each transcript and compared.
  */
 export function claudeProjectSlug(cwd: string): string {
-  return cwd.replace(/[/.]/g, '-');
+  const normalized = cwd.replace(/^[a-zA-Z]:/, (drive) => drive.toUpperCase());
+  return normalized.replace(/[/\\:.]/g, '-');
 }
 
 /**

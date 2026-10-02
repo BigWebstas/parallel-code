@@ -200,6 +200,15 @@ async function collectCodexFiles(root: string, cap: number): Promise<string[]> {
   return files;
 }
 
+function samePath(a: string | undefined, b: string): boolean {
+  if (!a) return false;
+  if (process.platform === 'win32') {
+    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    return norm(a) === norm(b);
+  }
+  return a === b;
+}
+
 async function scanCodex(cwd: string, options: SessionScanOptions): Promise<SessionRecord[]> {
   const files = await collectCodexFiles(
     codexRootDir(options),
@@ -211,7 +220,7 @@ async function scanCodex(cwd: string, options: SessionScanOptions): Promise<Sess
     // Filtered here as well as in the caller, and for cost rather than for
     // correctness: the title read below is worth doing only for this worktree's
     // sessions, a few dozen files instead of the whole cap.
-    if (!record || record.cwd !== cwd) continue;
+    if (!record || !samePath(record.cwd, cwd)) continue;
     // The deep read wins where it found anything: the windowed record's title
     // may have come from the file's tail, making a late prompt look like the
     // session's opening ask.
@@ -235,7 +244,7 @@ export async function listSessionsForCwd(
 ): Promise<SessionRecord[]> {
   const [claude, codex] = await Promise.all([scanClaude(cwd, options), scanCodex(cwd, options)]);
   return [...claude, ...codex]
-    .filter((record) => record.cwd === cwd)
+    .filter((record) => samePath(record.cwd, cwd))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 

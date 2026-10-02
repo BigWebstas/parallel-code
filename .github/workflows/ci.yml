@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, windows]
   pull_request:
-    branches: [main]
+    branches: [main, windows]
 
 jobs:
   quality:
@@ -86,6 +86,12 @@ jobs:
         run: >
           npx vitest run electron/agent-hooks electron/ipc/verify.test.ts
           electron/ipc/symlink.test.ts electron/ipc/open-file.test.ts
-          electron/ipc/antigravity-usage.test.ts src/lib/path.test.ts
-          src/lib/terminalLinks.test.ts src/lib/canvas-auto-open.test.ts
-          src/lib/keybindings
+          electron/ipc/mcp-paths.test.ts electron/ipc/command-path.test.ts
+          electron/shared/command-name.test.ts electron/sessions/transcripts.test.ts
+          electron/sessions/scan.test.ts electron/ipc/tasks.test.ts
+          electron/install-script.test.ts electron/ipc/antigravity-usage.test.ts
+          src/lib/path.test.ts src/lib/terminalLinks.test.ts
+          src/lib/canvas-auto-open.test.ts src/lib/keybindings
+
+      - name: Test (client suite)
+        run: npm run test:client

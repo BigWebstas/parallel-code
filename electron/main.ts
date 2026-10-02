@@ -186,10 +186,11 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  const devOrigin = process.env.VITE_DEV_SERVER_URL;
+  const devUrl =
+    process.env.VITE_DEV_SERVER_URL || (!app.isPackaged ? 'http://localhost:1421' : undefined);
   let allowedOrigin: string | undefined;
   try {
-    if (devOrigin) allowedOrigin = new URL(devOrigin).origin;
+    if (devUrl) allowedOrigin = new URL(devUrl).origin;
   } catch {
     // Malformed dev URL — skip origin allowlist
   }
@@ -220,7 +221,6 @@ function createWindow() {
     `);
   });
 
-  const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
     mainWindow.loadURL(devUrl);
   } else {

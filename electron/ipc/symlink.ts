@@ -17,9 +17,9 @@ export function symlinkCrossPlatform(source: string, target: string): void {
     fs.symlinkSync(source, target);
     return;
   }
-  const absoluteSource = path.isAbsolute(source)
+  const absoluteSource = path.win32.isAbsolute(source)
     ? source
-    : path.resolve(path.dirname(target), source);
+    : path.win32.resolve(path.win32.dirname(target), source);
   let sourceIsDir = false;
   try {
     sourceIsDir = fs.statSync(absoluteSource).isDirectory();

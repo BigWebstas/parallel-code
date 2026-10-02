@@ -21,6 +21,13 @@ describe('claudeProjectSlug', () => {
   it('leaves a plain project path with single dashes', () => {
     expect(claudeProjectSlug('/home/u/www/marketing')).toBe('-home-u-www-marketing');
   });
+
+  it('flattens Windows drive letters, backslashes, and dots', () => {
+    expect(claudeProjectSlug('C:\\Users\\u\\parallel-code\\.worktrees\\task\\some-task')).toBe(
+      'C--Users-u-parallel-code--worktrees-task-some-task',
+    );
+    expect(claudeProjectSlug('C:/Users/u/marketing')).toBe('C--Users-u-marketing');
+  });
 });
 
 describe('parseClaudeTranscript', () => {

@@ -284,4 +284,18 @@ describe('session id validation', () => {
     const [session] = await scan();
     expect(session?.id).toBe(ID_A);
   });
+
+  it('matches Windows paths case-insensitively and across slash styles', async () => {
+    const origPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      const winCwd = 'C:\\repo\\worktree';
+      await writeClaude(winCwd, ID_A);
+      const sessions = await listSessionsForCwd('c:/repo/worktree', { claudeRoot, codexRoot });
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.id).toBe(ID_A);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: origPlatform });
+    }
+  });
 });

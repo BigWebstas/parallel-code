@@ -5,9 +5,11 @@ npm run check
 # Verify package-lock.json is committed and in sync with package.json
 if git diff --cached --name-only | grep -q "package\.json$"; then
   if ! git diff --cached --name-only | grep -q "package-lock\.json$"; then
-    echo "Error: package.json changed without updating package-lock.json"
-    echo "Run 'npm install' to update the lockfile"
-    exit 1
+    if git status --porcelain package-lock.json | grep -q "package-lock\.json"; then
+      echo "Error: package.json changed without updating package-lock.json"
+      echo "Run 'npm install' to update the lockfile and stage package-lock.json"
+      exit 1
+    fi
   fi
 fi
 

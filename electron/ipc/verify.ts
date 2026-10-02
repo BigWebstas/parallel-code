@@ -141,7 +141,7 @@ function exitOutcome(code: number | null, signal: NodeJS.Signals | null): EndRea
  * as a file name and the run fails on Windows.
  */
 export function shellSpawnArgs(shell: string, command: string): string[] {
-  const base = path.basename(shell).toLowerCase();
+  const base = path.win32.basename(shell).toLowerCase();
   if (base === 'cmd.exe' || base === 'cmd') return ['/d', '/s', '/c', command];
   if (base === 'powershell.exe' || base === 'powershell' || base === 'pwsh.exe' || base === 'pwsh')
     return ['-NoLogo', '-NoProfile', '-Command', command];

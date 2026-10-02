@@ -189,4 +189,27 @@ describe('startAgentHookServer', () => {
       expect(events[0]).toMatchObject({ state: 'working', agentId: 'agent-sh', taskId: 'task-sh' });
     },
   );
+
+  it.runIf(process.platform === 'win32')(
+    'round-trips through the generated PowerShell script itself on Windows',
+    async () => {
+      const { execFile } = await import('child_process');
+      const env = {
+        ...process.env,
+        ...server.buildPtyEnv('agent-ps', 'task-ps', 'launch-ps'),
+      };
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const child = execFile(
+          'powershell.exe',
+          ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', server.hookScriptPath],
+          { env },
+          (err, out) => (err ? reject(err) : resolve(out)),
+        );
+        child.stdin?.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+      });
+      expect(stdout.trim()).toBe('{}');
+      await vi.waitFor(() => expect(events).toHaveLength(1));
+      expect(events[0]).toMatchObject({ state: 'working', agentId: 'agent-ps', taskId: 'task-ps' });
+    },
+  );
 });

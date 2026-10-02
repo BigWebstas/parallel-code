@@ -4,6 +4,7 @@ import { OWN_PROCESS_GROUP } from '../process-group.js';
 import { promisify } from 'node:util';
 import { ClaudeChat } from './claude.js';
 import { CodexChat } from '../ipc/codex-chat.js';
+import { isExplicitCommandPath } from '../ipc/command-path.js';
 import type { AgentChatState } from '../shared/agent-chat-types.js';
 import type { AgentChat, ChatStartOptions } from './types.js';
 
@@ -31,7 +32,7 @@ function notifyListChanged(): void {
 
 /** Use the user's unmodified executable and its own authentication flow. */
 async function resolveExecutable(opts: ChatStartOptions): Promise<string> {
-  if (opts.command.includes('/') || isAbsolute(opts.command)) {
+  if (isExplicitCommandPath(opts.command) || isAbsolute(opts.command)) {
     return resolve(opts.cwd, opts.command);
   }
   try {
@@ -103,6 +104,7 @@ export async function startAgentChat(
           env: opts.env,
           stdio: 'pipe',
           detached: OWN_PROCESS_GROUP,
+          shell: process.platform === 'win32',
         });
         const codex = new CodexChat(proc, publish);
         chat = codex;

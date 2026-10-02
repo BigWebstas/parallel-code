@@ -67,7 +67,11 @@ export function editorGotoArgs(
 export function spawnDetached(cmd: string, args: string[]): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
-    const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+    const child = spawn(cmd, args, {
+      detached: true,
+      stdio: 'ignore',
+      shell: process.platform === 'win32',
+    });
     child.on('error', (err) => {
       if (!settled) {
         settled = true;

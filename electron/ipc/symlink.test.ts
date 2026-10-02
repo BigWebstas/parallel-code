@@ -54,7 +54,7 @@ describe('symlinkCrossPlatform', () => {
     expect(calls).toEqual([
       { source: '..\\src', target: 'C:\\wt\\pkg', type: 'dir' },
       // Junctions require absolute targets, so the relative link is resolved.
-      { source: path.resolve('C:\\wt', '..\\src'), target: 'C:\\wt\\pkg', type: 'junction' },
+      { source: path.win32.resolve('C:\\wt', '..\\src'), target: 'C:\\wt\\pkg', type: 'junction' },
     ]);
   });
 
