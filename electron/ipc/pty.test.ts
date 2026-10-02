@@ -1904,6 +1904,46 @@ describe('spawnAgent docker mode — same-path bind mounts', () => {
   });
 });
 
+describe('spawnAgent docker mode — Windows host paths', () => {
+  async function spawnOnWindows(
+    overrides: Partial<Parameters<typeof spawnAgent>[1]>,
+  ): Promise<string[]> {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await spawnAgent(createMockNotify(), buildSpawnArgs(overrides));
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform);
+    }
+    return getLastSpawnCall().args;
+  }
+
+  it('mounts drive paths at Linux container paths and translates the agent arguments', async () => {
+    vi.stubEnv('HOME', makeTempHome([]));
+    // Forward slashes: the test host's POSIX `path` cannot split backslashes,
+    // while the real Windows build uses path.win32 for both spellings.
+    const args = await spawnOnWindows({
+      cwd: 'C:/Git/repo/.worktrees/task',
+      args: ['--mcp-config', 'C:\\Git\\repo\\.worktrees\\task\\.parallel-code\\mcp.json', 'hi'],
+      shareDockerAgentAuth: false,
+      dockerMountWorktreeParent: true,
+    });
+
+    expect(getFlagValues(args, '-v')).toEqual(
+      expect.arrayContaining([
+        'C:/Git/repo/.worktrees:/c/Git/repo/.worktrees',
+        'C:/Git/repo/.worktrees/task:/c/Git/repo/.worktrees/task',
+      ]),
+    );
+    expect(getFlagValues(args, '-w')).toEqual(['/c/Git/repo/.worktrees/task']);
+    expect(args.slice(-3)).toEqual([
+      '--mcp-config',
+      '/c/Git/repo/.worktrees/task/.parallel-code/mcp.json',
+      'hi',
+    ]);
+  });
+});
+
 // ─── Item 3: Concurrent Docker task spawns ────────────────────────────────────
 
 describe('seedClaudeProjectTrust — concurrent spawns', () => {

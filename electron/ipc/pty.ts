@@ -14,6 +14,12 @@ import { RingBuffer } from '../remote/ring-buffer.js';
 import { resolveUserShell } from '../user-shell.js';
 import { launchProgram, locateWindowsCommand } from '../windows-launch.js';
 import {
+  bindMount,
+  isWindowsDrivePath,
+  toContainerArgs,
+  toContainerPath,
+} from '../docker-paths.js';
+import {
   detectRepoRoot,
   ensureClaudeSandboxFiles,
   ensureSandboxExcludes,
@@ -520,7 +526,7 @@ export function buildPtySpawnEnv(
   return spawnEnv;
 }
 
-/** Returns `-v mainGitDir:mainGitDir` mount args so git works inside the container.
+/** Returns the mount for the main git dir so git works inside the container.
  *  Walks up from startPath to find the .git file (worktrees may be nested directories). */
 function resolveWorktreeGitDirMount(startPath: string): string[] {
   try {
@@ -537,7 +543,7 @@ function resolveWorktreeGitDirMount(startPath: string): string[] {
         let candidate = path.resolve(match[1].trim());
         while (true) {
           if (fs.existsSync(path.join(candidate, 'objects'))) {
-            return ['-v', `${candidate}:${candidate}`];
+            return bindMount(candidate);
           }
           const parent = path.dirname(candidate);
           if (parent === candidate) return [];
@@ -551,6 +557,42 @@ function resolveWorktreeGitDirMount(startPath: string): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Env overrides a Windows host needs inside the container, where host paths do
+ * not exist. A worktree's `.git` file points at the main repo with a Windows
+ * path (`gitdir: C:/…`), which git in the container cannot follow, so the git
+ * dir is named explicitly once it is mounted. `-e` flags given later override
+ * the forwarded ones.
+ */
+function windowsContainerEnvFlags(
+  cwd: string,
+  env: Record<string, string>,
+  gitDirMounted: boolean,
+): string[] {
+  if (process.platform !== 'win32') return [];
+  const flags: string[] = [];
+  const credentials = env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (credentials && isWindowsDrivePath(credentials))
+    flags.push('-e', `GOOGLE_APPLICATION_CREDENTIALS=${toContainerPath(credentials)}`);
+  if (!gitDirMounted) return flags;
+  try {
+    const gitFile = path.join(cwd, '.git');
+    if (fs.statSync(gitFile).isFile()) {
+      const gitDir = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(gitFile, 'utf8'))?.[1]?.trim();
+      if (gitDir && isWindowsDrivePath(gitDir))
+        flags.push(
+          '-e',
+          `GIT_DIR=${toContainerPath(path.resolve(gitDir))}`,
+          '-e',
+          `GIT_WORK_TREE=${toContainerPath(cwd)}`,
+        );
+    }
+  } catch {
+    // No .git file (not a linked worktree): git finds the repo itself.
+  }
+  return flags;
 }
 
 interface PtySpawnSpec {
@@ -604,13 +646,13 @@ function buildPtySpawnSpec(
         ? ['--user', `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`]
         : []),
       ...(args.dockerMountWorktreeParent
-        ? ['-v', `${path.dirname(cwd)}:${path.dirname(cwd)}`, ...resolveWorktreeGitDirMount(cwd)]
+        ? [...bindMount(path.dirname(cwd)), ...resolveWorktreeGitDirMount(cwd)]
         : []),
-      '-v',
-      `${cwd}:${cwd}`,
+      ...bindMount(cwd),
       '-w',
-      cwd,
+      toContainerPath(cwd),
       ...buildDockerEnvFlags(spawnEnv),
+      ...windowsContainerEnvFlags(cwd, spawnEnv, args.dockerMountWorktreeParent === true),
       '-e',
       `HOME=${DOCKER_CONTAINER_HOME}/agent-${args.agentId}`,
       ...buildDockerCredentialMounts(
@@ -625,7 +667,7 @@ function buildPtySpawnSpec(
       'mkdir -p "$HOME" && exec "$@"',
       '--',
       command,
-      ...args.args,
+      ...toContainerArgs(args.args),
     ],
     cwd: undefined,
     // The docker client needs the same env the `-e KEY` flags name, so it can
@@ -1564,7 +1606,7 @@ function buildDockerCredentialMounts(
   // at its original path since the env var points there.
   const googleCredsFile = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (googleCredsFile) {
-    mountIfExists(googleCredsFile, googleCredsFile);
+    mountIfExists(googleCredsFile, toContainerPath(googleCredsFile));
   }
 
   // When "Share agent auth across Linux containers" is enabled, bind-mount a
@@ -1593,7 +1635,7 @@ function buildDockerCredentialMounts(
           fs.writeFileSync(hostFile, '{}', { mode: 0o600 });
         }
         if (baseCommand === 'claude' && relFile === '.claude.json') {
-          seedClaudeProjectTrust(hostFile, worktreePath);
+          seedClaudeProjectTrust(hostFile, toContainerPath(worktreePath));
         }
         mounts.push('-v', `${hostFile}:${containerHome}/${relFile}`);
       } catch {

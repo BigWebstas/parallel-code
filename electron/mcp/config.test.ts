@@ -176,6 +176,15 @@ describe('detectStaleDockerMCPUrl — stale config detection', () => {
     ).toBeNull();
   });
 
+  it('uses host.docker.internal from Docker Desktop on Windows', () => {
+    expect(getMCPRemoteServerUrl(7777, 'parallel-code-container', 'win32')).toBe(
+      'http://host.docker.internal:7777',
+    );
+    expect(detectStaleDockerMCPUrl('http://127.0.0.1:3001', 'my-container', 'win32')).toContain(
+      'Windows',
+    );
+  });
+
   it('returns null on Linux even with 127.0.0.1 (host network makes it reachable)', () => {
     expect(detectStaleDockerMCPUrl('http://127.0.0.1:3001', 'my-container', 'linux')).toBeNull();
   });

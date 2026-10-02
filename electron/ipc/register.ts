@@ -165,6 +165,7 @@ import { registerSuperProductivityHandlers } from '../super-productivity/registe
 import { listSessionsForCwd } from '../sessions/scan.js';
 import { validateBranchName as sharedValidateBranchName, validateUUID } from '../mcp/validation.js';
 import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
+import { toContainerPath } from '../docker-paths.js';
 import { getMCPRemoteServerUrl, detectStaleDockerMCPUrl } from '../mcp/config.js';
 import { redactServerUrl } from '../remote/server.js';
 
@@ -2101,7 +2102,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       // Doing this before any Docker copy or coordinator mutation ensures that if .mcp.json
       // merge logic ever grows fallible, Docker residue is never left behind.
       const mcpConfig = buildCoordinatorMCPConfig({
-        mcpServerPath,
+        // The container reads this config, so it names the server by its container path.
+        mcpServerPath: dockerMcpServerPath ? toContainerPath(dockerMcpServerPath) : hostServerPath,
         serverUrl,
         token: server.coordinatorTokenFor(args.coordinatorTaskId),
         coordinatorTaskId: args.coordinatorTaskId,

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { buildMcpLaunchArgs, isCodexCommand, type ParallelCodeMcpConfig } from './agent-args.js';
 import { atomicWriteFileSync } from './atomic.js';
+import { toContainerPath } from '../docker-paths.js';
 import { appendGitInfoExcludeBlock } from '../ipc/git-exclude.js';
 import { getMCPRemoteServerUrl, sessionCapabilityArgs } from './config.js';
 import type { SessionCapabilities } from '../shared/delegation-types.js';
@@ -116,7 +117,7 @@ export function prepareCanvasMcpArgs(opts: {
       'parallel-code': {
         command: 'node',
         args: [
-          serverPath,
+          opts.dockerMode ? toContainerPath(serverPath) : serverPath,
           '--url',
           getMCPRemoteServerUrl(opts.port, opts.dockerMode ? 'canvas' : undefined),
           '--task-id',

@@ -96,7 +96,7 @@ jobs:
           electron/sessions/scan.test.ts electron/ipc/tasks.test.ts
           electron/install-script.test.ts electron/ipc/antigravity-usage.test.ts
           electron/ipc/validate.test.ts electron/ipc/worktree-node-modules.test.ts
-          electron/mcp/delegation.test.ts electron/windows-launch.test.ts
+          electron/mcp/delegation.test.ts electron/windows-launch.test.ts electron/docker-paths.test.ts
           src/lib/path.test.ts src/lib/terminalLinks.test.ts
           src/lib/canvas-auto-open.test.ts src/lib/keybindings
 
