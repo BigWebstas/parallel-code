@@ -77,7 +77,7 @@ describe('commandExistsOnPath', () => {
 
   it('tries PATHEXT extensions for bare commands on Windows', () => {
     const seen: string[] = [];
-    const withExe = path.join('C:/tools', 'claude.EXE');
+    const withExe = path.win32.join('C:/tools', 'claude.EXE');
     const ok = commandExistsOnPath('claude', {
       platform: 'win32',
       pathEnv: 'C:/tools;D:/bin',
@@ -90,7 +90,7 @@ describe('commandExistsOnPath', () => {
 
   it('tries a Windows command with an executable extension as-is only', () => {
     const seen: string[] = [];
-    const asIs = path.join('C:/tools', 'app.exe');
+    const asIs = path.win32.join('C:/tools', 'app.exe');
     const ok = commandExistsOnPath('app.exe', {
       platform: 'win32',
       pathEnv: 'C:/tools',

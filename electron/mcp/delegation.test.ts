@@ -37,7 +37,7 @@ vi.mock('./canvas-config.js', () => ({
   canConfigureCanvasMcp: (command: string, args: string[]) =>
     command === 'codex' && !args.includes('--mcp-config'),
 }));
-const { DelegationService } = await import('./delegation.js');
+const { DelegationService, listedWorktree } = await import('./delegation.js');
 const head = 'a'.repeat(40);
 const completion: CompletionRecord = {
   id: 'completion-1',
@@ -212,6 +212,21 @@ afterEach(() => {
 });
 
 describe('delegation authority and creation', () => {
+  it('normalizes slashes and case on Windows for listedWorktree', () => {
+    expect(
+      listedWorktree('C:/repo/.worktrees/parent', 'C:\\repo\\.worktrees\\parent', 'win32'),
+    ).toBe(true);
+    expect(
+      listedWorktree('c:/repo/.worktrees/parent/', 'C:\\REPO\\.WORKTREES\\PARENT', 'win32'),
+    ).toBe(true);
+    expect(listedWorktree('C:/repo/a', 'C:/repo/b', 'win32')).toBe(false);
+  });
+
+  it('compares exact paths on POSIX for listedWorktree', () => {
+    expect(listedWorktree('/repo/parent', '/repo/parent', 'linux')).toBe(true);
+    expect(listedWorktree('/repo/parent', '/repo/Parent', 'linux')).toBe(false);
+  });
+
   // Git prints worktree paths with forward slashes on every platform while
   // realpath returns the platform separator, so the literal comparison this
   // covers rejected every worktree task on Windows. The stubbed git and

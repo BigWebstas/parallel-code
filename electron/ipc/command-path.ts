@@ -63,10 +63,11 @@ export function commandExistsOnPath(command: string, deps: CommandPathDeps = {})
     platform === 'win32'
       ? executableSuffixes(name, deps.pathextEnv ?? process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD')
       : [''];
+  const joinPath = platform === 'win32' ? path.win32.join : path.join;
   for (const dir of pathEnv.split(delimiter)) {
     if (!dir) continue;
     for (const suffix of suffixes) {
-      if (isExecutable(path.join(dir, `${name}${suffix}`))) return true;
+      if (isExecutable(joinPath(dir, `${name}${suffix}`))) return true;
     }
   }
   return false;

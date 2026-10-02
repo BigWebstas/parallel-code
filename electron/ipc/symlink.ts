@@ -32,10 +32,12 @@ export function symlinkCrossPlatform(source: string, target: string): void {
     } catch {
       // No symlink privilege (no Developer Mode / elevation): a hard link
       // needs none and is enough for the read-mostly metadata files linked
-      // here. Prune logic only ever touches symlinks, so a hard link is
-      // never deleted out from under the worktree — it just goes stale
-      // until the next refresh replaces it.
-      fs.linkSync(absoluteSource, target);
+      // here. If linkSync fails (e.g. cross-volume link), fall back to copy.
+      try {
+        fs.linkSync(absoluteSource, target);
+      } catch {
+        fs.copyFileSync(absoluteSource, target);
+      }
     }
     return;
   }

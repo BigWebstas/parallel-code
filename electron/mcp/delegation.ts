@@ -110,8 +110,12 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
  * case-insensitive. Off Windows both sides are already canonical absolute
  * POSIX paths, so the strings are compared as they are.
  */
-function listedWorktree(gitPath: string, target: string): boolean {
-  if (process.platform === 'win32') {
+export function listedWorktree(
+  gitPath: string,
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === 'win32') {
     const normalize = (value: string): string =>
       value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
     return normalize(gitPath) === normalize(target);

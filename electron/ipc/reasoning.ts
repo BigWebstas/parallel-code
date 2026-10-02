@@ -8,6 +8,7 @@ import {
   type ReasoningFeedRead,
 } from '../shared/reasoning.js';
 import { validatePath } from './validate.js';
+import { pathsEqual } from './worktree-node-modules.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
 import { parseReasoningFeed, parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { MAX_COORDINATOR_CONCURRENT_TASKS } from '../shared/coordinator-limits.js';
@@ -109,7 +110,7 @@ async function readFeedFile(file: string): Promise<ReasoningFeedRead> {
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) throw new Error('Reasoning feed must be a regular file');
-    if ((await fs.promises.realpath(file)) !== file)
+    if (!pathsEqual(await fs.promises.realpath(file), file))
       throw new Error('Reasoning feed must not use symbolic links');
     const current = await fs.promises.lstat(file);
     if (current.dev !== stat.dev || current.ino !== stat.ino)
@@ -154,7 +155,7 @@ const OPEN_FLAGS =
 
 function readOpenFeed(fd: number, file: string): { stat: fs.Stats; raw: string; size: number } {
   const stat = fs.fstatSync(fd);
-  if (!stat.isFile() || fs.realpathSync(file) !== file)
+  if (!stat.isFile() || !pathsEqual(fs.realpathSync(file), file))
     throw new Error('Reasoning feed must be a regular file without symbolic links');
   if (stat.size > REASONING_MAX_BYTES) throw new Error('Reasoning feed too large (max 1 MB)');
   const buffer = Buffer.alloc(REASONING_MAX_BYTES + 1);

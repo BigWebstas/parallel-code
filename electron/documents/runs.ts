@@ -17,6 +17,7 @@ import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
 import { createWorktree, ensureWorktreeContainerExclude, removeWorktree } from '../ipc/git.js';
+import { pathsEqual } from '../ipc/worktree-node-modules.js';
 import { git, gitOk } from './git.js';
 import { buildHeadlessLaunch, createHeadlessParser } from './agents.js';
 import { buildDocumentPrompt, parseDocumentRationale, type MergeCandidateInput } from './prompt.js';
@@ -222,7 +223,7 @@ async function isDirty(projectRoot: string): Promise<boolean> {
  */
 function documentFilePath(projectRoot: string, documentPath: string): string {
   const target = path.join(fs.realpathSync(projectRoot), documentPath);
-  if (fs.realpathSync(target) !== target || !fs.lstatSync(target).isFile())
+  if (!pathsEqual(fs.realpathSync(target), target) || !fs.lstatSync(target).isFile())
     throw new Error('Cannot use a document reached through a symbolic link.');
   return target;
 }
@@ -1147,7 +1148,12 @@ export async function dispatchDocumentRun(
         prepared.push({ spec, candidate });
         if (sourceContent !== undefined) {
           const target = path.join(worktreePath, documentPath);
-          if (fs.realpathSync(target) !== path.join(fs.realpathSync(worktreePath), documentPath))
+          if (
+            !pathsEqual(
+              fs.realpathSync(target),
+              path.join(fs.realpathSync(worktreePath), documentPath),
+            )
+          )
             throw new Error('Cannot refine a document through a symbolic link.');
           atomicWriteFileSync(target, sourceContent);
         }

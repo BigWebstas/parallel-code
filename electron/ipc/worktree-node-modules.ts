@@ -67,9 +67,21 @@ export function realpathOrNull(p: string): string | null {
   }
 }
 
-function pathsEqual(a: string, b: string): boolean {
-  if (process.platform === 'win32') {
-    return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+export function pathsEqual(
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (platform === 'win32') {
+    const normA = path.win32
+      .resolve(a)
+      .replace(/^\\\\\?\\/, '')
+      .toLowerCase();
+    const normB = path.win32
+      .resolve(b)
+      .replace(/^\\\\\?\\/, '')
+      .toLowerCase();
+    return normA === normB;
   }
   return path.resolve(a) === path.resolve(b);
 }

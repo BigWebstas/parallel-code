@@ -4,7 +4,11 @@ import path from 'path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ensureNodeModulesEntryLinks, isManagedNodeModules } from './worktree-node-modules.js';
+import {
+  ensureNodeModulesEntryLinks,
+  isManagedNodeModules,
+  pathsEqual,
+} from './worktree-node-modules.js';
 
 const tempDirs: string[] = [];
 
@@ -285,5 +289,21 @@ describe('isManagedNodeModules', () => {
     const source = makeSource({ 'pkg/index.js': 'x\n' });
 
     expect(isManagedNodeModules(source, makeTarget())).toBe(false);
+  });
+});
+
+describe('pathsEqual', () => {
+  it('strips Win32 extended-length \\\\?\\ prefix and matches case-insensitively on Windows', () => {
+    expect(pathsEqual('\\\\?\\C:\\repo\\node_modules', 'c:\\repo\\node_modules', 'win32')).toBe(
+      true,
+    );
+    expect(pathsEqual('C:/repo/node_modules', 'C:\\repo\\node_modules', 'win32')).toBe(true);
+    expect(pathsEqual('\\\\?\\D:\\project\\lib', 'd:/project/lib', 'win32')).toBe(true);
+    expect(pathsEqual('C:\\repo\\a', 'C:\\repo\\b', 'win32')).toBe(false);
+  });
+
+  it('matches exact paths on POSIX', () => {
+    expect(pathsEqual('/repo/node_modules', '/repo/node_modules', 'linux')).toBe(true);
+    expect(pathsEqual('/repo/node_modules', '/repo/Node_Modules', 'linux')).toBe(false);
   });
 });

@@ -4,7 +4,8 @@ import path from 'path';
 /** Reject paths that are non-absolute or attempt directory traversal. */
 export function validatePath(p: unknown, label: string): void {
   if (typeof p !== 'string') throw new Error(`${label} must be a string`);
-  if (!path.isAbsolute(p)) throw new Error(`${label} must be absolute`);
+  if (!path.isAbsolute(p) && !path.win32.isAbsolute(p))
+    throw new Error(`${label} must be absolute`);
   if (p.includes('..')) throw new Error(`${label} must not contain ".."`);
 }
 

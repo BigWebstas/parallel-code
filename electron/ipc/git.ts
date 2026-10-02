@@ -1112,24 +1112,7 @@ export async function createWorktree(
         // (vite's `.vite-temp`/`.vite`, `.cache`) land inside the worktree —
         // the only path agent sandboxes allow writes to.
         if (!ensureNodeModulesEntryLinks(source, target)) continue;
-      } else if (process.platform === 'win32') {
-        let isDir = false;
-        try {
-          isDir = fs.statSync(source).isDirectory();
-        } catch {
-          // If stat fails, leave as false
-        }
-        if (isDir) {
-          fs.symlinkSync(path.resolve(source), target, 'junction');
-        } else {
-          try {
-            fs.linkSync(source, target);
-          } catch {
-            fs.copyFileSync(source, target);
-          }
-        }
       } else {
-        // Junction fallback on Windows: plain dir symlinks need elevation.
         symlinkCrossPlatform(source, target);
       }
       createdSymlinks.push(name);
