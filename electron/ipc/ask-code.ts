@@ -8,7 +8,6 @@ import {
   askCodePromptLimit,
   askCodeSystemPrompt,
   askCodeTimeoutMs,
-  isStructuredPurpose,
   type AskCodePurpose,
 } from './ask-code-purpose.js';
 import {
@@ -75,8 +74,6 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
     return;
   }
 
-  // Structured purposes (tours) pipe their prompt over stdin and answer with JSON.
-  const isStructured = isStructuredPurpose(args.purpose);
   assertPromptWithinLimit(prompt, askCodePromptLimit(args.purpose));
   assertCanStart(activeRequests, requestId);
 
@@ -99,7 +96,6 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
     'claude',
     [
       '-p',
-      ...(isStructured ? [] : [prompt]),
       '--output-format',
       'text',
       '--model',
@@ -116,7 +112,7 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
   const proc = spawn(launch.file, launch.args, {
     cwd,
     env,
-    stdio: [isStructured ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
   const send = sendToChannel;
@@ -153,17 +149,16 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
     }
   });
 
-  if (isStructured) {
-    // Large diffs exceed OS argument-size limits; Claude supports piped input.
-    proc.stdin?.on('error', (err: Error) => {
-      if (!session.complete()) return;
-      session.cleanup();
-      send({ type: 'error', text: `Could not send tour prompt: ${err.message}` });
-      send({ type: 'done', exitCode: 1 });
-      proc.kill('SIGTERM');
-    });
-    proc.stdin?.end(prompt);
-  }
+  // Prompts can exceed OS argument-size limits (about 32k characters on
+  // Windows, and large diffs anywhere), so Claude reads them from stdin.
+  proc.stdin?.on('error', (err: Error) => {
+    if (!session.complete()) return;
+    session.cleanup();
+    send({ type: 'error', text: `Could not send the prompt to Claude: ${err.message}` });
+    send({ type: 'done', exitCode: 1 });
+    proc.kill('SIGTERM');
+  });
+  proc.stdin?.end(prompt);
 }
 
 type ChannelMessage = { type: 'chunk' | 'error'; text: string };
