@@ -61,7 +61,12 @@ jobs:
   # or touched.
   quality-windows:
     runs-on: windows-latest
+    env:
+      GYP_MSVS_VERSION: '2022'
     steps:
+      - name: Configure Git line endings
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Give Git an identity
@@ -90,6 +95,8 @@ jobs:
           electron/shared/command-name.test.ts electron/sessions/transcripts.test.ts
           electron/sessions/scan.test.ts electron/ipc/tasks.test.ts
           electron/install-script.test.ts electron/ipc/antigravity-usage.test.ts
+          electron/ipc/validate.test.ts electron/ipc/worktree-node-modules.test.ts
+          electron/mcp/delegation.test.ts
           src/lib/path.test.ts src/lib/terminalLinks.test.ts
           src/lib/canvas-auto-open.test.ts src/lib/keybindings
 

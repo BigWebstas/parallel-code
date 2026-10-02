@@ -14,10 +14,11 @@ jobs:
   build-windows:
     runs-on: windows-latest
     env:
-      # The npm scripts use POSIX shell syntax (`umask`, inline env vars), which
-      # cmd.exe cannot run. Git Bash ships on the Windows runners.
-      npm_config_script_shell: C:\Program Files\Git\bin\bash.exe
+      GYP_MSVS_VERSION: '2022'
     steps:
+      - name: Configure Git line endings
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
