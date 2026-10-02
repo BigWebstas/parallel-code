@@ -18,6 +18,7 @@ import { addDocumentProject } from '../store/projects';
 import { showNotification } from '../store/notification';
 import type { DocumentFileInfo, DocumentFolderInfo, DocumentProjectSetup } from './types';
 import { openDocumentWorkspace } from './store';
+import { pathBasename } from '../lib/path';
 
 interface NewDocumentProjectDialogProps {
   open: boolean;
@@ -38,7 +39,7 @@ function preferredDocument(files: DocumentFileInfo[]): string | undefined {
 }
 
 function folderName(folder: string): string {
-  return folder.replace(/\/+$/, '').split('/').pop() ?? folder;
+  return pathBasename(folder) || folder;
 }
 
 /** `Onboarding flow` → `onboarding-flow`, the file a new project is named after. */

@@ -14,6 +14,7 @@ import { store, setStore } from './core';
 import { isLandedTaskState } from './landing';
 import type { AgentDef } from '../ipc/types';
 import type { PersistedTask, Project, Task } from './types';
+import { commandName } from '../lib/path';
 
 export const [delegationStates, setDelegationStates] = createStore<Record<string, DelegationState>>(
   {},
@@ -258,7 +259,7 @@ export function startPeerMessageDelivery(onDelivered: (message: PeerMessage) => 
 }
 
 export function isSupportedDelegationAgent(agent: AgentDef): boolean {
-  return ['claude', 'codex', 'copilot'].includes(agent.command.split('/').pop() ?? '');
+  return ['claude', 'codex', 'copilot'].includes(commandName(agent.command));
 }
 
 export function hasUserMcpConfiguration(args: string[]): boolean {
