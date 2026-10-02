@@ -1,6 +1,6 @@
-import { execFileSync } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
+import { execFileSync } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
 /** A program child_process.spawn can start without a shell. */
 export interface Launch {
@@ -45,12 +45,35 @@ function whereAll(command: string, env: NodeJS.ProcessEnv): string[] {
 }
 
 /**
+ * What a Windows command name resolves to. `program` is something spawnable
+ * without a shell: a real `.exe`/`.com`, or the target an npm `.cmd` shim
+ * wraps (its `.exe` or `.js` entry). `batch` is a `.cmd`/`.bat` that is not
+ * a recognizable npm shim and can only run through cmd.exe.
+ */
+export function locateWindowsCommand(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { program?: string; batch?: string } {
+  // `where` also lists the extensionless bash shim npm writes; no Windows
+  // loader accepts it, so only extensions count.
+  const candidates = path.win32.isAbsolute(command) ? [command] : whereAll(command, env);
+  const executable = candidates.find((c) => /\.(exe|com)$/i.test(c));
+  if (executable) return { program: executable };
+  const batch = candidates.find((c) => /\.(cmd|bat)$/i.test(c));
+  const target = batch && readCmdShimTarget(batch);
+  if (target) return { program: target };
+  const script = candidates.find((c) => SCRIPT_EXT.test(c));
+  if (script) return { program: script };
+  return batch ? { batch } : {};
+}
+
+/**
  * The real program behind an agent command on Windows. Node refuses to spawn a
  * `.cmd` without a shell, and going through cmd.exe would mangle prompt text
- * (newlines, `%`, `^`), so an npm shim is replaced by its target: the `.exe` it
- * wraps, or its `.js` entry. A `.js` entry is returned as the path itself; use
- * `resolveWindowsLaunch` to get the `node` invocation. Unchanged off Windows and
- * when nothing launchable is found, so the spawn fails as "not found".
+ * (newlines, `%`, `^`), so an npm shim is replaced by its target. A `.js`
+ * entry is returned as the path itself; use `resolveWindowsLaunch` to get the
+ * `node` invocation. Unchanged off Windows and when nothing spawnable is found,
+ * so the spawn fails as "not found".
  */
 export function resolveWindowsProgram(
   command: string,
@@ -58,23 +81,22 @@ export function resolveWindowsProgram(
   platform: NodeJS.Platform = process.platform,
 ): string {
   if (platform !== 'win32') return command;
-  const candidates = path.win32.isAbsolute(command) ? [command] : whereAll(command, env);
-  const executable = candidates.find((c) => /\.(exe|com)$/i.test(c));
-  if (executable) return executable;
-  const shim = candidates.find((c) => /\.(cmd|bat)$/i.test(c));
-  const target = shim && readCmdShimTarget(shim);
-  return target ?? candidates.find((c) => SCRIPT_EXT.test(c)) ?? command;
+  return locateWindowsCommand(command, env).program ?? command;
 }
 
-/** `resolveWindowsProgram` as a spawnable launch, running `.js` entries with node. */
+/** Run a resolved program: `.js` entries go through node, anything else directly. */
+export function launchProgram(program: string, args: string[]): Launch {
+  return SCRIPT_EXT.test(program)
+    ? { file: 'node', args: [program, ...args] }
+    : { file: program, args };
+}
+
+/** `resolveWindowsProgram` as a spawnable launch. */
 export function resolveWindowsLaunch(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): Launch {
-  const program = resolveWindowsProgram(command, env, platform);
-  return SCRIPT_EXT.test(program)
-    ? { file: 'node', args: [program, ...args] }
-    : { file: program, args };
+  return launchProgram(resolveWindowsProgram(command, env, platform), args);
 }
