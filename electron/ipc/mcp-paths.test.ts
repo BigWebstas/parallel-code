@@ -9,13 +9,16 @@ describe('hostMcpServerPath', () => {
     expect(p).not.toContain('app.asar.unpacked');
   });
 
-  it('redirects from app.asar to app.asar.unpacked on POSIX paths', () => {
-    const asarUrl = 'file:///opt/parallel-code/resources/app.asar/dist-electron/ipc/mcp-paths.js';
-    const result = hostMcpServerPath(asarUrl);
-    expect(result).toBe(
-      '/opt/parallel-code/resources/app.asar.unpacked/dist-electron/mcp-server.cjs',
-    );
-  });
+  it.skipIf(process.platform === 'win32')(
+    'redirects from app.asar to app.asar.unpacked on POSIX paths',
+    () => {
+      const asarUrl = 'file:///opt/parallel-code/resources/app.asar/dist-electron/ipc/mcp-paths.js';
+      const result = hostMcpServerPath(asarUrl);
+      expect(result).toBe(
+        '/opt/parallel-code/resources/app.asar.unpacked/dist-electron/mcp-server.cjs',
+      );
+    },
+  );
 
   it('redirects from app.asar to app.asar.unpacked on Windows paths', () => {
     const asarUrl =

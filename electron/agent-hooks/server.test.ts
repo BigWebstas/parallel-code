@@ -22,6 +22,7 @@ describe('startAgentHookServer', () => {
     events = [];
     registerAgentLaunch('agent-1', 'task-1', 'launch-1');
     registerAgentLaunch('agent-sh', 'task-sh', 'launch-sh');
+    registerAgentLaunch('agent-ps', 'task-ps', 'launch-ps');
     server = await startAgentHookServer({ dir, onEvent: (e) => events.push(e), now: () => 1234 });
   });
 
@@ -29,6 +30,7 @@ describe('startAgentHookServer', () => {
     await server.close();
     retireAgentLaunch('agent-1', 'launch-1');
     retireAgentLaunch('agent-sh', 'launch-sh');
+    retireAgentLaunch('agent-ps', 'launch-ps');
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
