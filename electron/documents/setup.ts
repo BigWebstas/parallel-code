@@ -21,10 +21,12 @@ function isDocument(file: string): boolean {
   return DOCUMENT_RE.test(file);
 }
 
+// Paths are compared through the native realpath: on Windows it is the only one
+// that expands 8.3 short names (RUNNER~1) the way git reports the toplevel.
 async function repoToplevel(folder: string): Promise<string | null> {
   try {
     const out = await git(folder, ['rev-parse', '--show-toplevel']);
-    return fs.realpathSync(out.trim());
+    return fs.realpathSync.native(out.trim());
   } catch {
     return null;
   }
@@ -73,7 +75,7 @@ export async function inspectDocumentFolder(folder: string): Promise<DocumentFol
   if (!fs.existsSync(folder))
     return { exists: false, isRepo: false, enclosingRepo: null, hasCommits: false, files: [] };
   const toplevel = await repoToplevel(folder);
-  const isRepo = toplevel !== null && toplevel === fs.realpathSync(folder);
+  const isRepo = toplevel !== null && toplevel === fs.realpathSync.native(folder);
   if (!isRepo) {
     const files = scanDocuments(folder).map(
       (p): DocumentFileInfo => ({ path: p, committed: false }),
@@ -149,7 +151,7 @@ export async function prepareDocumentProject(
   }
 
   const toplevel = await repoToplevel(folder);
-  if (toplevel !== null && toplevel !== fs.realpathSync(folder))
+  if (toplevel !== null && toplevel !== fs.realpathSync.native(folder))
     throw new Error(
       `That folder sits inside the Git repository at ${toplevel}. Pick that repository instead, ` +
         'so proposals and history stay in one place.',

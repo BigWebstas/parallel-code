@@ -23,7 +23,9 @@ import {
 /** Walk every segment below the worktree so no link can redirect app-owned directories. */
 function reasoningDirectory(worktreePath: string, relativeDir: string, create = false): string {
   validatePath(worktreePath, 'worktreePath');
-  let directory = fs.realpathSync(worktreePath);
+  // Native, like the async realpath that checks the feed: on Windows only the
+  // native call expands 8.3 short names, and both sides must agree.
+  let directory = fs.realpathSync.native(worktreePath);
   for (const part of relativeDir.split('/')) {
     directory = path.join(directory, part);
     if (create) {
@@ -155,7 +157,7 @@ const OPEN_FLAGS =
 
 function readOpenFeed(fd: number, file: string): { stat: fs.Stats; raw: string; size: number } {
   const stat = fs.fstatSync(fd);
-  if (!stat.isFile() || !pathsEqual(fs.realpathSync(file), file))
+  if (!stat.isFile() || !pathsEqual(fs.realpathSync.native(file), file))
     throw new Error('Reasoning feed must be a regular file without symbolic links');
   if (stat.size > REASONING_MAX_BYTES) throw new Error('Reasoning feed too large (max 1 MB)');
   const buffer = Buffer.alloc(REASONING_MAX_BYTES + 1);
