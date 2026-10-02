@@ -681,13 +681,13 @@ function cleanupExistingSession(agentId: string, existing: PtySession | undefine
  * End a PTY's process. On Windows `proc.kill()` only ends the console wrapper —
  * grandchildren (agent CLIs, git, node) survive and keep the task worktree's
  * files locked, so closing the task later fails with EPERM/EBUSY. End the whole
- * tree with `taskkill /T /F` instead, falling back to `proc.kill()`.
+ * tree with `taskkill /T /F` via `signalProcessGroup`, and always invoke `proc.kill()`
+ * to close the node-pty socket and ConPTY agent process.
  */
 function killPtyProc(session: PtySession): void {
   if (process.platform === 'win32' && typeof session.proc.pid === 'number') {
     try {
       signalProcessGroup(session.proc, 'SIGKILL');
-      return;
     } catch {
       // Process already gone — fall through to proc.kill().
     }

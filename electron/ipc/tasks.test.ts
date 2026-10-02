@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   killAgent: vi.fn(),
   notifyAgentListChanged: vi.fn(),
   waitForAgentExit: vi.fn(async () => {}),
+  cancelVerify: vi.fn(),
 }));
 
 vi.mock('./git.js', async (importOriginal) => ({
@@ -24,6 +25,7 @@ vi.mock('./pty.js', () => ({
 }));
 vi.mock('./plans.js', () => ({ stopPlanWatcher: vi.fn() }));
 vi.mock('./steps.js', () => ({ stopStepsWatcher: vi.fn() }));
+vi.mock('./verify.js', () => ({ verificationRunner: { cancel: mocks.cancelVerify } }));
 
 import { createTask, deleteTask } from './tasks.js';
 import { reconcileWorktreeIntents } from './worktree-intents.js';
@@ -80,12 +82,14 @@ describe('deleteTask', () => {
     });
 
     await deleteTask({
+      taskId: 't-123',
       agentIds: ['a1', 'a2'],
       branchName: 'task/x',
       deleteBranch: true,
       projectRoot: '/nonexistent-root',
     });
 
+    expect(mocks.cancelVerify).toHaveBeenCalledWith('t-123');
     expect(mocks.killAgent).toHaveBeenCalledTimes(2);
     expect(mocks.waitForAgentExit).toHaveBeenCalledTimes(2);
     expect(mocks.waitForAgentExit).toHaveBeenCalledWith('a1');

@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
+import { unlinkSymlinkCrossPlatform } from './symlink.js';
 
 const exec = promisify(execFile);
 
@@ -163,4 +164,68 @@ export function foreignOwnedRemovalError(
 function firstLine(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   return msg.split('\n')[0].trim() || 'unknown error';
+}
+
+/**
+ * Safely prepare a directory tree for deletion by recursively:
+ * 1. Clearing read-only attributes (NTFS FILE_ATTRIBUTE_READONLY causes EPERM on Windows).
+ * 2. Unlinking all symlinks and directory junctions without following them into target directories.
+ * Never traverses into symbolic links or junctions.
+ */
+export function prepareTreeForRemoval(dirPath: string): void {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(dirPath);
+  } catch {
+    return;
+  }
+
+  if (stat.isSymbolicLink()) {
+    try {
+      unlinkSymlinkCrossPlatform(dirPath);
+    } catch {
+      /* already unlinked or gone */
+    }
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    try {
+      fs.chmodSync(dirPath, 0o777);
+    } catch {
+      /* best-effort chmod */
+    }
+  }
+
+  if (!stat.isDirectory()) {
+    return;
+  }
+
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const fullPath = path.join(dirPath, entry.name);
+    try {
+      if (entry.isSymbolicLink()) {
+        unlinkSymlinkCrossPlatform(fullPath);
+      } else if (entry.isDirectory()) {
+        prepareTreeForRemoval(fullPath);
+      } else {
+        if (process.platform === 'win32') {
+          try {
+            fs.chmodSync(fullPath, 0o666);
+          } catch {
+            /* best-effort chmod */
+          }
+        }
+      }
+    } catch {
+      /* best-effort cleanup per entry */
+    }
+  }
 }

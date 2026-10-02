@@ -13,6 +13,7 @@ import {
 import {
   findForeignOwnedEntries,
   foreignOwnedRemovalError,
+  prepareTreeForRemoval,
   reclaimOwnership,
 } from './worktree-cleanup.js';
 import {
@@ -20,7 +21,7 @@ import {
   isManagedNodeModules,
   realpathOrNull,
 } from './worktree-node-modules.js';
-import { symlinkCrossPlatform } from './symlink.js';
+import { symlinkCrossPlatform, unlinkSymlinkCrossPlatform } from './symlink.js';
 import type {
   ChangedFile,
   CommitInfo,
@@ -956,6 +957,12 @@ async function forceRemoveWorktreeDir(repoRoot: string, worktreePath: string): P
 }
 
 async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promise<void> {
+  // On Windows, prepare the tree first by unlinking node_modules junctions and clearing
+  // read-only attributes so git worktree remove does not fail on directory junctions or read-only files.
+  if (process.platform === 'win32') {
+    prepareTreeForRemoval(worktreePath);
+  }
+
   try {
     await exec('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot });
     return;
@@ -990,16 +997,18 @@ async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promis
 /** Delete a directory tree, retrying with backoff. Returns the last error, or undefined on success. */
 async function removeDirWithRetries(dirPath: string): Promise<unknown> {
   // On Windows, killed processes, antivirus scanners and Explorer can hold file
-  // handles for seconds after the agents exit — retry longer than on POSIX.
+  // handles for seconds after the agents exit — retry with backoff.
   const delays =
-    process.platform === 'win32' ? [0, 500, 1000, 2000, 3000, 4000] : [0, 500, 1500, 3000];
+    process.platform === 'win32' ? [0, 100, 300, 600, 1200, 2000, 3000] : [0, 500, 1500, 3000];
   let lastErr: unknown;
   for (const delay of delays) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
-      fs.rmSync(dirPath, { recursive: true, force: true });
+      prepareTreeForRemoval(dirPath);
+      fs.rmSync(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       return undefined;
     } catch (e) {
+      if (!fs.existsSync(dirPath)) return undefined;
       lastErr = e;
     }
   }
@@ -1185,7 +1194,7 @@ async function seedClaudeSandboxFiles(
   for (const entry of existing) {
     if (!entry.isSymbolicLink()) continue;
     try {
-      fs.unlinkSync(path.join(claudeDir, entry.name));
+      unlinkSymlinkCrossPlatform(path.join(claudeDir, entry.name));
     } catch (err) {
       console.warn(`Failed to unlink ${path.join(claudeDir, entry.name)}:`, err);
     }

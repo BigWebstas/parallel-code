@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { symlinkCrossPlatform } from './symlink.js';
+import { symlinkCrossPlatform, unlinkSymlinkCrossPlatform } from './symlink.js';
 
 /**
  * Worktrees share the main checkout's `node_modules` via symlinks. A single
@@ -145,7 +145,7 @@ export function ensureNodeModulesEntryLinks(sourceDir: string, targetDir: string
 
   if (lstatOrNull(targetDir)?.isSymbolicLink()) {
     try {
-      fs.unlinkSync(targetDir);
+      unlinkSymlinkCrossPlatform(targetDir);
     } catch (err) {
       console.warn(`Failed to remove node_modules symlink at ${targetDir}:`, err);
       return false;
@@ -209,7 +209,7 @@ function pruneRemovedEntryLinks(
     const linkPath = path.join(targetDir, entry.name);
     if (!isEntryLinkInto(lexicalSource, canonicalSource, linkPath, entry.name)) continue;
     try {
-      fs.unlinkSync(linkPath);
+      unlinkSymlinkCrossPlatform(linkPath);
     } catch (err) {
       console.warn(`Failed to prune node_modules entry '${entry.name}':`, err);
     }

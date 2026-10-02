@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { symlinkCrossPlatform } from './symlink.js';
+import { symlinkCrossPlatform, unlinkSymlinkCrossPlatform } from './symlink.js';
 
 describe('symlinkCrossPlatform', () => {
   const realSymlink = fs.symlinkSync;
@@ -77,5 +77,42 @@ describe('symlinkCrossPlatform', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
     expect(realSymlink).toBe(fs.symlinkSync);
+  });
+});
+
+describe('unlinkSymlinkCrossPlatform', () => {
+  const realPlatform = process.platform;
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: realPlatform });
+    vi.restoreAllMocks();
+  });
+
+  it('unlinks via unlinkSync on POSIX', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {});
+    unlinkSymlinkCrossPlatform('/tmp/test-link');
+    expect(unlinkSpy).toHaveBeenCalledWith('/tmp/test-link');
+  });
+
+  it('falls back to rmdirSync on Windows if unlinkSync fails', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
+      throw new Error('EPERM: operation not permitted');
+    });
+    const rmdirSpy = vi.spyOn(fs, 'rmdirSync').mockImplementation(() => {});
+    unlinkSymlinkCrossPlatform('C:\\test\\junction');
+    expect(rmdirSpy).toHaveBeenCalledWith('C:\\test\\junction');
+  });
+
+  it('re-throws original error if rmdirSync also fails on Windows', () => {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    const origError = new Error('EPERM: operation not permitted');
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
+      throw origError;
+    });
+    vi.spyOn(fs, 'rmdirSync').mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+    expect(() => unlinkSymlinkCrossPlatform('C:\\test\\junction')).toThrow(origError);
   });
 });

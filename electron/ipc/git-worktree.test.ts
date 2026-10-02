@@ -568,6 +568,32 @@ describe('sandbox setup lifecycle', () => {
     expect(fs.existsSync(worktree)).toBe(false);
     expect(git(root, ['branch', '--list', branch])).toBe('');
   });
+
+  it('removes a worktree containing node_modules and read-only files', async () => {
+    const root = initRepository();
+    const sourceNm = path.join(root, 'node_modules');
+    fs.mkdirSync(path.join(sourceNm, 'pkg-a'), { recursive: true });
+    fs.writeFileSync(path.join(sourceNm, 'pkg-a', 'index.js'), 'export const a = 1;\n');
+
+    const branch = 'task-remove-with-ro-files';
+    const worktree = (await createWorktree(root, branch, ['node_modules'])).path;
+    expect(fs.existsSync(path.join(worktree, 'node_modules', 'pkg-a'))).toBe(true);
+
+    // Create a read-only file in the worktree
+    const roFile = path.join(worktree, 'readonly.txt');
+    fs.writeFileSync(roFile, 'cannot write');
+    fs.chmodSync(roFile, 0o444);
+
+    await removeWorktree(root, branch, true);
+
+    expect(fs.existsSync(worktree)).toBe(false);
+    expect(git(root, ['branch', '--list', branch])).toBe('');
+    // The main checkout's node_modules is completely intact
+    expect(fs.existsSync(path.join(sourceNm, 'pkg-a', 'index.js'))).toBe(true);
+    expect(fs.readFileSync(path.join(sourceNm, 'pkg-a', 'index.js'), 'utf8')).toBe(
+      'export const a = 1;\n',
+    );
+  });
 });
 
 describe('refreshWorktreeNodeModules', () => {

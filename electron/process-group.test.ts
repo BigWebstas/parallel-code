@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
-vi.mock('node:child_process', () => ({ spawn: spawnMock }));
+const { execFileSyncMock } = vi.hoisted(() => ({ execFileSyncMock: vi.fn() }));
+vi.mock('node:child_process', () => ({ execFileSync: execFileSyncMock }));
 
 import { signalProcessGroup } from './process-group.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
-  spawnMock.mockReset();
+  execFileSyncMock.mockReset();
 });
 
 function withPlatform(platform: NodeJS.Platform, run: () => void): void {
@@ -27,16 +27,22 @@ describe('signalProcessGroup', () => {
     expect(kill).toHaveBeenCalledWith(-42, 'SIGTERM');
   });
 
-  it('ends the whole tree with taskkill on Windows', () => {
-    const unref = vi.fn();
-    spawnMock.mockReturnValue({ on: vi.fn().mockReturnValue({ unref }) });
+  it('ends the whole tree synchronously with taskkill on Windows', () => {
     withPlatform('win32', () => signalProcessGroup({ pid: 42, kill: vi.fn() }, 'SIGKILL'));
-    expect(spawnMock).toHaveBeenCalledWith(
+    expect(execFileSyncMock).toHaveBeenCalledWith(
       'taskkill',
       ['/pid', '42', '/T', '/F'],
-      expect.objectContaining({ windowsHide: true }),
+      expect.objectContaining({ windowsHide: true, timeout: 5000 }),
     );
-    expect(unref).toHaveBeenCalled();
+  });
+
+  it('falls back to proc.kill when taskkill throws on Windows', () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error('Process not found');
+    });
+    const kill = vi.fn();
+    withPlatform('win32', () => signalProcessGroup({ pid: 42, kill }, 'SIGKILL'));
+    expect(kill).toHaveBeenCalledWith();
   });
 
   it('falls back to the child when there is no pid', () => {

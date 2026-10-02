@@ -3,6 +3,7 @@ import { createWorktree, removeWorktree, worktreePathFor } from './git.js';
 import { killAgent, notifyAgentListChanged, waitForAgentExit } from './pty.js';
 import { stopPlanWatcher } from './plans.js';
 import { stopStepsWatcher } from './steps.js';
+import { verificationRunner } from './verify.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
 
 const MAX_SLUG_LEN = 72;
@@ -73,8 +74,11 @@ interface DeleteTaskOpts {
 }
 
 export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
-  if (opts.taskId) stopPlanWatcher(opts.taskId);
-  if (opts.taskId) stopStepsWatcher(opts.taskId);
+  if (opts.taskId) {
+    verificationRunner.cancel(opts.taskId);
+    stopPlanWatcher(opts.taskId);
+    stopStepsWatcher(opts.taskId);
+  }
   for (const agentId of opts.agentIds) {
     try {
       killAgent(agentId);

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 /** Spawn option: give the child its own process group on POSIX. On Windows
  *  `detached` opens a new console window and there are no groups, so the tree
@@ -14,22 +14,29 @@ interface Killable {
 /**
  * Signal a child and everything it launched. POSIX: the negative pid reaches
  * the group made by `detached: true`. Windows: `taskkill /T /F` ends the tree
- * (there is no graceful signal, so SIGTERM and SIGKILL behave alike).
+ * synchronously so all child and grandchild processes are terminated before returning.
  * Throws like `process.kill` when the process is already gone.
  */
 export function signalProcessGroup(proc: Killable, signal: NodeJS.Signals): void {
   const pid = proc.pid;
   if (!pid) {
-    proc.kill(signal);
+    proc.kill(process.platform === 'win32' ? undefined : signal);
     return;
   }
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    })
-      .on('error', () => proc.kill(signal))
-      .unref();
+    try {
+      execFileSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 5000,
+      });
+    } catch {
+      try {
+        proc.kill();
+      } catch {
+        /* already dead */
+      }
+    }
     return;
   }
   process.kill(-pid, signal);

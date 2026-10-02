@@ -47,3 +47,24 @@ export function symlinkCrossPlatform(source: string, target: string): void {
     fs.symlinkSync(absoluteSource, target, 'junction');
   }
 }
+
+/**
+ * Unlinks a symlink or directory junction across platforms.
+ * On Windows, Win32 DeleteFile fails on directory junctions (ERROR_ACCESS_DENIED / EPERM).
+ * Directory junctions must be removed with fs.rmdirSync.
+ */
+export function unlinkSymlinkCrossPlatform(linkPath: string): void {
+  try {
+    fs.unlinkSync(linkPath);
+  } catch (err) {
+    if (process.platform === 'win32') {
+      try {
+        fs.rmdirSync(linkPath);
+        return;
+      } catch {
+        // Fall through to re-throw original error
+      }
+    }
+    throw err;
+  }
+}
