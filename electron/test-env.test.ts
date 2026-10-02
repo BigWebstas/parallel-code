@@ -33,6 +33,6 @@ describe('test environment', () => {
       encoding: 'utf8',
     }).trim();
 
-    expect(fs.realpathSync(gitDir)).toBe(path.join(fs.realpathSync(dir), '.git'));
+    expect(fs.realpathSync.native(gitDir)).toBe(path.join(fs.realpathSync.native(dir), '.git'));
   });
 });

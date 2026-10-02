@@ -60,26 +60,34 @@ describe('pinModelArgs', () => {
     expect(() => pinModelArgs('gemini', [])).toThrow(/No pinned model/);
   });
 
-  it('runs the real binary with the pinned arguments and model environment', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-agent-'));
-    try {
-      const fakeClaude = path.join(dir, 'claude');
-      fs.writeFileSync(fakeClaude, '#!/bin/sh\necho "$* | $CLAUDE_CODE_SUBAGENT_MODEL"\nexit 3\n', {
-        mode: 0o755,
-      });
-      const script = path.join(import.meta.dirname, 'pinned-agent.mjs');
-      const run = () =>
-        execFileSync(process.execPath, [script, 'claude', fakeClaude, '--model', 'opus', '-p'], {
-          encoding: 'utf8',
-        });
-      expect(run).toThrow(
-        expect.objectContaining({
-          status: 3,
-          stdout: '--model haiku -p | claude-haiku-4-5-20251001\n',
-        }),
-      );
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
+  // The fake agent is a shell script, which Windows cannot run.
+  it.skipIf(process.platform === 'win32')(
+    'runs the real binary with the pinned arguments and model environment',
+    () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinned-agent-'));
+      try {
+        const fakeClaude = path.join(dir, 'claude');
+        fs.writeFileSync(
+          fakeClaude,
+          '#!/bin/sh\necho "$* | $CLAUDE_CODE_SUBAGENT_MODEL"\nexit 3\n',
+          {
+            mode: 0o755,
+          },
+        );
+        const script = path.join(import.meta.dirname, 'pinned-agent.mjs');
+        const run = () =>
+          execFileSync(process.execPath, [script, 'claude', fakeClaude, '--model', 'opus', '-p'], {
+            encoding: 'utf8',
+          });
+        expect(run).toThrow(
+          expect.objectContaining({
+            status: 3,
+            stdout: '--model haiku -p | claude-haiku-4-5-20251001\n',
+          }),
+        );
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });

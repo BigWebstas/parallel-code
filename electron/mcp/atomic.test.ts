@@ -40,7 +40,8 @@ describe('atomicWriteFile (async)', () => {
     expect(files).toEqual(['out.json']);
   });
 
-  it('sets file mode when provided', async () => {
+  // Windows has no POSIX file modes.
+  it.skipIf(process.platform === 'win32')('sets file mode when provided', async () => {
     const d = await makeDir();
     const target = join(d, 'secret.json');
     await atomicWriteFile(target, 'data', { mode: 0o600 });
@@ -48,15 +49,18 @@ describe('atomicWriteFile (async)', () => {
     expect(s.mode & 0o777).toBe(0o600);
   });
 
-  it('preserves existing 0600 mode on overwrite when no mode specified', async () => {
-    const d = await makeDir();
-    const target = join(d, 'secret.json');
-    await atomicWriteFile(target, 'original', { mode: 0o600 });
-    await atomicWriteFile(target, 'overwritten'); // no mode option
-    const s = await stat(target);
-    expect(s.mode & 0o777).toBe(0o600);
-    expect(await readFile(target, 'utf8')).toBe('overwritten');
-  });
+  it.skipIf(process.platform === 'win32')(
+    'preserves existing 0600 mode on overwrite when no mode specified',
+    async () => {
+      const d = await makeDir();
+      const target = join(d, 'secret.json');
+      await atomicWriteFile(target, 'original', { mode: 0o600 });
+      await atomicWriteFile(target, 'overwritten'); // no mode option
+      const s = await stat(target);
+      expect(s.mode & 0o777).toBe(0o600);
+      expect(await readFile(target, 'utf8')).toBe('overwritten');
+    },
+  );
 
   it('sets exact mode even when umask would narrow it', async () => {
     const d = await makeDir();
@@ -89,7 +93,8 @@ describe('atomicWriteFileSync (sync)', () => {
     expect(await readFile(target, 'utf8')).toBe('second');
   });
 
-  it('sets file mode when provided', async () => {
+  // Windows has no POSIX file modes.
+  it.skipIf(process.platform === 'win32')('sets file mode when provided', async () => {
     const d = await makeDir();
     const target = join(d, 'secret.json');
     atomicWriteFileSync(target, 'data', { mode: 0o600 });
@@ -97,15 +102,18 @@ describe('atomicWriteFileSync (sync)', () => {
     expect(s.mode & 0o777).toBe(0o600);
   });
 
-  it('preserves existing 0600 mode on overwrite when no mode specified', async () => {
-    const d = await makeDir();
-    const target = join(d, 'secret.json');
-    atomicWriteFileSync(target, 'original', { mode: 0o600 });
-    atomicWriteFileSync(target, 'overwritten'); // no mode option
-    const s = await stat(target);
-    expect(s.mode & 0o777).toBe(0o600);
-    expect(await readFile(target, 'utf8')).toBe('overwritten');
-  });
+  it.skipIf(process.platform === 'win32')(
+    'preserves existing 0600 mode on overwrite when no mode specified',
+    async () => {
+      const d = await makeDir();
+      const target = join(d, 'secret.json');
+      atomicWriteFileSync(target, 'original', { mode: 0o600 });
+      atomicWriteFileSync(target, 'overwritten'); // no mode option
+      const s = await stat(target);
+      expect(s.mode & 0o777).toBe(0o600);
+      expect(await readFile(target, 'utf8')).toBe('overwritten');
+    },
+  );
 
   it('sets exact mode even when umask would narrow it', async () => {
     const d = await makeDir();

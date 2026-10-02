@@ -454,7 +454,8 @@ describe('mobile SPA static responses', () => {
     expect(await res.text()).toBe('Not found');
   });
 
-  it.skipIf(process.getuid?.() === 0)(
+  // Root, and Windows (no chmod), can still read a chmod 000 file.
+  it.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     'returns an uncached error when an existing file cannot be read',
     async () => {
       chmodSync(join(staticDir, 'assets', 'index-test.js'), 0o000);

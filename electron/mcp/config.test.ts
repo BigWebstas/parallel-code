@@ -33,7 +33,7 @@ describe('getSubTaskMcpConfigPath', () => {
   it('in Docker mode, places config in coordinator .parallel-code dir (the explicit volume)', () => {
     const serverPath = '/worktree/.parallel-code/mcp-server.cjs';
     expect(getSubTaskMcpConfigPath('my-container', serverPath, 'task-abc')).toBe(
-      '/worktree/.parallel-code/subtask-task-abc.json',
+      join('/worktree/.parallel-code', 'subtask-task-abc.json'),
     );
   });
 
@@ -47,7 +47,7 @@ describe('getSubTaskMcpConfigPath', () => {
   it('in host mode, places config in the OS temp directory', () => {
     const serverPath = '/usr/lib/parallel-code/mcp-server.cjs';
     expect(getSubTaskMcpConfigPath(null, serverPath, 'task-xyz', '/tmp')).toBe(
-      '/tmp/parallel-code-subtask-task-xyz.json',
+      join('/tmp', 'parallel-code-subtask-task-xyz.json'),
     );
   });
 
@@ -115,7 +115,7 @@ describe('writeSubTaskMcpConfig', () => {
 describe('isAllowedSubTaskMcpConfigPath', () => {
   it('allows the host temp path generated for the task', () => {
     expect(
-      isAllowedSubTaskMcpConfigPath('/tmp/parallel-code-subtask-task-abc.json', {
+      isAllowedSubTaskMcpConfigPath(join('/tmp', 'parallel-code-subtask-task-abc.json'), {
         taskId: 'task-abc',
         serverPath: '/worktree/.parallel-code/mcp-server.cjs',
         tempDir: '/tmp',
@@ -125,7 +125,7 @@ describe('isAllowedSubTaskMcpConfigPath', () => {
 
   it('allows the Docker coordinator .parallel-code path generated for the task', () => {
     expect(
-      isAllowedSubTaskMcpConfigPath('/worktree/.parallel-code/subtask-task-abc.json', {
+      isAllowedSubTaskMcpConfigPath(join('/worktree/.parallel-code', 'subtask-task-abc.json'), {
         taskId: 'task-abc',
         serverPath: '/worktree/.parallel-code/mcp-server.cjs',
         dockerContainerName: 'parallel-code-coord',

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 
 const { mockExecFileSync, mockReadFileSync, mockAppendFileSync, mockMkdirSync } = vi.hoisted(
   () => ({
@@ -97,7 +98,7 @@ describe('ensureSymlinkExcludes', () => {
     ensureSymlinkExcludes('/worktree', ['node_modules']);
 
     const [excludePath] = mockAppendFileSync.mock.calls[0] as [string];
-    expect(excludePath).toBe('/abs/repo/.git/info/exclude');
+    expect(excludePath).toBe(path.join('/abs/repo/.git', 'info', 'exclude'));
   });
 
   it('resolves a relative commonDir against the worktree path', () => {
@@ -107,7 +108,7 @@ describe('ensureSymlinkExcludes', () => {
     ensureSymlinkExcludes('/worktree', ['node_modules']);
 
     const [excludePath] = mockAppendFileSync.mock.calls[0] as [string];
-    expect(excludePath).toBe('/worktree/.git/info/exclude');
+    expect(excludePath).toBe(path.join('/worktree', '.git', 'info', 'exclude'));
   });
 
   it('appends without repeating the header when it is already present', () => {

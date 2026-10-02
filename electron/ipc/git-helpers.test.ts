@@ -125,7 +125,7 @@ describe('git exclude helpers', () => {
       const root = initRepository();
       const worktreePath = path.join(tempDir(), 'task');
       git(root, ['worktree', 'add', '-b', 'task', worktreePath]);
-      const commonExcludePath = path.join(fs.realpathSync(root), '.git', 'info', 'exclude');
+      const commonExcludePath = path.join(fs.realpathSync.native(root), '.git', 'info', 'exclude');
 
       expect(resolveGitInfoExcludePath(worktreePath)).toBe(commonExcludePath);
 

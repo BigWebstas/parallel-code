@@ -15,7 +15,8 @@ function git(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 }
 
-describe('candidate refinement', () => {
+// The fake agents are shell scripts, which Windows cannot run.
+describe.skipIf(process.platform === 'win32')('candidate refinement', () => {
   it('starts from the proposal, keeps canonical edits untouched, and accepts the complete revision', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-refine-'));
     roots.push(root);

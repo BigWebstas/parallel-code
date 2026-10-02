@@ -67,9 +67,16 @@ import {
 type ExecFileCallback = (err: Error | null, stdout: string, stderr: string) => void;
 type MockHandler = (args: string[], cb: ExecFileCallback) => void;
 
+/** On Windows every git call is prefixed with `-c core.longpaths=true`; the
+ *  mocks match on the git subcommand, so drop that prefix. */
+function gitArgs(args: string[]): string[] {
+  return args[0] === '-c' && args[1] === 'core.longpaths=true' ? args.slice(2) : args;
+}
+
 /** Configure the mocked execFile — double cast avoids execFile's 12 overloads */
 function setupMock(calls: string[][], handler: MockHandler): void {
-  const impl = (_cmd: string, args: string[], _opts: unknown, cb: ExecFileCallback) => {
+  const impl = (_cmd: string, rawArgs: string[], _opts: unknown, cb: ExecFileCallback) => {
+    const args = gitArgs(rawArgs);
     calls.push(args);
     handler(args, cb);
   };
@@ -1642,10 +1649,11 @@ describe('mergeTask (mergeWorktreePath)', () => {
 
     vi.mocked(execFile).mockImplementation(((
       _cmd: string,
-      args: string[],
+      rawArgs: string[],
       opts: unknown,
       cb: ExecFileCallback,
     ) => {
+      const args = gitArgs(rawArgs);
       callRecords.push({ args, cwd: (opts as { cwd?: string } | null)?.cwd });
 
       const [cmd] = args;

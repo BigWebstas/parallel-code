@@ -19,7 +19,8 @@ async function statusOf(root: string, runId: string) {
   return (await listDocumentRuns(root)).find((r) => r.id === runId)?.status;
 }
 
-describe('merging proposals with an agent', () => {
+// The fake agents are shell scripts, which Windows cannot run.
+describe.skipIf(process.platform === 'win32')('merging proposals with an agent', () => {
   it('hands the agent every chosen proposal as a diff and records the lineage', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-'));
     roots.push(root);

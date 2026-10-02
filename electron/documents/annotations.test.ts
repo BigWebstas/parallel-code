@@ -212,35 +212,39 @@ describe('annotations file and asking', () => {
     expect(readAnnotations(root).map((a) => a.id)).toEqual(['a-2']);
   });
 
-  it('asks a read-only agent and stores the answer in the bubble', async () => {
-    const pending = await askAnnotation(win, {
-      projectRoot: root,
-      documentPath: 'docs/spec.md',
-      annotationId: 'a-2',
-      agentId: 'claude-code',
-      agentName: 'Fake Claude',
-      command: fakeAgent,
-    });
-    expect(pending.answerStatus).toBe('pending');
-    const answered = await new Promise<DocumentAnnotation>((resolve, reject) => {
-      const started = Date.now();
-      const tick = () => {
-        const done = events.find(
-          (e) => e.annotation.id === 'a-2' && e.annotation.answerStatus !== 'pending',
-        );
-        if (done) return resolve(done.annotation);
-        if (Date.now() - started > 10_000) return reject(new Error('no answer'));
-        setTimeout(tick, 50);
-      };
-      tick();
-    });
-    expect(answered.answerStatus).toBe('answered');
-    expect(answered.answer?.text).toContain('assumes **nothing**');
-    expect(answered.answer?.agentName).toBe('Fake Claude');
-    expect(readAnnotations(root)[0].answer?.text).toContain('nothing');
-    // Question and answer both survive: the question text is untouched.
-    expect(readAnnotations(root)[0].text).toBe('Why?');
-  });
+  // The fake agent is a shell script, which Windows cannot run.
+  it.skipIf(process.platform === 'win32')(
+    'asks a read-only agent and stores the answer in the bubble',
+    async () => {
+      const pending = await askAnnotation(win, {
+        projectRoot: root,
+        documentPath: 'docs/spec.md',
+        annotationId: 'a-2',
+        agentId: 'claude-code',
+        agentName: 'Fake Claude',
+        command: fakeAgent,
+      });
+      expect(pending.answerStatus).toBe('pending');
+      const answered = await new Promise<DocumentAnnotation>((resolve, reject) => {
+        const started = Date.now();
+        const tick = () => {
+          const done = events.find(
+            (e) => e.annotation.id === 'a-2' && e.annotation.answerStatus !== 'pending',
+          );
+          if (done) return resolve(done.annotation);
+          if (Date.now() - started > 10_000) return reject(new Error('no answer'));
+          setTimeout(tick, 50);
+        };
+        tick();
+      });
+      expect(answered.answerStatus).toBe('answered');
+      expect(answered.answer?.text).toContain('assumes **nothing**');
+      expect(answered.answer?.agentName).toBe('Fake Claude');
+      expect(readAnnotations(root)[0].answer?.text).toContain('nothing');
+      // Question and answer both survive: the question text is untouched.
+      expect(readAnnotations(root)[0].text).toBe('Why?');
+    },
+  );
 
   it('refuses agents without a headless mode and unknown annotations', async () => {
     await expect(

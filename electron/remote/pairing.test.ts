@@ -181,7 +181,8 @@ describe('remembered phones', () => {
     const oldMobile = mobileToken;
     const file = join(credentialsDir, 'phones.json');
     expect(readFileSync(file, 'utf8')).not.toContain(paired);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX file modes.
+    if (!(process.platform === 'win32')) expect(statSync(file).mode & 0o777).toBe(0o600);
     await stop();
     await startServer();
     expect((await req('GET', '/api/mobile/projects', paired)).status).toBe(200);
