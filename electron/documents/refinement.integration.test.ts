@@ -16,7 +16,8 @@ function git(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 }
 
-describe('candidate refinement', () => {
+// Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
+describe('candidate refinement', { timeout: 30_000 }, () => {
   it('starts from the proposal, keeps canonical edits untouched, and accepts the complete revision', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-refine-'));
     roots.push(root);

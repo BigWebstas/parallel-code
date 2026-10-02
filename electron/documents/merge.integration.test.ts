@@ -20,7 +20,8 @@ async function statusOf(root: string, runId: string) {
   return (await listDocumentRuns(root)).find((r) => r.id === runId)?.status;
 }
 
-describe('merging proposals with an agent', () => {
+// Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
+describe('merging proposals with an agent', { timeout: 30_000 }, () => {
   it('hands the agent every chosen proposal as a diff and records the lineage', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-'));
     roots.push(root);

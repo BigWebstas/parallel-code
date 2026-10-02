@@ -111,7 +111,8 @@ afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe('document workspace lifecycle', () => {
+// Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
+describe('document workspace lifecycle', { timeout: 30_000 }, () => {
   it('combines concurrent independent revisions and rejects an overlapping revision without losing work', async () => {
     const parallelRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-parallel-'));
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-parallel-bin-'));
