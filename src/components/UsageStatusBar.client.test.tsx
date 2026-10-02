@@ -1,6 +1,6 @@
 import { render } from 'solid-js/web';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CreditUsage } from '../ipc/types';
+import type { UsageProvider } from '../ipc/types';
 import type { UsageState } from '../store/types';
 import { UsageStatusBar } from './UsageStatusBar';
 
@@ -8,30 +8,34 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
   const idle: UsageState = {
     fiveHour: null,
     sevenDay: null,
+    creditUsage: null,
     fetchedAt: null,
     status: 'idle',
     error: null,
+    refreshing: false,
   };
   const inAnHour = Date.now() + 3_600_000;
+  const initialUsage: Record<UsageProvider, UsageState> = {
+    claude: {
+      fiveHour: { usedPercent: 40, resetsAt: inAnHour },
+      sevenDay: { usedPercent: 10, resetsAt: inAnHour },
+      creditUsage: {
+        used: 2.12,
+        limit: 30,
+        currency: 'USD',
+        usedPercent: 7.07,
+      },
+      fetchedAt: Date.now(),
+      status: 'ok',
+      error: null,
+      refreshing: false,
+    },
+    codex: idle,
+    antigravity: idle,
+  };
   return {
     mockRefreshUsage: vi.fn(),
-    usage: {
-      claude: {
-        fiveHour: { usedPercent: 40, resetsAt: inAnHour },
-        sevenDay: { usedPercent: 10, resetsAt: inAnHour },
-        creditUsage: {
-          used: 2.12,
-          limit: 30,
-          currency: 'USD',
-          usedPercent: 7.07,
-        } as CreditUsage | null,
-        fetchedAt: Date.now(),
-        status: 'ok',
-        error: null,
-      } satisfies UsageState,
-      codex: idle,
-      antigravity: idle,
-    },
+    usage: initialUsage,
   };
 });
 
@@ -159,5 +163,17 @@ describe('UsageStatusBar', () => {
     expect(card?.textContent).toContain('Credits');
     expect(card?.textContent).toContain('$5.00 used');
     expect(card?.querySelector('[aria-label="Credit usage"]')).toBeNull();
+  });
+
+  it('renders an inline spinner and indicates busy state when refreshing is in flight', () => {
+    usage.claude.refreshing = true;
+    const container = mount();
+    const entry = container.querySelector<HTMLElement>('[role="status"]');
+    expect(entry?.getAttribute('aria-busy')).toBe('true');
+    expect(entry?.querySelector('.inline-spinner')).not.toBeNull();
+
+    entry?.dispatchEvent(new MouseEvent('mouseenter'));
+    const card = popover();
+    expect(card?.textContent).toContain('Refreshing usage…');
   });
 });

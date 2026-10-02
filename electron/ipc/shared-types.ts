@@ -244,6 +244,8 @@ export interface UsageState {
   /** `unavailable` means no subscription login — the bar hides. `error` keeps the last snapshot. */
   status: 'idle' | 'ok' | 'error' | 'unavailable';
   error: string | null;
+  /** Whether a background or user-initiated refresh is currently in flight. */
+  refreshing?: boolean;
 }
 
 export type UpdatePhase =

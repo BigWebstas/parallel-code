@@ -122,6 +122,7 @@ function UsagePopover(props: {
   anchor: { left: number; bottom: number };
 }) {
   const footer = () => {
+    if (props.usage.refreshing) return 'Refreshing usage…';
     if (props.usage.status === 'error')
       return `Refresh failed: ${props.usage.error} · click to retry`;
     const at = props.usage.fetchedAt;
@@ -209,6 +210,7 @@ function ProviderUsage(props: { provider: UsageProvider }) {
     <Show when={usageVisible(usage())}>
       <span
         role="status"
+        aria-busy={usage().refreshing ? true : undefined}
         onClick={() => void refreshUsage(props.provider, { force: true })}
         onMouseEnter={(e) => setAnchor(popoverAnchor(e.currentTarget.getBoundingClientRect()))}
         onMouseLeave={() => setAnchor(null)}
@@ -216,7 +218,7 @@ function ProviderUsage(props: { provider: UsageProvider }) {
           display: 'inline-flex',
           'align-items': 'center',
           gap: '10px',
-          cursor: 'pointer',
+          cursor: usage().refreshing ? 'wait' : 'pointer',
           opacity: stale() ? '0.6' : '1',
         }}
       >
@@ -225,9 +227,19 @@ function ProviderUsage(props: { provider: UsageProvider }) {
             color: theme.fgSubtle,
             'text-transform': 'uppercase',
             'letter-spacing': '0.05em',
+            display: 'inline-flex',
+            'align-items': 'center',
+            gap: '6px',
           }}
         >
           {PROVIDER_LABELS[props.provider]}
+          <Show when={usage().refreshing}>
+            <span
+              class="inline-spinner"
+              aria-hidden="true"
+              style={{ width: '9px', height: '9px', 'border-width': '1.5px' }}
+            />
+          </Show>
         </span>
         <Show when={headline()}>{(h) => <UsageMeter label={h().label} window={h().window} />}</Show>
         <Show when={!hasUsageSnapshot(usage())}>

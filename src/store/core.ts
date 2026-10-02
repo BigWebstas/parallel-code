@@ -11,6 +11,7 @@ const EMPTY_USAGE: UsageState = {
   fetchedAt: null,
   status: 'idle',
   error: null,
+  refreshing: false,
 };
 
 export const [store, setStore] = createStore<AppStore>({
