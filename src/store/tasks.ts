@@ -58,7 +58,8 @@ import {
   onTaskRenamed,
   onTaskNotesChanged,
 } from './superProductivity';
-import { commandName, pathBasename } from '../lib/path';
+import { pathBasename } from '../lib/path';
+import { commandName } from '../../electron/shared/command-name';
 
 export function createAgentRecord(args: {
   id: string;

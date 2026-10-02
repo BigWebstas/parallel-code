@@ -14,7 +14,7 @@ import { store, setStore } from './core';
 import { isLandedTaskState } from './landing';
 import type { AgentDef } from '../ipc/types';
 import type { PersistedTask, Project, Task } from './types';
-import { commandName } from '../lib/path';
+import { commandName } from '../../electron/shared/command-name';
 
 export const [delegationStates, setDelegationStates] = createStore<Record<string, DelegationState>>(
   {},

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { abbreviateHomePath, commandName, pathBasename } from './path';
+import { abbreviateHomePath, pathBasename } from './path';
 
 describe('abbreviateHomePath', () => {
   it('shortens macOS home paths', () => {
@@ -31,14 +31,5 @@ describe('pathBasename', () => {
     expect(pathBasename('/home/me/app')).toBe('app');
     expect(pathBasename('C:\\Git\\parallel-code')).toBe('parallel-code');
     expect(pathBasename('C:/Git/parallel-code/')).toBe('parallel-code');
-  });
-});
-
-describe('commandName', () => {
-  it('drops directories and Windows launcher suffixes', () => {
-    expect(commandName('claude')).toBe('claude');
-    expect(commandName('/usr/local/bin/codex')).toBe('codex');
-    expect(commandName('C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd')).toBe('claude');
-    expect(commandName('C:\\tools\\agy.EXE')).toBe('agy');
   });
 });

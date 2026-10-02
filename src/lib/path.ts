@@ -25,8 +25,3 @@ export function pathBasename(p: string): string {
       .pop() ?? ''
   );
 }
-
-/** Program name of a command (`C:\…\claude.cmd` → `claude`), dropping Windows launcher suffixes. */
-export function commandName(command: string): string {
-  return pathBasename(command).replace(/\.(cmd|exe|bat|com)$/i, '');
-}
