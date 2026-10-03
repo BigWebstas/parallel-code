@@ -497,9 +497,12 @@ export function TaskPanel(props: TaskPanelProps) {
 
     void fetchCommits();
     // UI-only: skip ticks while the window is hidden (next tick catches up).
+    // Active task polls at 5s; visible background tasks in tiling mode poll at 10s
+    // to cut Windows git process creation overhead in half.
+    const pollInterval = props.isActive ? 5_000 : 10_000;
     const timer = setInterval(() => {
       if (isWindowVisible()) void fetchCommits();
-    }, 5000);
+    }, pollInterval);
     onCleanup(() => {
       cancelled = true;
       clearInterval(timer);

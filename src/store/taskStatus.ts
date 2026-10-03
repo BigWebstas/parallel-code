@@ -15,6 +15,7 @@ import {
 } from '../lib/branch-divergence';
 import { warn as logWarn, info as logInfo, errMessage } from '../lib/log';
 import { adoptTaskBranch } from './task-branch';
+import { isWindowVisible } from '../lib/windowVisibility';
 import {
   clearAgentHookStatus,
   formatAgentHookTooltip,
@@ -1401,6 +1402,7 @@ let isRefreshingAll = false;
  *  interval, and starting another on top is exactly how the process pile-up
  *  happens. Overdue ticks simply skip — the running sweep covers them. */
 export async function refreshAllTaskGitStatus(): Promise<void> {
+  if (!isWindowVisible()) return;
   if (isRefreshingAll) return;
   isRefreshingAll = true;
   try {
@@ -1428,6 +1430,7 @@ export async function refreshAllTaskGitStatus(): Promise<void> {
 
 /** Refresh git status for the currently active task only. */
 async function refreshActiveTaskGitStatus(): Promise<void> {
+  if (!isWindowVisible()) return;
   const taskId = store.activeTaskId;
   if (!taskId) return;
   await refreshTaskGitStatus(taskId);

@@ -2193,7 +2193,7 @@ textarea::placeholder {
 }
 
 .icon-btn {
-  backdrop-filter: blur(6px);
+  /* Avoid expensive compositor blur readbacks on Windows D3D11 across dozens of buttons */
 }
 
 .icon-btn:hover {

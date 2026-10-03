@@ -988,9 +988,10 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
     }
 
     void refresh();
+    // Coverage reports only update on test completion; 15s poll saves 67% of directory scans.
     const timer = setInterval(() => {
       if (isWindowVisible()) void refresh();
-    }, 5000);
+    }, 15_000);
     onCleanup(() => {
       cancelled = true;
       clearInterval(timer);

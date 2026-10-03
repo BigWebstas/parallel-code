@@ -90,6 +90,12 @@ if (!shouldStartApp) app.quit();
 // eviction for GPU-process crashes on weak GPUs. The switch also raises the
 // worker-context limit to the same value (unused — no WebGL in our workers).
 app.commandLine.appendSwitch('max-active-webgl-contexts', '64');
+if (process.platform === 'win32') {
+  // On Windows, offload HTML/CSS/SVG tile rasterization from CPU to GPU via Direct3D/ANGLE
+  app.commandLine.appendSwitch('enable-gpu-rasterization');
+  // Rasterize tiles directly into GPU memory, eliminating CPU-GPU memory copies during redraws
+  app.commandLine.appendSwitch('enable-zero-copy');
+}
 
 // Enable console logging when debugging or verbose logging is enabled so CLI/terminal
 // stdout/stderr is visible and not swallowed by the Windows GUI subsystem.
