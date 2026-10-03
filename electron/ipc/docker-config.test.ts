@@ -6,6 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import path from 'path';
 import { buildCoordinatorMCPConfig, selectMcpJsonDir } from './register.js';
 import { getDockerMcpServerDestPath } from './mcp-paths.js';
 import { getMCPRemoteServerUrl } from '../mcp/config.js';
@@ -60,12 +61,12 @@ describe('selectMcpJsonDir — .mcp.json placement', () => {
 describe('getDockerMcpServerDestPath — copied mcp-server.cjs location', () => {
   it('places mcp-server.cjs in worktree .parallel-code dir', () => {
     const dest = getDockerMcpServerDestPath('/worktrees/coord', '/project');
-    expect(dest).toBe('/worktrees/coord/.parallel-code/mcp-server.cjs');
+    expect(dest).toBe(path.join('/worktrees/coord', '.parallel-code', 'mcp-server.cjs'));
   });
 
   it('falls back to projectRoot when worktreePath is undefined', () => {
     const dest = getDockerMcpServerDestPath(undefined, '/project');
-    expect(dest).toBe('/project/.parallel-code/mcp-server.cjs');
+    expect(dest).toBe(path.join('/project', '.parallel-code', 'mcp-server.cjs'));
   });
 
   it('dest is under the mounted worktree, not the unmounted projectRoot', () => {
@@ -73,13 +74,13 @@ describe('getDockerMcpServerDestPath — copied mcp-server.cjs location', () => 
     const projectRoot = '/home/user/repo';
     const dest = getDockerMcpServerDestPath(worktreePath, projectRoot);
     // The container mounts worktreePath (not projectRoot), so the script must live there
-    expect(dest.startsWith(worktreePath)).toBe(true);
-    expect(dest.startsWith(projectRoot + '/.parallel-code')).toBe(false);
+    expect(dest.startsWith(path.join(worktreePath))).toBe(true);
+    expect(dest.startsWith(path.join(projectRoot, '.parallel-code'))).toBe(false);
   });
 
   it('filename is always mcp-server.cjs', () => {
     const dest = getDockerMcpServerDestPath('/worktrees/coord', '/project');
-    expect(dest.endsWith('/mcp-server.cjs')).toBe(true);
+    expect(path.basename(dest)).toBe('mcp-server.cjs');
   });
 });
 

@@ -4,6 +4,9 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexChat } from './codex-chat.js';
 
+// Windows has no signals: the child is killed without one.
+const signal = (name: NodeJS.Signals) => (process.platform === 'win32' ? undefined : name);
+
 const models = [
   {
     model: 'model-a',
@@ -527,7 +530,7 @@ it('waits for the app-server to close before handing its exact session and setti
   const released = vi.fn();
   const handoff = h.chat.release().then(released);
   await Promise.resolve();
-  expect(h.proc.kill).toHaveBeenCalledWith('SIGTERM');
+  expect(h.proc.kill).toHaveBeenCalledWith(signal('SIGTERM'));
   expect(released).not.toHaveBeenCalled();
   await expect(h.chat.send('Too late')).rejects.toThrow();
   h.proc.emit('close');
@@ -592,7 +595,7 @@ describe('stopping the app-server', () => {
     const h = harness();
     await h.start();
     h.chat.stop();
-    expect(h.proc.kill.mock.calls.map(([signal]) => signal)).toEqual(['SIGTERM']);
+    expect(h.proc.kill.mock.calls.map(([sent]) => sent)).toEqual([signal('SIGTERM')]);
   });
 
   it('kills the group outright when the app is quitting', async () => {
@@ -601,6 +604,9 @@ describe('stopping the app-server', () => {
     // On quit the grace timer is unref'd and Electron exits long before 2 s, so a group that
     // ignores SIGTERM would outlive the app with nobody left to kill it.
     h.chat.stop(true);
-    expect(h.proc.kill.mock.calls.map(([signal]) => signal)).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(h.proc.kill.mock.calls.map(([sent]) => sent)).toEqual([
+      signal('SIGTERM'),
+      signal('SIGKILL'),
+    ]);
   });
 });

@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import type { BrowserWindow } from 'electron';
 import { acceptDocumentCandidate, dispatchDocumentRun, listDocumentRuns } from './runs.js';
+import { writeFakeAgent } from './fake-agent-harness.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -15,7 +16,8 @@ function git(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
 }
 
-describe('candidate refinement', () => {
+// Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
+describe('candidate refinement', { timeout: 30_000 }, () => {
   it('starts from the proposal, keeps canonical edits untouched, and accepts the complete revision', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-refine-'));
     roots.push(root);
@@ -29,8 +31,11 @@ describe('candidate refinement', () => {
     // A deterministic agent: each invocation adds a revision to the file it sees.
     const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-refine-agent-'));
     roots.push(bin);
-    const command = path.join(bin, 'agent.sh');
-    fs.writeFileSync(command, '#!/bin/sh\nprintf "\\nRevision.\\n" >> plan.md\n', { mode: 0o755 });
+    const command = writeFakeAgent(
+      bin,
+      'agent',
+      "fs.appendFileSync('plan.md', '\\nRevision.\\n');",
+    );
     const win = { isDestroyed: () => true } as unknown as BrowserWindow;
     const args = {
       projectRoot: root,

@@ -2,6 +2,7 @@ import os from 'os';
 import type { SessionCapabilities } from '../shared/delegation-types.js';
 import { join, dirname } from 'path';
 import { atomicWriteFile, atomicWriteFileSync } from './atomic.js';
+import { toContainerPath } from '../docker-paths.js';
 
 export interface SubTaskMcpConfigOpts {
   serverPath: string;
@@ -10,6 +11,8 @@ export interface SubTaskMcpConfigOpts {
   taskId: string;
   doneToken: string;
   sessionCapabilities?: SessionCapabilities;
+  /** The config is read inside a Docker container, so host paths are translated. */
+  inContainer?: boolean;
 }
 
 export interface SubTaskMcpConfig {
@@ -32,10 +35,10 @@ export function getMCPRemoteServerUrl(
   platform = os.platform(),
 ): string {
   if (!dockerContainerName) return `http://127.0.0.1:${port}`;
-  // macOS Docker Desktop: host.docker.internal resolves to the host automatically.
   // Linux with --network host: the container shares the host's network namespace, so
-  // 127.0.0.1 inside the container IS the host's loopback.
-  return platform === 'darwin' ? `http://host.docker.internal:${port}` : `http://127.0.0.1:${port}`;
+  // 127.0.0.1 inside the container IS the host's loopback. Docker Desktop on macOS and
+  // Windows has no host networking; host.docker.internal resolves to the host there.
+  return platform === 'linux' ? `http://127.0.0.1:${port}` : `http://host.docker.internal:${port}`;
 }
 
 /**
@@ -78,7 +81,7 @@ export function buildSubTaskMcpConfig(args: SubTaskMcpConfigOpts): SubTaskMcpCon
         type: 'stdio',
         command: 'node',
         args: [
-          args.serverPath,
+          args.inContainer ? toContainerPath(args.serverPath) : args.serverPath,
           '--url',
           args.serverUrl,
           '--task-id',
@@ -127,7 +130,7 @@ export function isAllowedSubTaskMcpConfigPath(
 
 /**
  * Returns a warning string if a Docker coordinator has a stale 127.0.0.1 URL
- * in its MCP config (unreachable from macOS containers). Returns null if OK.
+ * in its MCP config (unreachable from macOS and Windows containers). Returns null if OK.
  */
 export function detectStaleDockerMCPUrl(
   url: string,
@@ -135,10 +138,10 @@ export function detectStaleDockerMCPUrl(
   currentPlatform = os.platform(),
 ): string | null {
   if (!containerName) return null; // non-Docker: 127.0.0.1 is correct
-  if (currentPlatform === 'darwin' && url.includes('127.0.0.1')) {
+  if (currentPlatform !== 'linux' && url.includes('127.0.0.1')) {
     return (
       `Docker coordinator MCP URL contains 127.0.0.1 but container "${containerName}" ` +
-      `cannot reach 127.0.0.1 on macOS. Use host.docker.internal instead.`
+      `cannot reach 127.0.0.1 on ${currentPlatform === 'win32' ? 'Windows' : 'macOS'}. Use host.docker.internal instead.`
     );
   }
   return null;

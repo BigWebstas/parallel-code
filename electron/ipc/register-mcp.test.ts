@@ -111,7 +111,7 @@ describe('Layer 3 — MCP startup pipeline (no Electron, real FS)', () => {
 
     // Must be inside worktree, under .parallel-code/
     expect(destPath.startsWith(worktreePath)).toBe(true);
-    expect(destPath).toContain('/.parallel-code/mcp-server.cjs');
+    expect(destPath).toContain(path.join('.parallel-code', 'mcp-server.cjs'));
     expect(fs.existsSync(destPath)).toBe(true);
   });
 
@@ -133,20 +133,24 @@ describe('Layer 3 — MCP startup pipeline (no Electron, real FS)', () => {
     expect(fs.existsSync(path.join(projectRoot, '.mcp.json'))).toBe(false);
   });
 
-  it('.mcp.json file mode is 0o600 (token is a secret)', () => {
-    const worktreePath = mkTemp();
-    const cfg = buildCoordinatorMCPConfig({
-      mcpServerPath: '/s.cjs',
-      serverUrl: 'http://host.docker.internal:1',
-      token: 'tok',
-      coordinatorTaskId: 'c',
-    });
-    const p = path.join(worktreePath, '.mcp.json');
-    fs.writeFileSync(p, JSON.stringify(cfg), { mode: 0o600 });
-    const stat = fs.statSync(p);
-    // mode & 0o777 masks off file-type bits; 0o600 = owner r/w only
-    expect(stat.mode & 0o777).toBe(0o600);
-  });
+  // Windows has no POSIX file modes.
+  it.skipIf(process.platform === 'win32')(
+    '.mcp.json file mode is 0o600 (token is a secret)',
+    () => {
+      const worktreePath = mkTemp();
+      const cfg = buildCoordinatorMCPConfig({
+        mcpServerPath: '/s.cjs',
+        serverUrl: 'http://host.docker.internal:1',
+        token: 'tok',
+        coordinatorTaskId: 'c',
+      });
+      const p = path.join(worktreePath, '.mcp.json');
+      fs.writeFileSync(p, JSON.stringify(cfg), { mode: 0o600 });
+      const stat = fs.statSync(p);
+      // mode & 0o777 masks off file-type bits; 0o600 = owner r/w only
+      expect(stat.mode & 0o777).toBe(0o600);
+    },
+  );
 
   it('non-Docker path: no copy, .mcp.json still written to worktree', () => {
     const worktreePath = mkTemp();

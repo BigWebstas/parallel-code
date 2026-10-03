@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildHeadlessLaunch, createHeadlessParser, CLAUDE_DOCUMENT_TOOLS } from './agents.js';
+import {
+  buildHeadlessLaunch,
+  createHeadlessParser,
+  CLAUDE_DOCUMENT_TOOLS,
+  isSafeAgentCommand,
+} from './agents.js';
 
 describe('buildHeadlessLaunch', () => {
   it('starts a fresh claude session with a fixed id and no shell tools', () => {
@@ -240,5 +245,21 @@ describe('gemini and plain parsers', () => {
     const log = parser.feed('one\ntwo\n');
     expect(log).toEqual(['one', 'two']);
     expect(parser.finish().resultText).toBe('one\ntwo\n');
+  });
+});
+
+describe('isSafeAgentCommand', () => {
+  it('accepts plain commands and rejects shell syntax everywhere', () => {
+    expect(isSafeAgentCommand('claude', 'linux')).toBe(true);
+    expect(isSafeAgentCommand('/usr/local/bin/claude', 'darwin')).toBe(true);
+    for (const bad of ['', 'claude --yolo', 'claude;rm', 'a|b', '$(x)', 'C:\\x\\claude.cmd'])
+      expect(isSafeAgentCommand(bad, 'linux')).toBe(false);
+  });
+
+  it('accepts a Windows install path with backslashes and spaces', () => {
+    expect(isSafeAgentCommand('C:\\Program Files\\nodejs\\claude.cmd', 'win32')).toBe(true);
+    expect(isSafeAgentCommand('C:\\tools\\claude.exe', 'win32')).toBe(true);
+    expect(isSafeAgentCommand('C:\\tools\\claude.exe & calc', 'win32')).toBe(false);
+    expect(isSafeAgentCommand('claude --yolo', 'win32')).toBe(false);
   });
 });

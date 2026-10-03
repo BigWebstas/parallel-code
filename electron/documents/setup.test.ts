@@ -86,7 +86,7 @@ describe('inspectDocumentFolder', () => {
 
     const info = await inspectDocumentFolder(path.join(dir, 'sub'));
     expect(info.isRepo).toBe(false);
-    expect(info.enclosingRepo).toBe(fs.realpathSync(dir));
+    expect(info.enclosingRepo).toBe(fs.realpathSync.native(dir));
   });
 });
 

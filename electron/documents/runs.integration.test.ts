@@ -18,6 +18,7 @@ import {
 } from './runs.js';
 import { inspectDocumentFolder } from './setup.js';
 import type { DocumentRunEvent, DocumentRunRecord } from './types.js';
+import { writeFakeAgent } from './fake-agent-harness.js';
 
 /**
  * Exercises the whole proposal lifecycle against a real temporary repository
@@ -83,19 +84,26 @@ beforeAll(() => {
 
   // The fake CLI lives outside the repo so it never shows up as a change.
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-bin-'));
-  fakeAgent = path.join(binDir, 'fake-claude.sh');
-  fs.writeFileSync(
-    fakeAgent,
-    [
-      '#!/bin/sh',
-      'sed -i.bak "s/Old goals text./New goals text, sharper./" docs/spec.md && rm -f docs/spec.md.bak',
-      'echo "stray" > STRAY.txt && git add STRAY.txt',
-      'echo "scratch" > notes.tmp',
-      'printf \'%s\\n\' \'{"type":"system","subtype":"init","session_id":"sess-1"}\'',
-      'printf \'%s\\n\' \'{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"docs/spec.md"}}]}}\'',
-      'printf \'%s\\n\' \'{"type":"result","subtype":"success","session_id":"sess-1","result":"Done.\\n```json\\n{\\"summary\\":\\"Sharpened the goals\\",\\"changes\\":[\\"rewrote goals\\"],\\"questions\\":[\\"ok?\\"]}\\n```"}\'',
-    ].join('\n') + '\n',
-    { mode: 0o755 },
+  fakeAgent = writeFakeAgent(
+    binDir,
+    'fake-claude',
+    `
+edit('docs/spec.md', ['Old goals text.', 'New goals text, sharper.']);
+fs.writeFileSync('STRAY.txt', 'stray\\n');
+execFileSync('git', ['add', 'STRAY.txt']);
+fs.writeFileSync('notes.tmp', 'scratch\\n');
+emit({ type: 'system', subtype: 'init', session_id: 'sess-1' });
+emit({
+  type: 'assistant',
+  message: { content: [{ type: 'tool_use', name: 'Edit', input: { file_path: 'docs/spec.md' } }] },
+});
+const report = { summary: 'Sharpened the goals', changes: ['rewrote goals'], questions: ['ok?'] };
+emit({
+  type: 'result',
+  subtype: 'success',
+  session_id: 'sess-1',
+  result: 'Done.\\n\`\`\`json\\n' + JSON.stringify(report) + '\\n\`\`\`',
+});`,
   );
 });
 
@@ -103,7 +111,8 @@ afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe('document workspace lifecycle', () => {
+// Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
+describe('document workspace lifecycle', { timeout: 30_000 }, () => {
   it('combines concurrent independent revisions and rejects an overlapping revision without losing work', async () => {
     const parallelRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-parallel-'));
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-parallel-bin-'));
@@ -118,20 +127,15 @@ describe('document workspace lifecycle', () => {
         ['Old goals text.', 'Incompatible goals.'],
       ];
       const commands = revisions.map(([before, after], index) => {
-        const command = path.join(binDir, `agent-${index}.sh`);
-        fs.writeFileSync(
-          command,
-          [
-            '#!/bin/sh',
-            // Keep candidates alive while the other runs are prepared.
-            'sleep 1',
-            `sed -i.bak 's/${before}/${after}/' spec.md`,
-            'rm spec.md.bak',
-            `printf '%s\\n' '{"type":"result","subtype":"success","result":"Revised the passage."}'`,
-          ].join('\n'),
-          { mode: 0o755 },
+        // Keep candidates alive while the other runs are prepared.
+        return writeFakeAgent(
+          binDir,
+          `agent-${index}`,
+          `
+await new Promise((resolve) => setTimeout(resolve, 1000));
+edit('spec.md', [${JSON.stringify(before)}, ${JSON.stringify(after)}]);
+emit({ type: 'result', subtype: 'success', result: 'Revised the passage.' });`,
         );
-        return command;
       });
       const runs = await Promise.all(
         commands.map((command) =>
@@ -305,8 +309,11 @@ describe('document workspace lifecycle', () => {
 
   it('refuses to reuse the main worktree while its candidate is still running', async () => {
     const binDir = path.dirname(fakeAgent);
-    const slow = path.join(binDir, 'slow.sh');
-    fs.writeFileSync(slow, '#!/bin/sh\nsleep 3\n', { mode: 0o755 });
+    const slow = writeFakeAgent(
+      binDir,
+      'slow',
+      'await new Promise((resolve) => setTimeout(resolve, 3000));',
+    );
     const base = {
       projectRoot: root,
       documentPath: 'docs/spec.md',
@@ -421,15 +428,22 @@ describe('document workspace lifecycle', () => {
     git(partialRoot, 'commit', '-q', '-m', 'initial');
 
     // This candidate rewrites two paragraphs; the reader keeps one of them.
-    const twoChanges = path.join(path.dirname(fakeAgent), 'fake-claude-two.sh');
-    fs.writeFileSync(
-      twoChanges,
-      [
-        '#!/bin/sh',
-        'sed -i.bak "s/Intro paragraph./Sharper intro./;s/Old goals text./New goals text, sharper./" docs/spec.md && rm -f docs/spec.md.bak',
-        'printf \'%s\\n\' \'{"type":"result","subtype":"success","session_id":"s","result":"```json\\n{\\"summary\\":\\"Two rewrites\\",\\"changes\\":[\\"intro\\",\\"goals\\"]}\\n```"}\'',
-      ].join('\n') + '\n',
-      { mode: 0o755 },
+    const twoChanges = writeFakeAgent(
+      path.dirname(fakeAgent),
+      'fake-claude-two',
+      `
+edit(
+  'docs/spec.md',
+  ['Intro paragraph.', 'Sharper intro.'],
+  ['Old goals text.', 'New goals text, sharper.'],
+);
+const report = { summary: 'Two rewrites', changes: ['intro', 'goals'] };
+emit({
+  type: 'result',
+  subtype: 'success',
+  session_id: 's',
+  result: '\`\`\`json\\n' + JSON.stringify(report) + '\\n\`\`\`',
+});`,
     );
 
     const dispatch = () =>

@@ -8,6 +8,7 @@ import {
   removeAllCanvasConfigs,
   removeCanvasConfig,
 } from './canvas-config.js';
+import { toContainerPath } from '../docker-paths.js';
 
 let directory: string;
 let id: string;
@@ -66,7 +67,8 @@ it('configures a task-scoped MCP without changing project config and restricts c
     'task-1',
     '--canvas-only',
   ]);
-  expect(fs.statSync(args[1]).mode & 0o777).toBe(0o600);
+  // Windows has no POSIX file modes.
+  if (!(process.platform === 'win32')) expect(fs.statSync(args[1]).mode & 0o777).toBe(0o600);
   expect(fs.readFileSync(path.join(directory, '.mcp.json'), 'utf8')).toBe('{"existing":true}');
   expect(prepareCanvasMcpArgs({ ...options(), command: 'codex' })[0]).toBe('--config');
   expect(prepareCanvasMcpArgs({ ...options(), command: 'copilot' })[0]).toBe(
@@ -78,10 +80,10 @@ it('puts Docker configs and the server inside the task mount', () => {
   const args = prepareCanvasMcpArgs({ ...options(), dockerMode: true });
   expect(args[1]).toBe(path.join(directory, '.parallel-code', `parallel-code-canvas-${id}.json`));
   const config = JSON.parse(fs.readFileSync(args[1], 'utf8'));
-  expect(config.mcpServers['parallel-code'].args[0]).toBe(
-    path.join(directory, '.parallel-code', 'canvas-mcp-server.cjs'),
-  );
-  expect(fs.readFileSync(config.mcpServers['parallel-code'].args[0], 'utf8')).toBe('// server');
+  const server = path.join(directory, '.parallel-code', 'canvas-mcp-server.cjs');
+  // The container reads the config, so it names the server by its container path.
+  expect(config.mcpServers['parallel-code'].args[0]).toBe(toContainerPath(server));
+  expect(fs.readFileSync(server, 'utf8')).toBe('// server');
 });
 
 it('removes the copied Docker bundle with the last config that uses it, never through a link', () => {

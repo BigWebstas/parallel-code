@@ -20,7 +20,7 @@ import { loadEnvFile } from '../ipc/env-file.js';
 import { createWorktree, ensureWorktreeContainerExclude, removeWorktree } from '../ipc/git.js';
 import { pathsEqual } from '../ipc/worktree-node-modules.js';
 import { git, gitOk } from './git.js';
-import { buildHeadlessLaunch, createHeadlessParser } from './agents.js';
+import { buildHeadlessLaunch, createHeadlessParser, isSafeAgentCommand } from './agents.js';
 import { buildDocumentPrompt, parseDocumentRationale, type MergeCandidateInput } from './prompt.js';
 import { appendCandidateLog, ensureDocumentLogsExclude } from './logs.js';
 import { MAX_DOCUMENT_CANDIDATES, documentAgentSupport } from './shared.js';
@@ -139,7 +139,7 @@ function validateCandidateSpecs(value: unknown): DocumentCandidateSpec[] {
     if (!documentAgentSupport(agentId).headless)
       throw new Error(`Agent "${agentId}" has no headless mode for document runs.`);
     const command = str('command');
-    if (/[\s;&|<>$`'"\\]/.test(command)) throw new Error('candidate.command is invalid');
+    if (!isSafeAgentCommand(command)) throw new Error('candidate.command is invalid');
     // Session ids and shas are handed to CLIs and git as positional values;
     // a leading dash would turn them into flags.
     const sessionId = optStr('sessionId');

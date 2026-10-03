@@ -61,10 +61,33 @@ jobs:
 
       - run: npm ci
 
-      - name: Build and publish
+      # Signs through Azure Trusted Signing once the AZURE_SIGNING_* repository
+      # variables are set; until then the installer is published unsigned.
+      # electron-builder authenticates with the AZURE_* client secrets.
+      - name: Build, sign, and publish
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build -- --win --publish always
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: |
+          signing=()
+          if [ -n "$SIGNING_ENDPOINT" ]; then
+            signing=(
+              "-c.win.azureSignOptions.endpoint=$SIGNING_ENDPOINT"
+              "-c.win.azureSignOptions.codeSigningAccountName=$SIGNING_ACCOUNT"
+              "-c.win.azureSignOptions.certificateProfileName=$SIGNING_PROFILE"
+              "-c.win.azureSignOptions.publisherName=$SIGNING_PUBLISHER"
+            )
+          else
+            echo "::warning::AZURE_SIGNING_ENDPOINT is not set; publishing an unsigned Windows installer."
+          fi
+          npm run build -- --win --publish always "${signing[@]}"
 
   build-macos:
     needs: create-release

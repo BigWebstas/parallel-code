@@ -16,7 +16,7 @@ import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
 import { truncateBytes } from './prompt.js';
-import { buildHeadlessLaunch, createHeadlessParser } from './agents.js';
+import { buildHeadlessLaunch, createHeadlessParser, isSafeAgentCommand } from './agents.js';
 import { documentAgentSupport } from './shared.js';
 import { validateDocumentPath, validateSha } from './runs.js';
 import type {
@@ -373,7 +373,7 @@ export async function askAnnotation(
     throw new Error(`Agent "${agentId}" has no headless mode for document questions.`);
   const agentName = text(args.agentName, 'agentName', 64);
   const command = text(args.command, 'command', 200);
-  if (!command.trim() || /[\s;&|<>$`'"\\]/.test(command)) throw new Error('command is invalid');
+  if (!isSafeAgentCommand(command)) throw new Error('command is invalid');
   const envFile = args.envFile === undefined ? undefined : text(args.envFile, 'envFile', 1_000);
   validateCommand(command);
 

@@ -43,6 +43,17 @@ export interface HeadlessOutputParser {
 
 /** Tools a document proposal may use: read and edit files, nothing that runs code. */
 export const CLAUDE_DOCUMENT_TOOLS = 'Read,Edit,Write,Glob,Grep';
+/**
+ * A launch command that can go to spawn as-is: no shell syntax, quotes or
+ * whitespace that could smuggle extra words in. An absolute Windows path may
+ * hold backslashes and spaces (`C:\Program Files\…\claude.exe`).
+ */
+export function isSafeAgentCommand(command: string, platform = process.platform): boolean {
+  const windowsPath = platform === 'win32' && /^[A-Za-z]:\\/.test(command);
+  const unsafe = windowsPath ? /[\t\n\r;&|<>$`'"]/ : /[\s;&|<>$`'"\\]/;
+  return command.trim() !== '' && !unsafe.test(command);
+}
+
 /** Tools for answering a question about a document: reading only. */
 export const CLAUDE_READ_ONLY_TOOLS = 'Read,Glob,Grep';
 

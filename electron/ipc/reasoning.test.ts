@@ -225,7 +225,8 @@ it('rejects traversal, symlinked directories and files, and oversized input', as
   await expect(read(dir)).rejects.toThrow(/large/i);
 });
 
-it.each(['symlink', 'directory', 'fifo'])(
+// Windows has no FIFOs.
+it.each(process.platform === 'win32' ? ['symlink', 'directory'] : ['symlink', 'directory', 'fifo'])(
   'rejects an existing %s report before connecting',
   (kind) => {
     const dir = root();
@@ -343,7 +344,8 @@ it('keeps one append cheap however long the history is', async () => {
   const parsed = parseReasoningFeed((await read(dir)) ?? '');
   expect(parsed.error).toBeUndefined();
   expect(parsed.history.updates).toHaveLength(revision + 1);
-});
+  // Dozens of synchronous feed writes; Windows CI file I/O needs more than the default 5 s.
+}, 30_000);
 
 it('keeps every feed of a full coordinator run warm, not just the last one appended to', () => {
   // A coordinator run drives one feed per concurrent subtask plus its own, and they interleave:
@@ -429,7 +431,10 @@ it('reports an unchanged feed by stamp and a new stamp after an append or rotati
   const rewritten = await readReasoningFeed(feed, second.stamp);
   expect(rewritten && 'raw' in rewritten).toBe(true);
   fs.rmSync(file);
-  fs.symlinkSync(path.join(dir, 'elsewhere'), file);
+  // A real target: Windows ignores O_NOFOLLOW, so the realpath check is what refuses the link.
+  const elsewhere = path.join(dir, 'elsewhere');
+  fs.writeFileSync(elsewhere, second.raw);
+  fs.symlinkSync(elsewhere, file);
   await expect(readReasoningFeed(feed, second.stamp)).rejects.toThrow();
 });
 

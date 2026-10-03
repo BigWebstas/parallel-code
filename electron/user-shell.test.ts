@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveUserShell } from './user-shell.js';
+import { resolveTerminalShell, resolveUserShell } from './user-shell.js';
 
 const mockUserInfo = {
   username: 'test-user',
@@ -95,5 +95,50 @@ describe('resolveUserShell', () => {
     });
 
     expect(shell).toBe('C:\\Windows\\system32\\cmd.exe');
+  });
+});
+
+describe('resolveTerminalShell', () => {
+  const noShell = {
+    userInfo: () => ({ ...mockUserInfo, shell: '' }),
+    platform: 'win32' as const,
+    canUseShell: allowShells(),
+  };
+
+  it('opens PowerShell 7 on Windows when it is installed', () => {
+    const shell = resolveTerminalShell({
+      ...noShell,
+      env: { COMSPEC: 'C:\\Windows\\system32\\cmd.exe' },
+      findProgram: (name) =>
+        name === 'pwsh' ? 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' : undefined,
+    });
+    expect(shell).toBe('C:\\Program Files\\PowerShell\\7\\pwsh.exe');
+  });
+
+  it('falls back to the built-in Windows PowerShell, never cmd.exe', () => {
+    const shell = resolveTerminalShell({
+      ...noShell,
+      env: { COMSPEC: 'C:\\Windows\\system32\\cmd.exe', SystemRoot: 'D:\\Windows' },
+      findProgram: () => undefined,
+    });
+    expect(shell).toBe('D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  });
+
+  it("keeps the user's own shell and the POSIX default", () => {
+    const shell = resolveTerminalShell({
+      ...noShell,
+      env: { SHELL: 'C:\\tools\\nu.exe' },
+      canUseShell: allowShells('C:\\tools\\nu.exe'),
+      findProgram: () => undefined,
+    });
+    expect(shell).toBe('C:\\tools\\nu.exe');
+    expect(
+      resolveTerminalShell({
+        ...noShell,
+        platform: 'linux',
+        env: {},
+        findProgram: () => undefined,
+      }),
+    ).toBe('/bin/sh');
   });
 });

@@ -586,7 +586,7 @@ describe('Docker per-container sub-tasks — StartMCPServer arg validation', () 
     const mcpServerPath = `${coordWorktree}/.parallel-code/mcp-server.cjs`;
     const configPath = getSubTaskMcpConfigPath('parallel-code-coord-abc', mcpServerPath, 'sub-1');
     // Must be inside the coordinator's .parallel-code/ dir
-    expect(configPath.startsWith(`${coordWorktree}/.parallel-code/`)).toBe(true);
+    expect(dirname(configPath)).toBe(join(coordWorktree, '.parallel-code'));
     // Must NOT be in a sub-task worktree (which is not a Docker volume)
     expect(configPath).not.toContain('.worktrees/task/sub-');
   });
@@ -616,7 +616,7 @@ describe('Docker coordinator bootstrap — path edge cases', () => {
   it('preserves spaces in worktree path for mcp-server.cjs dest', () => {
     const worktreePath = '/Users/alice bob/my repos/.worktrees/task/coord-abc';
     const dest = getDockerMcpServerDestPath(worktreePath, '/irrelevant');
-    expect(dest).toBe(`${worktreePath}/.parallel-code/mcp-server.cjs`);
+    expect(dest).toBe(join(worktreePath, '.parallel-code', 'mcp-server.cjs'));
   });
 
   it('preserves spaces in worktree path for .mcp.json dir selection', () => {
@@ -799,7 +799,7 @@ describe('Docker coordinator bootstrap — unicode paths', () => {
   it('unicode characters in worktree path are preserved verbatim in config', () => {
     const worktreePath = '/Users/张三/projects/我的代码/.worktrees/task/coord-abc';
     const dest = getDockerMcpServerDestPath(worktreePath, '/irrelevant');
-    expect(dest).toBe(`${worktreePath}/.parallel-code/mcp-server.cjs`);
+    expect(dest).toBe(join(worktreePath, '.parallel-code', 'mcp-server.cjs'));
     expect(selectMcpJsonDir(worktreePath, '/irrelevant')).toBe(worktreePath);
   });
 

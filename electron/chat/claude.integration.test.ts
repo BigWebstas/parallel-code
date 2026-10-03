@@ -11,7 +11,9 @@ let chat: ClaudeChat | undefined;
 afterEach(async () => {
   chat?.stop();
   vi.unstubAllEnvs();
-  if (directory) await rm(directory, { recursive: true, force: true });
+  // Windows holds the stopped fixture's cwd briefly (EBUSY).
+  if (directory)
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 it('uses the real SDK for streaming, approval, model controls, interruption and disk resume', async () => {
   directory = await realpath(await mkdtemp(join(tmpdir(), 'claude-chat-sdk-')));

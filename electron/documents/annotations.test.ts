@@ -13,6 +13,7 @@ import {
   validateAnnotationInput,
 } from './annotations.js';
 import type { DocumentAnnotation, DocumentAnnotationEvent } from './types.js';
+import { writeFakeAgent } from './fake-agent-harness.js';
 
 const anchor = {
   path: 'docs/spec.md',
@@ -172,16 +173,15 @@ describe('annotations file and asking', () => {
   beforeAll(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-ann-'));
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-ann-bin-'));
-    fakeAgent = path.join(binDir, 'fake-claude.sh');
-    fs.writeFileSync(
-      fakeAgent,
-      [
-        '#!/bin/sh',
-        // Prove read-only tools were requested and answer.
-        'case "$*" in *"Read,Glob,Grep"*) ;; *) echo "wrong tools" >&2; exit 2;; esac',
-        'printf \'%s\\n\' \'{"type":"result","subtype":"success","session_id":"s","result":"The passage assumes **nothing**."}\'',
-      ].join('\n') + '\n',
-      { mode: 0o755 },
+    // Prove read-only tools were requested and answer.
+    fakeAgent = writeFakeAgent(
+      binDir,
+      'fake-claude',
+      `if (!process.argv.slice(2).join(' ').includes('Read,Glob,Grep')) {
+  process.stderr.write('wrong tools\\n');
+  process.exit(2);
+}
+emit({ type: 'result', subtype: 'success', session_id: 's', result: 'The passage assumes **nothing**.' });`,
     );
   });
 

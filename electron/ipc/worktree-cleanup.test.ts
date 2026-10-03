@@ -73,21 +73,25 @@ describe('findForeignOwnedEntries', () => {
 });
 
 describe('foreignOwnedRemovalError', () => {
-  it('names the offending uid, an example path, and the manual command', () => {
-    const error = foreignOwnedRemovalError(
-      '/repo/.worktrees/feat/x',
-      [
-        { path: '/repo/.worktrees/feat/x/node_modules/.cache', uid: 65534 },
-        { path: '/repo/.worktrees/feat/x/node_modules/.cache/jiti', uid: 65534 },
-      ],
-      'docker: command not found',
-    );
+  // Only POSIX hosts reach the foreign-owner path; Windows reports locked files instead.
+  it.skipIf(process.platform === 'win32')(
+    'names the offending uid, an example path, and the manual command',
+    () => {
+      const error = foreignOwnedRemovalError(
+        '/repo/.worktrees/feat/x',
+        [
+          { path: '/repo/.worktrees/feat/x/node_modules/.cache', uid: 65534 },
+          { path: '/repo/.worktrees/feat/x/node_modules/.cache/jiti', uid: 65534 },
+        ],
+        'docker: command not found',
+      );
 
-    expect(error.message).toContain('uid 65534');
-    expect(error.message).toContain('node_modules/.cache');
-    expect(error.message).toContain('docker: command not found');
-    expect(error.message).toContain('sudo rm -rf "/repo/.worktrees/feat/x"');
-  });
+      expect(error.message).toContain('uid 65534');
+      expect(error.message).toContain('node_modules/.cache');
+      expect(error.message).toContain('docker: command not found');
+      expect(error.message).toContain('sudo rm -rf "/repo/.worktrees/feat/x"');
+    },
+  );
 });
 
 describe('prepareTreeForRemoval', () => {

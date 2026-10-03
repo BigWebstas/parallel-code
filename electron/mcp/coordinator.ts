@@ -809,6 +809,7 @@ export class Coordinator {
       if (!task.doneToken) task.doneToken = randomBytes(24).toString('base64url');
       const session = this.sessionMcpProvider?.(task);
       const mcpConfig = buildSubTaskMcpConfig({
+        inContainer: !!state?.dockerContainerName,
         serverPath,
         serverUrl,
         subtaskToken: session?.token ?? subtaskToken,
@@ -1346,6 +1347,7 @@ export class Coordinator {
         task.doneToken = doneToken;
         const session = this.sessionMcpProvider?.(task);
         const mcpConfig = buildSubTaskMcpConfig({
+          inContainer: !!dockerContainerName,
           serverPath,
           serverUrl,
           subtaskToken: session?.token ?? subtaskToken,
@@ -2786,6 +2788,7 @@ export class Coordinator {
     if (!task.doneToken) task.doneToken = randomBytes(24).toString('base64url');
     const session = this.sessionMcpProvider?.(task);
     const mcpConfig = buildSubTaskMcpConfig({
+      inContainer: !!this.coordinators.get(coordinatorTaskId)?.dockerContainerName,
       serverPath,
       serverUrl,
       subtaskToken: session?.token ?? subtaskToken,

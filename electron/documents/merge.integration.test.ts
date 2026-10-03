@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import type { BrowserWindow } from 'electron';
 import { dispatchDocumentRun, listDocumentRuns } from './runs.js';
+import { writeFakeAgent } from './fake-agent-harness.js';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -19,7 +20,8 @@ async function statusOf(root: string, runId: string) {
   return (await listDocumentRuns(root)).find((r) => r.id === runId)?.status;
 }
 
-describe('merging proposals with an agent', () => {
+// Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
+describe('merging proposals with an agent', { timeout: 30_000 }, () => {
   it('hands the agent every chosen proposal as a diff and records the lineage', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-'));
     roots.push(root);
@@ -33,19 +35,18 @@ describe('merging proposals with an agent', () => {
     const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-agent-'));
     roots.push(bin);
     // Each candidate signs its worktree's name so the two proposals differ.
-    const propose = path.join(bin, 'propose.sh');
-    fs.writeFileSync(
-      propose,
-      '#!/bin/sh\nprintf "\\nFrom %s.\\n" "$(basename "$PWD")" >> plan.md\n',
-      { mode: 0o755 },
+    const propose = writeFakeAgent(
+      bin,
+      'propose',
+      "fs.appendFileSync('plan.md', `\\nFrom ${process.cwd().split(/[\\\\/]/).pop()}.\\n`);",
     );
     // The merging agent keeps its prompt (the claude-code layout: `-p <prompt>`) for the test to read.
     const promptFile = path.join(bin, 'prompt.txt');
-    const merge = path.join(bin, 'merge.sh');
-    fs.writeFileSync(
-      merge,
-      `#!/bin/sh\nprintf '%s' "$2" > ${JSON.stringify(promptFile)}\nprintf "\\nMerged.\\n" >> plan.md\n`,
-      { mode: 0o755 },
+    const merge = writeFakeAgent(
+      bin,
+      'merge',
+      `fs.writeFileSync(${JSON.stringify(promptFile)}, process.argv[3]);
+fs.appendFileSync('plan.md', '\\nMerged.\\n');`,
     );
     const win = { isDestroyed: () => true } as unknown as BrowserWindow;
     const spec = (id: string, label: string, command: string) => ({
