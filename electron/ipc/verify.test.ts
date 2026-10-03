@@ -170,6 +170,20 @@ describe('verification runner', () => {
     await blocker;
   });
 
+  it('does not spawn a run cancelled while its git snapshot is in flight', async () => {
+    let spawned = false;
+    const spawnImpl = (() => {
+      spawned = true;
+      throw new Error('should not spawn');
+    }) as unknown as typeof spawn;
+    const r = createVerificationRunner({ shell: defaultShell, spawnImpl });
+    const run = r.start({ key: 'a', worktreePath: tmpDir(), command: 'echo never' });
+    r.cancel('a');
+
+    expect(await run).toMatchObject({ status: 'cancelled', exitCode: null });
+    expect(spawned).toBe(false);
+  });
+
   itPosix('cancelAll stops running and queued runs', async () => {
     const r = createVerificationRunner({ shell: defaultShell, maxConcurrent: 1 });
     const a = r.start({ key: 'a', worktreePath: tmpDir(), command: 'sleep 30' });
