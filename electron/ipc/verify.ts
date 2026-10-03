@@ -212,6 +212,17 @@ function runCommand(
   if (!existsSync(request.worktreePath)) {
     return Promise.resolve(failedToStart(`Worktree directory is missing: ${request.worktreePath}`));
   }
+  // Cancelled while the git snapshot ran: spawning now would start a process
+  // only to kill it, and on Windows the kill can miss a child the shell
+  // launches afterwards, leaving the run open until that child exits.
+  if (signal.aborted) {
+    return Promise.resolve({
+      status: 'cancelled',
+      exitCode: null,
+      outputTail: '',
+      message: 'Cancelled.',
+    });
+  }
   let child: Child;
   try {
     child = spawnCommand(request, deps);
