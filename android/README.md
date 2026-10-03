@@ -57,6 +57,10 @@ cd android
 ./gradlew installDebug        # install on a connected device
 ```
 
+### Releases
+
+`.github/workflows/android.yml` tests and builds the app whenever `android/` changes. Pushing a tag such as `android-v0.2.0` also publishes a signed APK as a GitHub release, kept separate from the desktop's `v*` releases. Signing reads `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` from the environment; CI fills them from repository secrets of the same names, with the keystore stored base64-encoded as `ANDROID_KEYSTORE_BASE64`. Every update must be signed with the same key, so keep a backup of it.
+
 QR scanning uses the Google Play services code scanner, so the app needs no camera permission. On phones without Play services, paste the link instead.
 
 ## How it maps to the server
