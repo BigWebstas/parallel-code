@@ -391,6 +391,7 @@ export async function saveState(): Promise<void> {
     agentEnvFiles:
       Object.keys(store.agentEnvFiles).length > 0 ? { ...store.agentEnvFiles } : undefined,
     keybindingMigrationDismissed: store.keybindingMigrationDismissed || undefined,
+    defenderNoticeDismissed: store.defenderNoticeDismissed || undefined,
     focusMode: store.focusMode || undefined,
     verboseLogging: store.verboseLogging || undefined,
     coordinatorNotificationDelayMs:
@@ -587,6 +588,7 @@ interface LegacyPersistedState {
   agentEnvFiles?: unknown;
   terminals?: unknown;
   keybindingMigrationDismissed?: unknown;
+  defenderNoticeDismissed?: unknown;
   focusMode?: unknown;
   verboseLogging?: unknown;
   coordinatorNotificationDelayMs?: unknown;
@@ -950,6 +952,8 @@ export async function loadState(): Promise<void> {
       if (typeof raw.keybindingMigrationDismissed === 'boolean') {
         s.keybindingMigrationDismissed = raw.keybindingMigrationDismissed;
       }
+
+      s.defenderNoticeDismissed = raw.defenderNoticeDismissed === true;
 
       // Make custom agents findable during task restoration
       for (const ca of s.customAgents) {

@@ -471,6 +471,7 @@ export interface PersistedState {
   customAgents?: AgentDef[];
   agentEnvFiles?: Record<string, string>;
   keybindingMigrationDismissed?: boolean;
+  defenderNoticeDismissed?: boolean;
   focusMode?: boolean;
   verboseLogging?: boolean;
   activeCustomThemeId?: string | null;
@@ -602,6 +603,8 @@ export interface AppStore {
   /** Per-preset user overrides. Outer key = preset ID, inner = binding ID → override. */
   keybindingOverridesByPreset: Record<string, Record<string, KeybindingOverride>>;
   keybindingMigrationDismissed: boolean;
+  /** The Windows Defender exclusion tip was dismissed. */
+  defenderNoticeDismissed: boolean;
   focusMode: boolean;
   /** Per-task flag: true when the task is rendering its focus-mode two-column layout. */
   taskSplitMode: Record<string, boolean>;
