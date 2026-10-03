@@ -728,7 +728,7 @@ function killPtyProc(session: PtySession): void {
   ) {
     try {
       signalProcessGroup(session.proc, 'SIGKILL');
-      logDebug('pty', `killPtyProc signalProcessGroup succeeded for pid=${session.proc.pid}`);
+      logDebug('pty', `killPtyProc started taskkill for pid=${session.proc.pid}`);
       return;
     } catch (err) {
       logDebug(

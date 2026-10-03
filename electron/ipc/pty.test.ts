@@ -146,6 +146,7 @@ import {
   writeToAgent,
   writeAgentPrompt,
 } from './pty.js';
+import { clearWindowsCommandCache } from '../windows-launch.js';
 
 let tempPaths: string[] = [];
 let agentCounter = 0;
@@ -1564,6 +1565,25 @@ describe('validateCommand', () => {
 
 describe('resolveSpawnTarget', () => {
   const WIN_ENV = { ComSpec: 'C:\\Windows\\system32\\cmd.exe' };
+
+  beforeEach(() => clearWindowsCommandCache());
+
+  it('remembers a found program instead of running `where` on every launch', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-where-'));
+    tempPaths.push(dir);
+    const exe = path.join(dir, 'claude.exe');
+    fs.writeFileSync(exe, '');
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementation(() => `${exe}\r\n`);
+      expect(resolveSpawnTarget('claude', []).file).toBe(exe);
+      expect(resolveSpawnTarget('claude', []).file).toBe(exe);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+      // Once the program is gone, the next launch looks again.
+      fs.rmSync(exe);
+      resolveSpawnTarget('claude', []);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(2);
+    });
+  });
 
   function withPlatform(value: NodeJS.Platform, run: () => void): void {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform');

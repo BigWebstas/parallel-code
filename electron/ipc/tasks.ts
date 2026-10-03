@@ -6,6 +6,7 @@ import { stopStepsWatcher, stopStepsWatchersForPath } from './steps.js';
 import { verificationRunner } from './verify.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
 import { debug as logDebug } from '../log.js';
+import { waitForProcessTreeKills } from '../process-group.js';
 
 const MAX_SLUG_LEN = 72;
 
@@ -106,6 +107,8 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
   // Removing the worktree before the processes exit fails with EPERM/EBUSY and
   // leaves the task stuck in its closing state, so wait (bounded) first.
   await Promise.all(opts.agentIds.map((agentId) => waitForAgentExit(agentId)));
+  // Windows ends process trees in the background; grandchildren can outlive the PTY.
+  await waitForProcessTreeKills();
   // Yield to the event loop macrotask queue so libuv can process uv_close callbacks
   // for any closed watchers and killed processes before attempting directory removal.
   await new Promise((resolve) => setTimeout(resolve, 50));

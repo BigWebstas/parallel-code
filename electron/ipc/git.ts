@@ -1383,7 +1383,13 @@ export function ensureSymlinkExcludes(worktreePath: string, symlinkNames: string
  * Find the main repository root for a worktree via `git rev-parse
  * --git-common-dir`. Returns null when the cwd isn't inside a git repo.
  */
+// A worktree's repository never changes, and the lookup is a blocking subprocess
+// on every agent launch. Only found roots are remembered.
+const repoRoots = new Map<string, string>();
+
 export function detectRepoRoot(worktreePath: string): string | null {
+  const known = repoRoots.get(worktreePath);
+  if (known !== undefined) return known;
   try {
     const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd: worktreePath,
@@ -1391,7 +1397,9 @@ export function detectRepoRoot(worktreePath: string): string | null {
       timeout: 3000,
     }).trim();
     const abs = path.isAbsolute(out) ? out : path.join(worktreePath, out);
-    return path.dirname(abs);
+    const root = path.dirname(abs);
+    repoRoots.set(worktreePath, root);
+    return root;
   } catch {
     return null;
   }

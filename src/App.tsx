@@ -82,6 +82,7 @@ import {
   registerZoomShortcuts,
 } from './lib/shortcuts';
 import { resolvedBindings, loadKeybindings, dismissMigrationBanner } from './store/keybindings';
+import { WindowsDefenderNotice } from './components/WindowsDefenderNotice';
 import { setupAutosave } from './store/autosave';
 import { buildCustomThemeCss } from './lib/custom-theme';
 import { osIsDark } from './lib/os-appearance';
@@ -919,6 +920,7 @@ function App() {
             </button>
           </div>
         </Show>
+        <WindowsDefenderNotice />
         <main style={{ flex: '1', display: 'flex', overflow: 'hidden' }}>
           <Show when={store.sidebarVisible}>
             <Sidebar />
