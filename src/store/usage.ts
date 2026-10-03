@@ -3,8 +3,9 @@ import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { UsageProvider, UsageResult } from '../ipc/types';
 
-// Refresh every minute to keep meters current mid-session.
-const POLL_INTERVAL_MS = 60_000;
+// Refresh every three minutes: current enough mid-session without tripping the
+// usage endpoints' rate limits. Agent exits and clicks fill in between ticks.
+const POLL_INTERVAL_MS = 3 * 60_000;
 const MIN_REFRESH_GAP_MS = 15_000;
 
 /** Render order of the providers in the status bar. */

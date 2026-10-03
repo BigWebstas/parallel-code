@@ -130,7 +130,7 @@ describe('usage store slice', () => {
     expect(mockInvoke).toHaveBeenCalledTimes(4);
   });
 
-  it('polls every provider on the 60-second interval, starts once, and stops cleanly', async () => {
+  it('polls every provider on the 3-minute interval, starts once, and stops cleanly', async () => {
     mockInvoke.mockResolvedValue(OK);
     slice.startUsagePolling();
     slice.startUsagePolling();
@@ -140,10 +140,12 @@ describe('usage store slice', () => {
       'get_codex_usage',
       'get_antigravity_usage',
     ]);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(179_000);
+    expect(mockInvoke).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(mockInvoke).toHaveBeenCalledTimes(6);
     slice.stopUsagePolling();
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(360_000);
     expect(mockInvoke).toHaveBeenCalledTimes(6);
   });
 
