@@ -2,7 +2,7 @@ import { randomUUID, timingSafeEqual } from 'crypto';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
-import { buildClaudeHookSettings } from './claude-settings.js';
+import { buildClaudeHookSettings, detectWindowsHookShell } from './claude-settings.js';
 import {
   HOOK_AGENT_ID_HEADER,
   HOOK_ENV_AGENT_ID,
@@ -14,7 +14,7 @@ import {
   HOOK_TASK_ID_HEADER,
   buildEndpointFile,
   buildHookScript,
-  buildHookScriptPs1,
+  buildHookScriptCmd,
 } from './hook-script.js';
 import { isCurrentAgentLaunch } from './observations.js';
 import { mapClaudeHookPayload, type AgentHookEventPayload } from './status.js';
@@ -85,19 +85,25 @@ function writeFiles(
 ): Pick<AgentHookServer, 'hookScriptPath' | 'claudeSettingsPath'> {
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const endpointPath = path.join(dir, 'endpoint.env');
-  // Windows has no /bin/sh, so hooks there run a PowerShell script instead.
-  const hookScriptPath =
-    process.platform === 'win32' ? path.join(dir, 'hook.ps1') : path.join(dir, 'hook.sh');
+  // Windows has no /bin/sh, so hooks there run a batch script instead.
+  const isWindows = process.platform === 'win32';
+  const hookScriptPath = path.join(dir, isWindows ? 'hook.cmd' : 'hook.sh');
   const claudeSettingsPath = path.join(dir, 'claude-settings.json');
   fs.writeFileSync(endpointPath, buildEndpointFile(port, token), { mode: 0o600 });
-  fs.writeFileSync(
-    hookScriptPath,
-    process.platform === 'win32' ? buildHookScriptPs1() : buildHookScript(),
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(hookScriptPath, isWindows ? buildHookScriptCmd() : buildHookScript(), {
+    mode: 0o755,
+  });
   fs.writeFileSync(
     claudeSettingsPath,
-    JSON.stringify(buildClaudeHookSettings(hookScriptPath), null, 2) + '\n',
+    JSON.stringify(
+      buildClaudeHookSettings(
+        hookScriptPath,
+        process.platform,
+        isWindows ? detectWindowsHookShell() : undefined,
+      ),
+      null,
+      2,
+    ) + '\n',
   );
   // `mode` only applies on creation; a directory or token file left over from
   // an older build (or loosened by hand) must be tightened again every launch.
