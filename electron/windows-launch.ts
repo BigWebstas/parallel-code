@@ -28,9 +28,23 @@ export function readCmdShimTarget(shimPath: string): string | undefined {
   return rel ? path.win32.join(path.win32.dirname(shimPath), rel) : undefined;
 }
 
+// `where` blocks the main process, and starting a process costs 50-200 ms on
+// Windows; every agent, terminal and chat launch looks up one or more programs.
+// Remember found programs per PATH, and look again once one has disappeared.
+const whereCache = new Map<string, string[]>();
+
+/** Forget remembered `where` results (tests, and after an install changes PATH contents). */
+export function clearWindowsCommandCache(): void {
+  whereCache.clear();
+}
+
 function whereAll(command: string, env: NodeJS.ProcessEnv): string[] {
+  const key = `${command}\0${env.PATH ?? env.Path ?? ''}`;
+  const cached = whereCache.get(key);
+  if (cached?.every((candidate) => fs.existsSync(candidate))) return cached;
+  let found: string[];
   try {
-    return execFileSync('where', [command], {
+    found = execFileSync('where', [command], {
       encoding: 'utf8',
       timeout: 3000,
       env,
@@ -40,8 +54,12 @@ function whereAll(command: string, env: NodeJS.ProcessEnv): string[] {
       .map((line) => line.trim())
       .filter(Boolean);
   } catch {
-    return [];
+    found = [];
   }
+  // A miss is not remembered, so a program installed later is found.
+  if (found.length > 0) whereCache.set(key, found);
+  else whereCache.delete(key);
+  return found;
 }
 
 /**
