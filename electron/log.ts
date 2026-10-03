@@ -45,20 +45,34 @@ const RENDERER_MALFORMED_SHAPES = new Set<string>();
 const isProd = process.env.NODE_ENV === 'production';
 
 export function isDebugForced(): boolean {
-  if (process.platform === 'win32') return true;
   if (process.env.DEBUG || process.env.PARALLEL_CODE_DEBUG) return true;
   if (process.argv.some((arg) => arg === '--debug' || arg === '--verbose' || arg === '-v')) {
     return true;
   }
-  return !isProd;
+  return false;
 }
 
-export function determineInitialMinLevel(): LogLevel {
+export function checkPersistedVerboseLogging(dir?: string): boolean {
+  try {
+    if (!dir) return false;
+    const stateFile = path.join(dir, 'state.json');
+    if (!fs.existsSync(stateFile)) return false;
+    const content = fs.readFileSync(stateFile, 'utf8');
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    return parsed?.verboseLogging === true;
+  } catch {
+    return false;
+  }
+}
+
+export function determineInitialMinLevel(userDataDir?: string): LogLevel {
   const envLevel = process.env.PARALLEL_CODE_LOG_LEVEL?.toLowerCase();
   if (envLevel === 'debug' || envLevel === 'info' || envLevel === 'warn' || envLevel === 'error') {
     return envLevel;
   }
-  return isDebugForced() ? 'debug' : 'warn';
+  if (isDebugForced()) return 'debug';
+  if (userDataDir && checkPersistedVerboseLogging(userDataDir)) return 'debug';
+  return isProd ? 'warn' : 'debug';
 }
 
 let minLevel: LogLevel = determineInitialMinLevel();
@@ -143,6 +157,10 @@ export function initFileLogging(target?: string | InitFileLoggingOptions): strin
     }
 
     logFilePath = resolvedPath;
+
+    if (!process.env.PARALLEL_CODE_LOG_LEVEL && !isDebugForced()) {
+      minLevel = determineInitialMinLevel(dir);
+    }
 
     const electronVer = (process.versions as Record<string, string | undefined>).electron ?? 'N/A';
     const banner = [
@@ -434,12 +452,20 @@ export function registerLogHandler(ipc: IpcMain): void {
     }
     // Reconcile main's level from the renderer's reported minimum when debug
     // is not forced so a verbose-toggle change in the renderer converges in
-    // one round-trip. When debug is forced (Windows, dev mode, CLI flags),
-    // retain the debug floor so main logs are not silenced.
+    // one round-trip.
     if (!isDebugForced()) {
-      minLevel = raw.level_min;
+      const prevLevel = minLevel;
+      if (prevLevel !== raw.level_min) {
+        minLevel = raw.level_min;
+        emit('warn', 'log', `Log level changed from ${prevLevel} to ${minLevel}`, {
+          logFilePath,
+          verbose: minLevel === 'debug',
+        });
+      }
     }
     // Forward the entry through main's normal pipeline.
-    emit(raw.level, `r.${raw.category}`, raw.msg, raw.ctx);
+    if (raw.category !== 'log' || !raw.msg.startsWith('sync log level')) {
+      emit(raw.level, `r.${raw.category}`, raw.msg, raw.ctx);
+    }
   });
 }

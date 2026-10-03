@@ -343,9 +343,10 @@ function App() {
     window.electron.setZoomFactor(store.globalScale);
   });
 
-  // Sync the renderer logger's verbose state with the persisted setting.
+  // Sync the renderer logger's verbose state with the persisted setting and main process.
   createEffect(() => {
     log.setVerbose(store.verboseLogging);
+    log.syncLevelToMain();
   });
 
   onMount(async () => {

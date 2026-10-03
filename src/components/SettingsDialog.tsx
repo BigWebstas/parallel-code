@@ -948,7 +948,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               label="Verbose logging"
               checked={store.verboseLogging}
               onChange={setVerboseLogging}
-              description="Emit debug-level logs to the developer console. Verbose logs may include file paths, branch names, commit messages, IPC channel activity, and pty lifecycle events. Review the contents before sharing."
+              description="Emit debug-level logs to the developer console and debug.log file. Verbose logs may include file paths, branch names, commit messages, IPC channel activity, and pty lifecycle events. Review the contents before sharing."
             />
           </SettingsSection>
 

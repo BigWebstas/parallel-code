@@ -271,3 +271,18 @@ function invokeForward(payload: ForwardPayload): void {
     // ignore — logger never throws
   }
 }
+
+/**
+ * Dispatch an IPC message to synchronize main process logger's minLevel
+ * with the renderer's current minLevel.
+ */
+export function syncLevelToMain(): void {
+  invokeForward({
+    level: 'info',
+    category: 'log',
+    msg: `sync log level: verbose=${verbose}`,
+    ctx: undefined,
+    level_min: minLevel,
+    ts: Date.now(),
+  });
+}

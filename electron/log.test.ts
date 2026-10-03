@@ -10,6 +10,8 @@ import {
   closeFileLogging,
   setMinLevel,
   isDebugForced,
+  checkPersistedVerboseLogging,
+  determineInitialMinLevel,
   debug,
   info,
   warn,
@@ -168,7 +170,69 @@ describe('main logger — file logging and level gating', () => {
     expect(fs.existsSync(logPath)).toBe(true);
   });
 
-  it('isDebugForced returns true in non-production or on Windows', () => {
-    expect(isDebugForced()).toBe(true);
+  it('suppresses debug and info entries from the log file when minLevel is warn', () => {
+    const logPath = initFileLogging(tmpDir);
+    setMinLevel('warn');
+
+    debug('test-cat', 'hidden debug message');
+    info('test-cat', 'hidden info message');
+    warn('test-cat', 'visible warn message');
+    error('test-cat', 'visible error message', new Error('visible-error'));
+
+    if (!logPath) throw new Error('Expected logPath to be defined');
+    const content = fs.readFileSync(logPath, 'utf8');
+    expect(content).not.toContain('hidden debug message');
+    expect(content).not.toContain('hidden info message');
+    expect(content).toContain('WARN  [test-cat] visible warn message');
+    expect(content).toContain('ERROR [test-cat] visible error message');
+  });
+
+  it('checkPersistedVerboseLogging inspects state.json in the target directory', () => {
+    expect(checkPersistedVerboseLogging(tmpDir)).toBe(false);
+    expect(checkPersistedVerboseLogging(undefined)).toBe(false);
+
+    fs.writeFileSync(
+      path.join(tmpDir, 'state.json'),
+      JSON.stringify({ verboseLogging: true }),
+      'utf8',
+    );
+    expect(checkPersistedVerboseLogging(tmpDir)).toBe(true);
+
+    fs.writeFileSync(
+      path.join(tmpDir, 'state.json'),
+      JSON.stringify({ verboseLogging: false }),
+      'utf8',
+    );
+    expect(checkPersistedVerboseLogging(tmpDir)).toBe(false);
+
+    fs.writeFileSync(path.join(tmpDir, 'state.json'), 'invalid json', 'utf8');
+    expect(checkPersistedVerboseLogging(tmpDir)).toBe(false);
+  });
+
+  it('determineInitialMinLevel returns debug when state.json has verboseLogging: true', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'state.json'),
+      JSON.stringify({ verboseLogging: true }),
+      'utf8',
+    );
+    expect(determineInitialMinLevel(tmpDir)).toBe('debug');
+  });
+
+  it('isDebugForced checks CLI args and env vars', () => {
+    const origDebug = process.env.DEBUG;
+    try {
+      delete process.env.DEBUG;
+      delete process.env.PARALLEL_CODE_DEBUG;
+      expect(isDebugForced()).toBe(false);
+
+      process.env.DEBUG = '1';
+      expect(isDebugForced()).toBe(true);
+    } finally {
+      if (origDebug !== undefined) {
+        process.env.DEBUG = origDebug;
+      } else {
+        delete process.env.DEBUG;
+      }
+    }
   });
 });

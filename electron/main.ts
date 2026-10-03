@@ -10,6 +10,8 @@ import {
   registerLogHandler,
   initFileLogging,
   getLogFilePath,
+  checkPersistedVerboseLogging,
+  isDebugForced,
   info as logInfo,
   warn as logWarn,
   error as logError,
@@ -89,16 +91,18 @@ if (!shouldStartApp) app.quit();
 // worker-context limit to the same value (unused — no WebGL in our workers).
 app.commandLine.appendSwitch('max-active-webgl-contexts', '64');
 
-// Enable console logging on Windows or when debugging so CLI/terminal stdout/stderr
-// is visible and not swallowed by the Windows GUI subsystem.
-if (
-  process.platform === 'win32' ||
-  process.argv.includes('--debug') ||
-  process.argv.includes('--enable-logging') ||
-  process.argv.includes('--verbose') ||
-  Boolean(process.env.DEBUG || process.env.PARALLEL_CODE_DEBUG)
-) {
-  app.commandLine.appendSwitch('enable-logging');
+// Enable console logging when debugging or verbose logging is enabled so CLI/terminal
+// stdout/stderr is visible and not swallowed by the Windows GUI subsystem.
+try {
+  if (
+    checkPersistedVerboseLogging(getUserDataDir()) ||
+    isDebugForced() ||
+    process.argv.includes('--enable-logging')
+  ) {
+    app.commandLine.appendSwitch('enable-logging');
+  }
+} catch {
+  // Best effort
 }
 
 // Verify that preload.cjs ALLOWED_CHANNELS stays in sync with the IPC enum.

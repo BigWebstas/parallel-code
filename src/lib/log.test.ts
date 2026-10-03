@@ -112,6 +112,16 @@ describe('renderer logger — forwarding', () => {
     expect(invokeMock).toHaveBeenCalledOnce();
   });
 
+  it('syncLevelToMain dispatches IPC message with minLevel', () => {
+    log.setVerbose(true);
+    log.syncLevelToMain();
+    expect(invokeMock).toHaveBeenCalledOnce();
+    const payload = invokeMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(payload.level).toBe('info');
+    expect(payload.category).toBe('log');
+    expect(payload.level_min).toBe('debug');
+  });
+
   it('console fallback when invoke is unavailable', () => {
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
