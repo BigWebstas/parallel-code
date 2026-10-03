@@ -62,8 +62,10 @@ jobs:
       - run: npm ci
 
       # Signs through Azure Trusted Signing once the AZURE_SIGNING_* repository
-      # variables are set; until then the installer is published unsigned.
-      # electron-builder authenticates with the AZURE_* client secrets.
+      # variables are set. Otherwise it test-signs with the self-signed
+      # certificate in WIN_TEST_CSC_LINK (see scripts/new-test-signing-cert.ps1),
+      # or publishes unsigned. electron-builder authenticates with the AZURE_*
+      # client secrets.
       - name: Build, sign, and publish
         shell: bash
         env:
@@ -75,6 +77,8 @@ jobs:
           SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
           SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+          TEST_CSC_LINK: ${{ secrets.WIN_TEST_CSC_LINK }}
+          TEST_CSC_KEY_PASSWORD: ${{ secrets.WIN_TEST_CSC_KEY_PASSWORD }}
         run: |
           signing=()
           if [ -n "$SIGNING_ENDPOINT" ]; then
@@ -84,8 +88,15 @@ jobs:
               "-c.win.azureSignOptions.certificateProfileName=$SIGNING_PROFILE"
               "-c.win.azureSignOptions.publisherName=$SIGNING_PUBLISHER"
             )
+          elif [ -n "$TEST_CSC_LINK" ]; then
+            export WIN_CSC_LINK="$TEST_CSC_LINK" WIN_CSC_KEY_PASSWORD="$TEST_CSC_KEY_PASSWORD"
+            # Installed apps would reject updates whose self-signed certificate
+            # the machine does not trust, so updates skip signature checks as
+            # they do for unsigned builds.
+            signing=("-c.win.verifyUpdateCodeSignature=false")
+            echo "::warning::Publishing a Windows installer test-signed with a self-signed certificate."
           else
-            echo "::warning::AZURE_SIGNING_ENDPOINT is not set; publishing an unsigned Windows installer."
+            echo "::warning::No Windows signing is configured; publishing an unsigned Windows installer."
           fi
           npm run build -- --win --publish always "${signing[@]}"
 
