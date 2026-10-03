@@ -103,6 +103,9 @@ import {
   listImportableWorktrees,
   getBranchWorktreePath,
   commitAll,
+  commitStaged,
+  getStagedFiles,
+  stageAll,
   discardUncommitted,
   checkMergeStatus,
   mergeTask,
@@ -983,6 +986,17 @@ export function registerAllHandlers(win: BrowserWindow): void {
     const worktreePath = worktreePathArg(args);
     assertString(args.message, 'message');
     return commitAll(worktreePath, args.message);
+  });
+  ipcMain.handle(IPC.GetStagedFiles, (_e, args) => {
+    return getStagedFiles(worktreePathArg(args));
+  });
+  ipcMain.handle(IPC.StageAll, (_e, args) => {
+    return stageAll(worktreePathArg(args));
+  });
+  ipcMain.handle(IPC.CommitStaged, (_e, args) => {
+    const worktreePath = worktreePathArg(args);
+    assertString(args.message, 'message');
+    return commitStaged(worktreePath, args.message);
   });
   ipcMain.handle(IPC.DiscardUncommitted, (_e, args) => {
     return discardUncommitted(worktreePathArg(args));

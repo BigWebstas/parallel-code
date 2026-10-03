@@ -36,6 +36,7 @@ import { PromptInput, type PromptInputHandle } from './PromptInput';
 import { CloseTaskDialog } from './CloseTaskDialog';
 import { MergeDialog } from './MergeDialog';
 import { PushDialog } from './PushDialog';
+import { CommitDialog } from './CommitDialog';
 import { DiffViewerDialog } from './DiffViewerDialog';
 import { PlanViewerDialog } from './PlanViewerDialog';
 import { EditProjectDialog } from './EditProjectDialog';
@@ -124,6 +125,7 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const [showMergeConfirm, setShowMergeConfirm] = createSignal(false);
   const [showPushConfirm, setShowPushConfirm] = createSignal(false);
+  const [showCommitDialog, setShowCommitDialog] = createSignal(false);
   const [pushSuccess, setPushSuccess] = createSignal(false);
   const [pushing, setPushing] = createSignal(false);
   const isLandedTask = () => isLandedTaskState(props.task.landingState);
@@ -1032,6 +1034,7 @@ export function TaskPanel(props: TaskPanelProps) {
             isActive={props.isActive}
             onClose={() => setShowCloseConfirm(true)}
             onMerge={() => setShowMergeConfirm(true)}
+            onCommit={() => setShowCommitDialog(true)}
             onPush={() => setShowPushConfirm(true)}
             pushing={pushing()}
             pushSuccess={pushSuccess()}
@@ -1074,6 +1077,11 @@ export function TaskPanel(props: TaskPanelProps) {
           }
           onDone={() => setShowMergeConfirm(false)}
           onDiffFileClick={(file) => setDiffScrollTarget(file.path)}
+        />
+        <CommitDialog
+          open={showCommitDialog()}
+          task={props.task}
+          onDone={() => setShowCommitDialog(false)}
         />
         <PushDialog
           open={showPushConfirm()}
