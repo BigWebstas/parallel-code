@@ -46,7 +46,8 @@ function makeEnoentError(): NodeJS.ErrnoException {
 
 describe('ensureSymlinkExcludes', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // Reset, not clear: tests that hit the remembered lookup leave their queued values unused.
+    vi.resetAllMocks();
   });
 
   it('does nothing when symlinkNames is empty', () => {
@@ -95,7 +96,8 @@ describe('ensureSymlinkExcludes', () => {
     mockExecFileSync.mockReturnValueOnce('/abs/repo/.git\n');
     mockReadFileSync.mockReturnValueOnce('');
 
-    ensureSymlinkExcludes('/worktree', ['node_modules']);
+    // A worktree path no other test used: the lookup is remembered per worktree.
+    ensureSymlinkExcludes('/abs-worktree', ['node_modules']);
 
     const [excludePath] = mockAppendFileSync.mock.calls[0] as [string];
     expect(excludePath).toBe(path.join('/abs/repo/.git', 'info', 'exclude'));
@@ -160,9 +162,20 @@ describe('ensureSymlinkExcludes', () => {
       throw new Error('not a git repository');
     });
 
-    ensureSymlinkExcludes('/worktree', ['node_modules']);
+    ensureSymlinkExcludes('/not-a-repo', ['node_modules']);
 
     expect(mockAppendFileSync).not.toHaveBeenCalled();
+  });
+
+  it('runs git rev-parse once per worktree', () => {
+    mockExecFileSync.mockReturnValueOnce('.git\n');
+    mockReadFileSync.mockReturnValue('');
+
+    ensureSymlinkExcludes('/cached-worktree', ['node_modules']);
+    ensureSymlinkExcludes('/cached-worktree', ['.env']);
+
+    expect(mockExecFileSync).toHaveBeenCalledOnce();
+    expect(mockAppendFileSync).toHaveBeenCalledTimes(2);
   });
 
   it('adds a newline prefix when the existing file does not end with one', () => {

@@ -8,14 +8,12 @@ import {
   appendGitInfoExcludeBlock,
   appendGitInfoExcludeBlockAtPath,
   normalizeExcludeLine,
-  resolveGitInfoExcludePath,
 } from './git-exclude.js';
 import {
   findForeignOwnedEntries,
   foreignOwnedRemovalError,
   prepareTreeForRemoval,
   reclaimOwnership,
-  stripReadOnlyAttributesWindows,
 } from './worktree-cleanup.js';
 import {
   ensureNodeModulesEntryLinks,
@@ -961,10 +959,7 @@ async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promis
   logDebug('git', `removeWorktreeDir starting for ${worktreePath}`);
   // On Windows, prepare the tree first by clearing read-only attributes and unlinking node_modules junctions
   // so git worktree remove does not fail on directory junctions or read-only files.
-  if (process.platform === 'win32') {
-    stripReadOnlyAttributesWindows(worktreePath);
-    prepareTreeForRemoval(worktreePath);
-  }
+  if (process.platform === 'win32') await prepareTreeForRemoval(worktreePath);
 
   try {
     await exec('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot });
@@ -1015,8 +1010,13 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
   for (const [index, delay] of delays.entries()) {
     if (delay > 0) await new Promise((r) => setTimeout(r, delay));
     try {
-      prepareTreeForRemoval(dirPath);
-      fs.rmSync(dirPath, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      await prepareTreeForRemoval(dirPath);
+      await fs.promises.rm(dirPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      });
       if (!fs.existsSync(dirPath)) {
         logDebug('git', `removeDirWithRetries succeeded on attempt ${index + 1} for ${dirPath}`);
         return undefined;
@@ -1309,7 +1309,7 @@ export function ensureWorktreeContainerExclude(pathInRepo: string): void {
  * process lifetime.
  */
 export function ensureSandboxExcludes(worktreePath: string): void {
-  const excludePath = resolveGitInfoExcludePath(worktreePath, execFileSync);
+  const excludePath = gitInfoExcludePath(worktreePath);
   if (!excludePath || seededSandboxExcludes.has(excludePath)) return;
   const result = appendGitInfoExcludeBlockAtPath(
     excludePath,
@@ -1338,7 +1338,7 @@ export function ensureSymlinkExcludes(worktreePath: string, symlinkNames: string
   });
   if (validNames.length === 0) return;
 
-  const excludePath = resolveGitInfoExcludePath(worktreePath);
+  const excludePath = gitInfoExcludePath(worktreePath);
   if (!excludePath) return;
   let existing = '';
   try {
@@ -1379,30 +1379,41 @@ export function ensureSymlinkExcludes(worktreePath: string, symlinkNames: string
   );
 }
 
-/**
- * Find the main repository root for a worktree via `git rev-parse
- * --git-common-dir`. Returns null when the cwd isn't inside a git repo.
- */
 // A worktree's repository never changes, and the lookup is a blocking subprocess
-// on every agent launch. Only found roots are remembered.
-const repoRoots = new Map<string, string>();
+// on every agent launch. Only found directories are remembered.
+const commonDirs = new Map<string, string>();
 
-export function detectRepoRoot(worktreePath: string): string | null {
-  const known = repoRoots.get(worktreePath);
+/** Absolute `git rev-parse --git-common-dir` for a worktree, or null outside a repo. */
+function gitCommonDir(worktreePath: string): string | null {
+  const known = commonDirs.get(worktreePath);
   if (known !== undefined) return known;
   try {
     const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd: worktreePath,
       encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 3000,
     }).trim();
     const abs = path.isAbsolute(out) ? out : path.join(worktreePath, out);
-    const root = path.dirname(abs);
-    repoRoots.set(worktreePath, root);
-    return root;
+    commonDirs.set(worktreePath, abs);
+    return abs;
   } catch {
     return null;
   }
+}
+
+function gitInfoExcludePath(worktreePath: string): string | null {
+  const commonDir = gitCommonDir(worktreePath);
+  return commonDir ? path.join(commonDir, 'info', 'exclude') : null;
+}
+
+/**
+ * Find the main repository root for a worktree via `git rev-parse
+ * --git-common-dir`. Returns null when the cwd isn't inside a git repo.
+ */
+export function detectRepoRoot(worktreePath: string): string | null {
+  const commonDir = gitCommonDir(worktreePath);
+  return commonDir ? path.dirname(commonDir) : null;
 }
 
 /**

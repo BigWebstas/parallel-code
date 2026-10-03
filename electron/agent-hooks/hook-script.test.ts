@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildEndpointFile, buildHookScript, buildHookScriptPs1 } from './hook-script.js';
+import { buildEndpointFile, buildHookScript, buildHookScriptCmd } from './hook-script.js';
 
 describe('buildHookScript', () => {
   const script = buildHookScript();
@@ -35,24 +35,42 @@ describe('buildHookScript', () => {
   });
 });
 
-describe('buildHookScriptPs1', () => {
-  const script = buildHookScriptPs1();
+describe('buildHookScriptCmd', () => {
+  const script = buildHookScriptCmd();
+  const lines = script.split('\r\n');
+
+  it('uses CRLF line endings, which cmd.exe needs to find labels reliably', () => {
+    expect(script.replace(/\r\n/g, '')).not.toContain('\n');
+  });
 
   it('answers Claude first and never fails the hook', () => {
-    expect(script).toContain("Write-Output '{}'");
-    expect(script.trimEnd().endsWith('exit 0')).toBe(true);
+    expect(lines.slice(0, 5)).toContain('echo {}');
+    expect(lines.filter((line) => line.startsWith('exit')).every((l) => l === 'exit /b 0')).toBe(
+      true,
+    );
+  });
+
+  it('consumes stdin on every early exit so the agent never sees EPIPE', () => {
+    const drain = lines.indexOf(':drain');
+    expect(lines[drain + 1]).toBe('findstr "^" >NUL 2>&1');
+    const earlyExits = lines.filter(
+      (line) => line.startsWith('if ') && !line.endsWith('goto drain'),
+    );
+    expect(earlyExits).toEqual([]);
   });
 
   it('reads the endpoint file on every run and posts with the token headers', () => {
-    expect(script).toContain('Get-Content -LiteralPath $endpoint');
-    expect(script).toContain('http://127.0.0.1:$port/hook/claude');
-    expect(script).toContain('x-parallel-code-hook-token');
+    expect(script).toContain('in ("%PARALLEL_CODE_HOOK_ENDPOINT%")');
+    expect(script).toContain('%SystemRoot%\\System32\\curl.exe');
+    expect(script).toContain('http://127.0.0.1:%PC_PORT%/hook/claude');
+    expect(script).toContain('x-parallel-code-hook-token: %PC_TOKEN%');
     expect(script).toContain('x-parallel-code-agent-id');
     expect(script).toContain('x-parallel-code-launch-id');
+    expect(script).toContain('--data-binary @-');
   });
 
   it('stays quiet for background job workers that inherited the env', () => {
-    expect(script).toContain('CLAUDE_JOB_DIR');
+    expect(script).toContain('if defined CLAUDE_JOB_DIR goto drain');
   });
 });
 

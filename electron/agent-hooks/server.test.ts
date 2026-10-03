@@ -2,6 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { hookCommand, type WindowsHookShell } from './claude-settings.js';
 import { startAgentHookServer, type AgentHookServer } from './server.js';
 import { registerAgentLaunch, retireAgentLaunch } from './observations.js';
 import type { AgentHookEventPayload } from './status.js';
@@ -192,28 +193,43 @@ describe('startAgentHookServer', () => {
     },
   );
 
-  it.runIf(process.platform === 'win32')(
-    'round-trips through the generated PowerShell script itself on Windows',
-    async () => {
-      const { execFile } = await import('child_process');
-      const env = {
-        ...process.env,
-        ...server.buildPtyEnv('agent-ps', 'task-ps', 'launch-ps'),
-      };
-      const stdout = await new Promise<string>((resolve, reject) => {
-        const child = execFile(
-          'powershell.exe',
-          ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', server.hookScriptPath],
-          { env },
-          (err, out) => (err ? reject(err) : resolve(out)),
-        );
-        child.stdin?.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
-      });
-      expect(stdout.trim()).toBe('{}');
-      await vi.waitFor(() => expect(events).toHaveLength(1));
-      expect(events[0]).toMatchObject({ state: 'working', agentId: 'agent-ps', taskId: 'task-ps' });
-    },
-    // PowerShell takes seconds to start on a cold CI runner.
-    30_000,
+  // The command Claude Code runs, through the shell the settings pin for it.
+  const gitBash = path.join(
+    process.env.ProgramFiles ?? 'C:\\Program Files',
+    'Git',
+    'bin',
+    'bash.exe',
   );
+  const windowsShells: Array<[WindowsHookShell, string, string[]]> = [
+    ['powershell', 'powershell.exe', ['-NoLogo', '-NoProfile', '-Command']],
+    ['bash', gitBash, ['-c']],
+  ];
+  for (const [shell, file, args] of windowsShells) {
+    it.runIf(process.platform === 'win32' && fs.existsSync(file))(
+      `round-trips through the generated batch script from ${shell} on Windows`,
+      async () => {
+        const { execFile } = await import('child_process');
+        const env = {
+          ...process.env,
+          ...server.buildPtyEnv('agent-ps', 'task-ps', 'launch-ps'),
+        };
+        const command = hookCommand(server.hookScriptPath, 'win32', shell);
+        const stdout = await new Promise<string>((resolve, reject) => {
+          const child = execFile(file, [...args, command], { env }, (err, out) =>
+            err ? reject(err) : resolve(out),
+          );
+          child.stdin?.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+        });
+        expect(stdout.trim()).toBe('{}');
+        await vi.waitFor(() => expect(events).toHaveLength(1));
+        expect(events[0]).toMatchObject({
+          state: 'working',
+          agentId: 'agent-ps',
+          taskId: 'task-ps',
+        });
+      },
+      // PowerShell takes seconds to start on a cold CI runner.
+      30_000,
+    );
+  }
 });
