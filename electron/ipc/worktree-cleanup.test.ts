@@ -95,14 +95,14 @@ describe('foreignOwnedRemovalError', () => {
 });
 
 describe('prepareTreeForRemoval', () => {
-  it('unlinks symlinks without recursing into target directories', () => {
+  it('unlinks symlinks without recursing into target directories', async () => {
     const root = makeTree();
     const outside = makeTree();
     fs.writeFileSync(path.join(outside, 'important.txt'), 'do not touch');
     fs.mkdirSync(path.join(root, 'node_modules'), { recursive: true });
     fs.symlinkSync(outside, path.join(root, 'node_modules', 'dep'));
 
-    prepareTreeForRemoval(root);
+    await prepareTreeForRemoval(root);
 
     // The symlink is gone from root
     expect(fs.existsSync(path.join(root, 'node_modules', 'dep'))).toBe(false);
@@ -111,17 +111,17 @@ describe('prepareTreeForRemoval', () => {
     expect(fs.readFileSync(path.join(outside, 'important.txt'), 'utf8')).toBe('do not touch');
   });
 
-  it('unlinks dangling symlinks without error', () => {
+  it('unlinks dangling symlinks without error', async () => {
     const root = makeTree();
     fs.mkdirSync(path.join(root, 'sub'));
     fs.symlinkSync('/nonexistent/path/outside', path.join(root, 'sub', 'dangling'));
 
-    prepareTreeForRemoval(root);
+    await prepareTreeForRemoval(root);
 
     expect(fs.existsSync(path.join(root, 'sub', 'dangling'))).toBe(false);
   });
 
-  it('is a no-op if the directory does not exist', () => {
-    expect(() => prepareTreeForRemoval('/definitely/missing/dir')).not.toThrow();
+  it('is a no-op if the directory does not exist', async () => {
+    await expect(prepareTreeForRemoval('/definitely/missing/dir')).resolves.toBeUndefined();
   });
 });

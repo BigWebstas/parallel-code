@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
@@ -167,32 +167,17 @@ function firstLine(e: unknown): string {
 }
 
 /**
- * Strips the NTFS read-only attribute recursively from files and directories
- * under `dirPath` on Windows using `attrib -r /s /d`.
- */
-export function stripReadOnlyAttributesWindows(dirPath: string): void {
-  if (process.platform !== 'win32') return;
-  try {
-    execFileSync('attrib', ['-r', path.join(dirPath, '*'), '/s', '/d'], {
-      stdio: 'ignore',
-      windowsHide: true,
-      timeout: 5000,
-    });
-  } catch {
-    /* best-effort attrib */
-  }
-}
-
-/**
  * Safely prepare a directory tree for deletion by recursively:
- * 1. Clearing read-only attributes (NTFS FILE_ATTRIBUTE_READONLY causes EPERM on Windows).
+ * 1. Clearing read-only attributes (NTFS FILE_ATTRIBUTE_READONLY causes EPERM on Windows;
+ *    Node's chmod clears that attribute when the write bit is set).
  * 2. Unlinking all symlinks and directory junctions without following them into target directories.
- * Never traverses into symbolic links or junctions.
+ * Never traverses into symbolic links or junctions. Asynchronous so a large worktree does not
+ * freeze the main process while a task closes.
  */
-export function prepareTreeForRemoval(dirPath: string): void {
+export async function prepareTreeForRemoval(dirPath: string): Promise<void> {
   let stat: fs.Stats;
   try {
-    stat = fs.lstatSync(dirPath);
+    stat = await fs.promises.lstat(dirPath);
   } catch {
     return;
   }
@@ -207,11 +192,9 @@ export function prepareTreeForRemoval(dirPath: string): void {
   }
 
   if (process.platform === 'win32') {
-    try {
-      fs.chmodSync(dirPath, 0o777);
-    } catch {
+    await fs.promises.chmod(dirPath, 0o777).catch(() => {
       /* best-effort chmod */
-    }
+    });
   }
 
   if (!stat.isDirectory()) {
@@ -220,29 +203,27 @@ export function prepareTreeForRemoval(dirPath: string): void {
 
   let entries: fs.Dirent[] = [];
   try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
   } catch {
     return;
   }
 
-  for (const entry of entries) {
-    const fullPath = path.join(dirPath, entry.name);
-    try {
-      if (entry.isSymbolicLink()) {
-        unlinkSymlinkCrossPlatform(fullPath);
-      } else if (entry.isDirectory()) {
-        prepareTreeForRemoval(fullPath);
-      } else {
-        if (process.platform === 'win32') {
-          try {
-            fs.chmodSync(fullPath, 0o666);
-          } catch {
+  await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = path.join(dirPath, entry.name);
+      try {
+        if (entry.isSymbolicLink()) {
+          unlinkSymlinkCrossPlatform(fullPath);
+        } else if (entry.isDirectory()) {
+          await prepareTreeForRemoval(fullPath);
+        } else if (process.platform === 'win32') {
+          await fs.promises.chmod(fullPath, 0o666).catch(() => {
             /* best-effort chmod */
-          }
+          });
         }
+      } catch {
+        /* best-effort cleanup per entry */
       }
-    } catch {
-      /* best-effort cleanup per entry */
-    }
-  }
+    }),
+  );
 }
