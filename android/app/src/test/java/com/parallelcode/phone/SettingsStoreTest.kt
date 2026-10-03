@@ -25,6 +25,16 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun savesHomeWifiTrimmedAndClearsWhenBlank() {
+        assertEquals(null, store.homeWifiSsid)
+        store.homeWifiSsid = "  Home Net "
+        assertEquals("Home Net", store.homeWifiSsid)
+        store.homeWifiSsid = "   "
+        assertEquals(null, store.homeWifiSsid)
+        assertFalse(prefs.contains(SettingsStore.KEY_HOME_WIFI_SSID))
+    }
+
+    @Test
     fun defaultsToWaitForVpnDisabled() {
         assertFalse(store.waitForVpn)
     }

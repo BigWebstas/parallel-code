@@ -13,7 +13,7 @@ import kotlinx.coroutines.launch
  * (see [RemoteClient.start]).
  */
 class PhoneApplication : Application() {
-    lateinit var vpnMonitor: VpnMonitor
+    lateinit var networkMonitor: NetworkMonitor
         private set
     lateinit var client: RemoteClient
         private set
@@ -29,12 +29,14 @@ class PhoneApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         settings = SettingsStore(getSharedPreferences(SettingsStore.PREFS_NAME, Context.MODE_PRIVATE))
-        vpnMonitor = VpnMonitor(this)
-        vpnMonitor.start()
+        networkMonitor = NetworkMonitor(this)
+        networkMonitor.start()
         client = RemoteClient(
             CredentialStore(getSharedPreferences("desktop", Context.MODE_PRIVATE)),
-            vpnActive = vpnMonitor.isVpnActive,
+            vpnActive = networkMonitor.isVpnActive,
+            wifiSsid = networkMonitor.wifiSsid,
             waitForVpn = { settings.waitForVpn },
+            homeWifiSsid = { settings.homeWifiSsid },
         )
         promptHistory = PromptHistoryStore(getSharedPreferences(PromptHistoryStore.PREFS_NAME, Context.MODE_PRIVATE))
         // Keep the home-screen widget current whenever the connection is open.

@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -30,6 +31,10 @@ import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED, WAITING_FOR_VPN }
+
+/** With "Wait for VPN" on, hold off connecting until a VPN is up, unless the phone is on the home Wi-Fi. */
+fun waitsForVpn(waitForVpn: Boolean, vpnActive: Boolean, wifiSsid: String?, homeWifiSsid: String?): Boolean =
+    waitForVpn && !vpnActive && (homeWifiSsid == null || wifiSsid != homeWifiSsid)
 
 /** What the UI needs to know about the link to the desktop. */
 data class ConnectionState(
@@ -76,7 +81,9 @@ data class MergeReadiness(
 class RemoteClient(
     private val credentials: CredentialStore,
     private val vpnActive: StateFlow<Boolean> = MutableStateFlow(true),
+    private val wifiSsid: StateFlow<String?> = MutableStateFlow(null),
     private val waitForVpn: () -> Boolean = { false },
+    private val homeWifiSsid: () -> String? = { null },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val http = OkHttpClient.Builder()
@@ -88,24 +95,9 @@ class RemoteClient(
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
 
     init {
-        scope.launch {
-            vpnActive.collect { active ->
-                if (!started) return@collect
-                if (waitForVpn()) {
-                    if (active) {
-                        if (_state.value.status == ConnectionStatus.WAITING_FOR_VPN || _state.value.status == ConnectionStatus.DISCONNECTED) {
-                            connect()
-                        }
-                    } else {
-                        if (socket != null || _state.value.status == ConnectionStatus.CONNECTING) {
-                            closeSocket()
-                        }
-                        _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
-                    }
-                }
-            }
-        }
+        scope.launch { combine(vpnActive, wifiSsid) { _, _ -> }.collect { onVpnPolicyChanged() } }
     }
+
     private val _agents = MutableStateFlow<List<RemoteAgent>>(emptyList())
     val agents: StateFlow<List<RemoteAgent>> = _agents.asStateFlow()
     private val _computers = MutableStateFlow(credentials.computers)
@@ -211,20 +203,18 @@ class RemoteClient(
         if (started) connect()
     }
 
-    /** Called when the wait-for-VPN setting changes to pause or resume connecting. */
+    /** Pauses or resumes connecting when the VPN, the Wi-Fi network, or the wait-for-VPN settings change. */
     fun onVpnPolicyChanged() {
         if (!started) return
-        if (waitForVpn()) {
-            if (!vpnActive.value) {
-                closeSocket()
-                _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
-            }
-        } else {
-            if (_state.value.status == ConnectionStatus.WAITING_FOR_VPN) {
-                connect()
-            }
+        if (mustWaitForVpn()) {
+            closeSocket()
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+        } else if (_state.value.status == ConnectionStatus.WAITING_FOR_VPN) {
+            connect()
         }
     }
+
+    private fun mustWaitForVpn() = waitsForVpn(waitForVpn(), vpnActive.value, wifiSsid.value, homeWifiSsid())
 
     /** Trade the desktop's six-digit PIN for a paired token, then reconnect with it. */
     suspend fun pair(pin: String, remember: Boolean) {
@@ -336,7 +326,7 @@ class RemoteClient(
     private suspend fun apiRaw(method: String, path: String, body: JSONObject?, token: String?): String {
         val link = credentials.link ?: throw ApiException("Not connected to a computer.")
         if (token == null) throw ApiException("Not connected to a computer.")
-        if (waitForVpn() && !vpnActive.value) {
+        if (mustWaitForVpn()) {
             throw ApiException("Waiting for VPN connection. Connect your VPN and try again.")
         }
         val request = Request.Builder()
@@ -532,7 +522,7 @@ class RemoteClient(
     private fun connect() {
         if (socket != null) return
         val link = credentials.link ?: return
-        if (waitForVpn() && !vpnActive.value) {
+        if (mustWaitForVpn()) {
             reconnectJob?.cancel()
             _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false, linkExpired = false) }
             return
@@ -661,7 +651,7 @@ class RemoteClient(
             }
         }
         if (!started) return
-        if (waitForVpn() && !vpnActive.value) {
+        if (mustWaitForVpn()) {
             _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
             return
         }

@@ -99,6 +99,19 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
         client.onVpnPolicyChanged()
     }
 
+    private val _homeWifiSsid = MutableStateFlow(settingsStore.homeWifiSsid)
+    val homeWifiSsid: StateFlow<String?> = _homeWifiSsid.asStateFlow()
+    val currentWifiSsid: StateFlow<String?> = phoneApp.networkMonitor.wifiSsid
+
+    fun setHomeWifiSsid(value: String?) {
+        settingsStore.homeWifiSsid = value
+        _homeWifiSsid.value = settingsStore.homeWifiSsid
+        client.onVpnPolicyChanged()
+    }
+
+    /** Reads the Wi-Fi name again, after location permission is granted. */
+    fun refreshWifi() = phoneApp.networkMonitor.refreshWifi()
+
     private val _keepScreenOnOnlyWhenActive = MutableStateFlow(settingsStore.keepScreenOnOnlyWhenActive)
     val keepScreenOnOnlyWhenActive: StateFlow<Boolean> = _keepScreenOnOnlyWhenActive.asStateFlow()
 
@@ -409,6 +422,20 @@ private fun PhoneApp(model: PhoneViewModel) {
                     model.setNotifications(notifications.copy(enabled = granted))
                 }
                 val context = LocalContext.current
+                val locationPermission = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions(),
+                ) { model.refreshWifi() }
+                val requestLocationIfNeeded = {
+                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                        PackageManager.PERMISSION_GRANTED
+                    if (!granted) {
+                        locationPermission.launch(
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                        )
+                    }
+                    !granted
+                }
+                val currentWifiSsid by model.currentWifiSsid.collectAsState()
                 SettingsScreen(
                     keepScreenOn = keepScreenOn,
                     onKeepScreenOnChange = model::setKeepScreenOn,
@@ -445,6 +472,16 @@ private fun PhoneApp(model: PhoneViewModel) {
                     },
                     waitForVpn = model.waitForVpn.collectAsState().value,
                     onWaitForVpnChange = model::setWaitForVpn,
+                    homeWifiSsid = model.homeWifiSsid.collectAsState().value,
+                    onHomeWifiSsidChange = { ssid ->
+                        model.setHomeWifiSsid(ssid)
+                        if (!ssid.isNullOrBlank()) requestLocationIfNeeded()
+                    },
+                    currentWifiSsid = currentWifiSsid,
+                    onUseCurrentWifi = {
+                        val ssid = currentWifiSsid
+                        if (!requestLocationIfNeeded() && ssid != null) model.setHomeWifiSsid(ssid)
+                    },
                     latencyMs = latencyMs,
                     state = state,
                     computers = computers,

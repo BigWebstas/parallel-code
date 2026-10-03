@@ -101,6 +101,10 @@ fun SettingsScreen(
     onNotificationsChange: (NotificationPrefs) -> Unit,
     waitForVpn: Boolean,
     onWaitForVpnChange: (Boolean) -> Unit,
+    homeWifiSsid: String?,
+    onHomeWifiSsidChange: (String?) -> Unit,
+    currentWifiSsid: String?,
+    onUseCurrentWifi: () -> Unit,
     latencyMs: Long?,
     state: ConnectionState,
     computers: List<SavedComputer>,
@@ -706,6 +710,15 @@ fun SettingsScreen(
                             )
                         }
 
+                        if (waitForVpn) {
+                            HomeWifiEditor(
+                                ssid = homeWifiSsid,
+                                onChange = onHomeWifiSsidChange,
+                                currentSsid = currentWifiSsid,
+                                onUseCurrent = onUseCurrentWifi,
+                            )
+                        }
+
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.border)
 
                         OutlinedButton(
@@ -1013,6 +1026,41 @@ private fun RowScope.WidgetSwatch(
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                 color = Color(palette.headline),
             )
+        }
+    }
+}
+
+/** The home Wi-Fi name; saved when the field loses focus or the screen closes. */
+@Composable
+private fun HomeWifiEditor(ssid: String?, onChange: (String?) -> Unit, currentSsid: String?, onUseCurrent: () -> Unit) {
+    var text by remember(ssid) { mutableStateOf(ssid.orEmpty()) }
+    val latest by rememberUpdatedState(text)
+    DisposableEffect(Unit) { onDispose { if (latest.trim() != ssid.orEmpty()) onChange(latest) } }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "Home Wi-Fi",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            "On this Wi-Fi network, connect without waiting for the VPN. Android needs location access to read the network's name.",
+            style = MaterialTheme.typography.bodySmall,
+            color = AppTheme.extra.textMuted,
+        )
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { if (!it.isFocused && text.trim() != ssid.orEmpty()) onChange(text) },
+            placeholder = { Text("Wi-Fi name") },
+            singleLine = true,
+        )
+        if (currentSsid == null || currentSsid != ssid) {
+            TextButton(onClick = onUseCurrent) {
+                Text(if (currentSsid != null) "Use current Wi-Fi ($currentSsid)" else "Use current Wi-Fi")
+            }
         }
     }
 }
