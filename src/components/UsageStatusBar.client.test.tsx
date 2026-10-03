@@ -10,6 +10,7 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
     fetchedAt: null,
     status: 'idle',
     error: null,
+    refreshing: false,
   };
   const inAnHour = Date.now() + 3_600_000;
   return {
@@ -21,6 +22,7 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
         fetchedAt: Date.now(),
         status: 'ok',
         error: null,
+        refreshing: false as boolean,
       } satisfies UsageState,
       codex: idle,
       antigravity: idle,
@@ -106,5 +108,18 @@ describe('UsageStatusBar', () => {
     const agyEntry = Array.from(entries).find((e) => e.textContent?.includes('Antigravity'));
     expect(agyEntry?.textContent).toContain('100% left');
     expect(agyEntry?.textContent).not.toContain('reset due');
+  });
+
+  it('renders an inline spinner and indicates busy state when refreshing is in flight', () => {
+    usage.claude.refreshing = true;
+    const container = mount();
+    const entry = container.querySelector<HTMLElement>('[role="status"]');
+    expect(entry?.getAttribute('aria-busy')).toBe('true');
+    expect(entry?.querySelector('.inline-spinner')).not.toBeNull();
+
+    entry?.dispatchEvent(new MouseEvent('mouseenter'));
+    const card = popover();
+    expect(card?.textContent).toContain('Refreshing usage…');
+    usage.claude.refreshing = false;
   });
 });

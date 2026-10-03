@@ -14,6 +14,7 @@ const IDLE: UsageState = {
   fetchedAt: null,
   status: 'idle',
   error: null,
+  refreshing: false,
 };
 
 vi.mock('./core', async () => {
@@ -73,6 +74,7 @@ describe('usage store slice', () => {
       fetchedAt: 500,
       status: 'ok',
       error: null,
+      refreshing: false,
     });
     expect(state('claude')).toEqual(IDLE);
   });
@@ -88,6 +90,7 @@ describe('usage store slice', () => {
       fetchedAt: null,
       status: 'unavailable',
       error: 'logged out',
+      refreshing: false,
     });
   });
 
@@ -127,7 +130,7 @@ describe('usage store slice', () => {
     expect(mockInvoke).toHaveBeenCalledTimes(4);
   });
 
-  it('polls every provider every five minutes, starts once, and stops cleanly', async () => {
+  it('polls every provider on the 3-minute interval, starts once, and stops cleanly', async () => {
     mockInvoke.mockResolvedValue(OK);
     slice.startUsagePolling();
     slice.startUsagePolling();
@@ -137,11 +140,27 @@ describe('usage store slice', () => {
       'get_codex_usage',
       'get_antigravity_usage',
     ]);
-    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await vi.advanceTimersByTimeAsync(179_000);
+    expect(mockInvoke).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1_000);
     expect(mockInvoke).toHaveBeenCalledTimes(6);
     slice.stopUsagePolling();
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await vi.advanceTimersByTimeAsync(360_000);
     expect(mockInvoke).toHaveBeenCalledTimes(6);
+  });
+
+  it('sets refreshing true while request is in flight and false on completion', async () => {
+    let resolveRequest: (result: UsageResult) => void = () => {};
+    mockInvoke.mockReturnValueOnce(
+      new Promise<UsageResult>((res) => {
+        resolveRequest = res;
+      }),
+    );
+    const refreshPromise = slice.refreshUsage('claude');
+    expect(state('claude').refreshing).toBe(true);
+    resolveRequest(OK);
+    await refreshPromise;
+    expect(state('claude').refreshing).toBe(false);
   });
 
   it('maps the bundled Claude Code, Codex, and Antigravity agents to their meters', () => {
