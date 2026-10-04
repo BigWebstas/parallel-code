@@ -122,7 +122,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.layout.heightIn
@@ -1228,7 +1227,6 @@ private fun TerminalText(
     // A lazy list lays out only the lines on screen; history lines keep their style runs between
     // frames, so a spinner repainting one row no longer rebuilds thousands of lines.
     val list = rememberLazyListState()
-    val horizontal = rememberScrollState()
     val scope = rememberCoroutineScope()
     var follow by remember { mutableStateOf(true) }
     val isNearBottom by remember { derivedStateOf { !list.canScrollForward } }
@@ -1261,8 +1259,9 @@ private fun TerminalText(
             .background(Color(palette.background)),
     ) {
         // The PTY keeps the desktop's size, which rarely matches the phone. Size the font so its
-        // columns span the screen width (within readable bounds), and anchor a screen shorter
-        // than the view to the bottom, next to the reply box, as a terminal window would.
+        // columns span the screen width (within readable bounds), wrap lines still too wide at the
+        // smallest font, and anchor a screen shorter than the view to the bottom, next to the
+        // reply box, as a terminal window would.
         val density = LocalDensity.current
         val measurer = rememberTextMeasurer()
         val paddingPx = with(density) { (TERMINAL_PADDING_H * 2).roundToPx() }
@@ -1271,10 +1270,6 @@ private fun TerminalText(
             measurer.measure("0".repeat(10), TextStyle(fontFamily = FontFamily.Monospace, fontSize = 10.sp)).size.width / 10f
         }
         val fontSize = (10f * textWidthPx / (cols.coerceAtLeast(1) * charPxAt10)).coerceIn(8f, 14f).sp
-        // Wide terminals at the smallest font scroll sideways; the lazy list needs a fixed width.
-        val contentWidth = with(density) {
-            maxOf(constraints.maxWidth, (cols * charPxAt10 * fontSize.value / 10f).toInt() + paddingPx).toDp()
-        }
 
         // The size this view fits at the default font, offered for the PTY.
         val viewPaddingPx = with(density) { 16.dp.roundToPx() }
@@ -1289,32 +1284,22 @@ private fun TerminalText(
             if (viewCols >= 20 && viewRows >= 5) onViewSize(viewCols, viewRows)
         }
 
-        Box(
-            Modifier
-                .fillMaxSize()
-                .horizontalScroll(horizontal),
+        LazyColumn(
+            state = list,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = TERMINAL_PADDING_H, vertical = 8.dp),
+            verticalArrangement = Arrangement.Bottom,
         ) {
-            LazyColumn(
-                state = list,
-                modifier = Modifier
-                    .requiredWidth(contentWidth)
-                    .fillMaxHeight(),
-                contentPadding = PaddingValues(horizontal = TERMINAL_PADDING_H, vertical = 8.dp),
-                verticalArrangement = Arrangement.Bottom,
-            ) {
-                items(lines.size) { i ->
-                    val line = lines[i]
-                    val text = remember(line, palette) { terminalLine(line, palette) }
-                    Text(
-                        text = text,
-                        color = Color(palette.foreground),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = fontSize,
-                        lineHeight = fontSize * 1.27f,
-                        softWrap = false,
-                        maxLines = 1,
-                    )
-                }
+            items(lines.size) { i ->
+                val line = lines[i]
+                val text = remember(line, palette) { terminalLine(line, palette) }
+                Text(
+                    text = text,
+                    color = Color(palette.foreground),
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = fontSize,
+                    lineHeight = fontSize * 1.27f,
+                )
             }
         }
 
