@@ -2118,6 +2118,11 @@ export async function stageAll(worktreePath: string): Promise<void> {
   await exec('git', ['add', '-A'], { cwd: worktreePath });
 }
 
+/** Unstage everything in a worktree, keeping the working-tree changes. */
+export async function unstageAll(worktreePath: string): Promise<void> {
+  await exec('git', ['reset', '--quiet'], { cwd: worktreePath });
+}
+
 /** Commit what is already staged in a worktree. */
 export async function commitStaged(worktreePath: string, message: string): Promise<void> {
   await exec('git', ['commit', '-m', message], { cwd: worktreePath });
