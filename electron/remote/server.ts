@@ -2,12 +2,13 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'http';
 import { existsSync, readFile, readFileSync, rmSync, statSync } from 'fs';
-import { join, resolve, relative, extname, isAbsolute } from 'path';
+import { join, resolve, relative, extname, isAbsolute, dirname } from 'path';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomBytes, randomInt, timingSafeEqual, createHash, createHmac } from 'crypto';
 import { networkInterfaces } from 'os';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { warn } from '../log.js';
+import { createMobilePush, parsePushSubscription } from './push.js';
 import {
   writeToAgent,
   resizeAgent,
@@ -1051,6 +1052,7 @@ export function startRemoteServer(opts: {
   let rememberedHashes: string[] = [];
   let pairedTokenBufs: Buffer[] = [];
   let pairedDevicesPath: string | undefined;
+  const push = createMobilePush((hash) => isPairedToken(Buffer.from(hash, 'hex')));
 
   function enableRememberedDevices(filePath: string): void {
     if (pairedDevicesPath === filePath) return;
@@ -1079,6 +1081,7 @@ export function startRemoteServer(opts: {
     pairedTokenBufs = [...hashes.map((hash) => Buffer.from(hash, 'hex')), ...pairedTokenBufs].slice(
       -MAX_PAIRED_TOKENS,
     );
+    push.enable(join(dirname(filePath), 'phone-push.json'), rememberedHashes);
   }
 
   function saveRememberedDevices(hashes: string[]): void {
@@ -1098,6 +1101,7 @@ export function startRemoteServer(opts: {
     // full disk — must not leave every paired phone holding a working token.
     pairedTokenBufs = [];
     rememberedHashes = [];
+    push.revoke();
     for (const [client, type] of clientTokenTypes) if (type === 'paired') client.terminate();
     if (!pairedDevicesPath) return;
     try {
@@ -1205,6 +1209,7 @@ export function startRemoteServer(opts: {
       saveRememberedDevices(nextRemembered);
     }
     pairedTokenBufs = nextTokens;
+    push.retainOwners();
     return { ok: true, token: pairedToken };
   }
 
@@ -1327,6 +1332,45 @@ export function startRemoteServer(opts: {
         return;
       }
       if (tokenClass === 'canvas') return jsonEnd(403, { error: 'forbidden' });
+
+      if (url.pathname === '/api/mobile/push') {
+        if (tokenClass !== 'paired') return jsonEnd(403, { error: 'pairing required' });
+        const owner = createHash('sha256')
+          .update(rawToken ?? '')
+          .digest('hex');
+        if (req.method === 'GET') {
+          try {
+            jsonEnd(200, push.status(owner));
+          } catch {
+            jsonEnd(503, { error: 'Phone notifications unavailable' });
+          }
+          return;
+        }
+        if (req.method !== 'PUT' && req.method !== 'DELETE')
+          return jsonEnd(405, { error: 'Method not allowed' });
+        void readJsonBody(req, 4096, true)
+          .then((body) => {
+            // Authentication happened before reading the body; disconnect may have happened since.
+            if (stopping || !isPairedToken(Buffer.from(owner, 'hex')))
+              return jsonEnd(401, { error: 'Phone disconnected' });
+            try {
+              if (req.method === 'PUT') parsePushSubscription(body);
+              else if (!body || typeof body.endpoint !== 'string')
+                throw new Error('Invalid push endpoint');
+            } catch {
+              return jsonEnd(400, { error: 'Invalid push subscription' });
+            }
+            try {
+              if (req.method === 'PUT') push.replace(owner, body);
+              else push.remove(owner, body.endpoint);
+              jsonEnd(200, { ok: true });
+            } catch {
+              jsonEnd(503, { error: 'Could not save phone notification settings' });
+            }
+          })
+          .catch(() => jsonEnd(400, { error: 'Invalid push subscription' }));
+        return;
+      }
 
       // --- Device pairing (mobile → paired elevation) ---
       // A phone holding the read-only mobile token submits the PIN shown on the
@@ -1820,7 +1864,7 @@ export function startRemoteServer(opts: {
     // URLs, so cache them briefly rather than immutably. Only Vite's hashed
     // JS/CSS bundles are safe to pin immutable for a year.
     let cacheControl: string;
-    if (ext === '.html' || ext === '.webmanifest') {
+    if (ext === '.html' || ext === '.webmanifest' || filePath === '/sw.js') {
       cacheControl = 'no-cache';
     } else if (ext === '.png' || ext === '.svg' || ext === '.ico') {
       cacheControl = 'public, max-age=86400';
@@ -1859,7 +1903,7 @@ export function startRemoteServer(opts: {
   const clientChats = new WeakMap<WebSocket, ReturnType<typeof createChatSubscriptions>>();
   // A phone on a slow link cannot drain a full conversation every frame interval;
   // past this backlog, chat frames wait rather than pile up in the send buffer.
-  const CHAT_SOCKET_BACKLOG_BYTES = 1024 * 1024;
+  const SOCKET_BACKLOG_BYTES = 1024 * 1024;
 
   function broadcast(msg: ServerMessage): void {
     const json = JSON.stringify(msg);
@@ -1870,21 +1914,22 @@ export function startRemoteServer(opts: {
     }
   }
 
-  const unsubSpawn = onPtyEvent('spawn', () => {
+  // Baseline existing tasks so enabling remote access does not replay old requests.
+  push.snapshot(agentList());
+  const publishAgents = () => {
     const list = agentList();
+    push.snapshot(list);
     broadcast({ type: 'agents', list });
-  });
+  };
+  const unsubSpawn = onPtyEvent('spawn', publishAgents);
 
   const unsubChats =
     opts.chats?.onChange(() => {
-      broadcast({ type: 'agents', list: agentList() });
+      publishAgents();
       for (const client of wss.clients) clientChats.get(client)?.rebind();
     }) ?? (() => {});
 
-  const unsubListChanged = onPtyEvent('list-changed', () => {
-    const list = agentList();
-    broadcast({ type: 'agents', list });
-  });
+  const unsubListChanged = onPtyEvent('list-changed', publishAgents);
 
   const unsubExit = onPtyEvent('exit', (agentId, data) => {
     canvasAgents.delete(agentId);
@@ -1895,8 +1940,7 @@ export function startRemoteServer(opts: {
       clientSubs.get(client)?.delete(agentId);
     }
     setTimeout(() => {
-      const list = agentList();
-      broadcast({ type: 'agents', list });
+      publishAgents();
     }, 100);
   });
 
@@ -1910,7 +1954,7 @@ export function startRemoteServer(opts: {
           (message) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
           },
-          () => ws.bufferedAmount > CHAT_SOCKET_BACKLOG_BYTES,
+          () => ws.bufferedAmount > SOCKET_BACKLOG_BYTES,
         ),
       );
 
@@ -2145,6 +2189,12 @@ export function startRemoteServer(opts: {
           };
           const cb = (encoded: string) => {
             if (ws.readyState === WebSocket.OPEN) {
+              if (ws.bufferedAmount > SOCKET_BACKLOG_BYTES) {
+                // Terminal chunks cannot be skipped safely. Release the queued bytes;
+                // the phone reconnects and resets its terminal from scrollback replay.
+                ws.terminate();
+                return;
+              }
               ws.send(
                 JSON.stringify({
                   type: 'output',
@@ -2321,6 +2371,7 @@ export function startRemoteServer(opts: {
       // server.close() drains pending HTTP bodies. They must not mint new
       // credentials after explicit disconnect has revoked remembered phones.
       stopping = true;
+      push.stop();
       pairing = null;
       return new Promise<void>((resolve) => {
         for (const timer of pendingSubmissions.values()) clearTimeout(timer);
@@ -2342,6 +2393,7 @@ export function startRemoteServer(opts: {
 
   return new Promise<RemoteServer>((resolve, reject) => {
     const onError = (err: NodeJS.ErrnoException) => {
+      push.stop();
       unsubSpawn();
       unsubExit();
       unsubListChanged();

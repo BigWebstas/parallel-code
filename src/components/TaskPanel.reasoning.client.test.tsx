@@ -1,9 +1,12 @@
 import { expectDefined } from '../store/test-helpers';
-import { Show, createEffect, createSignal, onCleanup, type ComponentProps } from 'solid-js';
+import { For, Show, createEffect, createSignal, onCleanup, type ComponentProps } from 'solid-js';
 import { render } from 'solid-js/web';
 import { createStore } from 'solid-js/store';
 import { afterEach, expect, it, vi } from 'vitest';
 import { TaskPanel } from './TaskPanel';
+import { IPC } from '../../electron/ipc/channels';
+import type { CommitInfo } from '../ipc/types';
+import { invoke } from '../lib/ipc';
 import {
   openCanvasReasoning,
   openCanvasMindMap,
@@ -162,13 +165,22 @@ vi.mock('./UnderstandingTourDialog', () => ({
   ),
 }));
 vi.mock('./TaskChangedFilesSection', () => ({
-  TaskChangedFilesSection: (props: { onFileCountChange?: (count: number) => void }) => {
+  TaskChangedFilesSection: (props: {
+    onFileCountChange?: (count: number) => void;
+    commitList: CommitInfo[];
+  }) => {
     fileInventory.mounts++;
     createEffect(() => {
       fileInventory.report = props.onFileCountChange ?? (() => {});
     });
     onCleanup(() => fileInventory.disposals++);
-    return <div class="test-files" />;
+    return (
+      <div class="test-files">
+        <For each={props.commitList}>
+          {(commit) => <span data-commit-hash={commit.hash}>{commit.message}</span>}
+        </For>
+      </div>
+    );
   },
 }));
 vi.mock('./TaskShellSection', () => ({ TaskShellSection: () => null }));
@@ -193,6 +205,9 @@ afterEach(() => {
   document.body.replaceChildren();
   channels.length = 0;
   vi.mocked(showNotification).mockClear();
+  vi.mocked(invoke).mockReset();
+  vi.mocked(invoke).mockResolvedValue(undefined);
+  vi.useRealTimers();
 });
 
 const tourCard = (title: string, label = 'KEY DECISION') => ({
@@ -510,6 +525,39 @@ function mountEmptyTask() {
   dispose = render(() => <TaskPanel task={task} isActive />, container);
   return { container, setTask };
 }
+
+it('preserves commit rows on unchanged polls and updates changed messages, order and length', async () => {
+  vi.useFakeTimers();
+  let commits: CommitInfo[] = [
+    { hash: 'a', message: 'First' },
+    { hash: 'b', message: 'Second' },
+  ];
+  vi.mocked(invoke).mockImplementation(async (cmd) =>
+    cmd === IPC.GetBranchCommits ? commits.map((commit) => ({ ...commit })) : undefined,
+  );
+  const { container } = mountEmptyTask();
+  await flush();
+  const rows = () => [...container.querySelectorAll<HTMLElement>('[data-commit-hash]')];
+  const initial = rows();
+  expect(initial.map((row) => row.textContent)).toEqual(['First', 'Second']);
+
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(rows()[0]).toBe(initial[0]);
+  expect(rows()[1]).toBe(initial[1]);
+
+  commits = [{ hash: 'a', message: 'Reworded' }, commits[1]];
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(rows().map((row) => row.textContent)).toEqual(['Reworded', 'Second']);
+  commits = [commits[1], commits[0]];
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(rows().map((row) => row.dataset.commitHash)).toEqual(['b', 'a']);
+  commits = [commits[0]];
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(rows()).toHaveLength(1);
+  commits = [{ hash: 'c', message: 'New hash' }];
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(rows()[0].dataset.commitHash).toBe('c');
+});
 
 it('collapses empty support panels without disposing file watching or terminal state', () => {
   const mounts = fileInventory.mounts;

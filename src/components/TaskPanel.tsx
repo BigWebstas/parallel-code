@@ -484,7 +484,15 @@ export function TaskPanel(props: TaskPanelProps) {
         });
         if (cancelled) return;
         batch(() => {
-          setCommitList(result);
+          setCommitList((previous) =>
+            previous.length === result.length &&
+            previous.every(
+              (commit, index) =>
+                commit.hash === result[index].hash && commit.message === result[index].message,
+            )
+              ? previous
+              : result,
+          );
           // Reset selection if the selected commit no longer exists. The
           // sentinel "uncommitted" selection is not a hash, so it is preserved.
           const sel = selectedCommit();
