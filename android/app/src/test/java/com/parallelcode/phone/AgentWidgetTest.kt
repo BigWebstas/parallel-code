@@ -19,6 +19,42 @@ class AgentWidgetTest {
     }
 
     @Test
+    fun sumsEverySavedComputerThatAnswered() {
+        val here = listOf(agent("a", "active"), agent("b", "needs_input"))
+        val other = listOf(agent("c", "active"), agent("d", "shell_busy"))
+        assertEquals(
+            "1 need you · 3 working · 2 comps",
+            widgetSummary(here, emptyList(), connected = true, others = listOf(other)).headline,
+        )
+        assertEquals("2 working", widgetSummary(here, emptyList(), connected = false, others = listOf(other)).headline)
+        assertEquals(
+            "2 working · 2 comps",
+            widgetSummary(emptyList(), emptyList(), connected = false, others = listOf(other, emptyList())).headline,
+        )
+        assertEquals(
+            "All quiet · 2 comps",
+            widgetSummary(listOf(agent("e", "idle")), emptyList(), connected = true, others = listOf(emptyList())).headline,
+        )
+    }
+
+    @Test
+    fun colorsTheStatusDotByWhatNeedsYouMost() {
+        fun tone(vararg attention: String, connected: Boolean = true) =
+            widgetSummary(attention.mapIndexed { i, a -> agent("$i", a) }, emptyList(), connected).tone
+        assertEquals(WidgetTone.ATTENTION, tone("active", "needs_input"))
+        assertEquals(WidgetTone.WORKING, tone("active", "idle"))
+        assertEquals(WidgetTone.QUIET, tone("idle"))
+        assertEquals(WidgetTone.OFFLINE, tone("active", connected = false))
+    }
+
+    @Test
+    fun readsTheDesktopAgentList() {
+        val raw = """[{"agentId":"a","taskId":"t","taskName":"Fix","status":"running","attention":"active"}]"""
+        assertEquals("a", parseAgentList(raw)?.single()?.agentId)
+        assertEquals(null, parseAgentList("""{"error":"forbidden"}"""))
+    }
+
+    @Test
     fun listsRemainingUsagePerProvider() {
         val usage = listOf(
             ProviderUsage("Claude", UsageWindow(22.0, null), UsageWindow(87.0, null), "ok", null),
