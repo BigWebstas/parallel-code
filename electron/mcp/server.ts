@@ -12,13 +12,7 @@ import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView } from '../shared/canvas-view.js';
 import { parseAgentTourPayload } from '../shared/agent-tour.js';
 import { parseEvidenceSubmission } from '../shared/evidence.js';
-import {
-  APP_TASK_INSTRUCTIONS,
-  CANVAS_INSTRUCTIONS,
-  hasCanvasTools,
-  selectTools,
-  sessionInstructions,
-} from './mcp-tool-list.js';
+import { selectTools, serverInstructions } from './mcp-tool-list.js';
 import { validateBranchName } from './validation.js';
 import { formatDiffForTool } from './diff-format.js';
 import type { LandSelfInput } from './types.js';
@@ -461,12 +455,7 @@ async function main(): Promise<void> {
     { name: 'parallel-code', version: '1.0.0' },
     {
       capabilities: { tools: {} },
-      instructions:
-        [
-          APP_TASK_INSTRUCTIONS,
-          ...(hasCanvasTools(taskId, coordinatorId, canvasOnly) ? [CANVAS_INSTRUCTIONS] : []),
-          ...(sessionCapabilities ? [sessionInstructions(sessionCapabilities)] : []),
-        ].join('\n\n') || undefined,
+      instructions: serverInstructions({ taskId, coordinatorId, canvasOnly, sessionCapabilities }),
     },
   );
 
