@@ -23,16 +23,16 @@ class AgentWidgetTest {
         val here = listOf(agent("a", "active"), agent("b", "needs_input"))
         val other = listOf(agent("c", "active"), agent("d", "shell_busy"))
         assertEquals(
-            "1 need you · 3 working · 2 comps",
+            "1 need you · 3 working · 2 computers",
             widgetSummary(here, emptyList(), connected = true, others = listOf(other)).headline,
         )
         assertEquals("2 working", widgetSummary(here, emptyList(), connected = false, others = listOf(other)).headline)
         assertEquals(
-            "2 working · 2 comps",
+            "2 working · 2 computers",
             widgetSummary(emptyList(), emptyList(), connected = false, others = listOf(other, emptyList())).headline,
         )
         assertEquals(
-            "All quiet · 2 comps",
+            "All quiet · 2 computers",
             widgetSummary(listOf(agent("e", "idle")), emptyList(), connected = true, others = listOf(emptyList())).headline,
         )
     }
