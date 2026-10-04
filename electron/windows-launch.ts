@@ -31,7 +31,14 @@ export function readCmdShimTarget(shimPath: string): string | undefined {
 // `where` blocks the main process, and starting a process costs 50-200 ms on
 // Windows; every agent, terminal and chat launch looks up one or more programs.
 // Remember found programs per PATH, and look again once one has disappeared.
-const whereCache = new Map<string, string[]>();
+// Negative lookups (misses) are remembered briefly so repeated launches don't
+// freeze the main process.
+interface WhereEntry {
+  candidates: string[];
+  expiresAt?: number;
+}
+
+const whereCache = new Map<string, WhereEntry>();
 
 /** Forget remembered `where` results (tests, and after an install changes PATH contents). */
 export function clearWindowsCommandCache(): void {
@@ -39,9 +46,18 @@ export function clearWindowsCommandCache(): void {
 }
 
 function whereAll(command: string, env: NodeJS.ProcessEnv): string[] {
-  const key = `${command}\0${env.PATH ?? env.Path ?? ''}`;
+  const pathVal = env.PATH ?? env.Path ?? env.path ?? '';
+  const key = `${command}\0${pathVal}`;
   const cached = whereCache.get(key);
-  if (cached?.every((candidate) => fs.existsSync(candidate))) return cached;
+  if (cached) {
+    if (cached.candidates.length > 0) {
+      if (cached.candidates.every((candidate) => fs.existsSync(candidate))) {
+        return cached.candidates;
+      }
+    } else if (cached.expiresAt && cached.expiresAt > Date.now()) {
+      return cached.candidates;
+    }
+  }
   let found: string[];
   try {
     found = execFileSync('where', [command], {
@@ -56,9 +72,13 @@ function whereAll(command: string, env: NodeJS.ProcessEnv): string[] {
   } catch {
     found = [];
   }
-  // A miss is not remembered, so a program installed later is found.
-  if (found.length > 0) whereCache.set(key, found);
-  else whereCache.delete(key);
+  if (found.length > 0) {
+    whereCache.set(key, { candidates: found });
+  } else {
+    // Remember misses briefly so repeated checks (e.g. pwsh on terminal open)
+    // don't freeze the main process with blocking where.exe calls on every launch.
+    whereCache.set(key, { candidates: [], expiresAt: Date.now() + 15_000 });
+  }
   return found;
 }
 

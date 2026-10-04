@@ -4,11 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Notify } from './notify.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
-import {
-  appendGitInfoExcludeBlock,
-  appendGitInfoExcludeBlockAtPath,
-  normalizeExcludeLine,
-} from './git-exclude.js';
+import { appendGitInfoExcludeBlockAtPath, normalizeExcludeLine } from './git-exclude.js';
 import {
   findForeignOwnedEntries,
   foreignOwnedRemovalError,
@@ -1290,14 +1286,21 @@ async function seedClaudeSandboxFiles(
  * keeps a nested `foo/.worktrees/` visible. Also runs as a backfill on agent
  * spawn, for worktrees created before this rule existed. `pathInRepo` may be
  * the repo root or any worktree — both resolve to the shared exclude file.
+ * Memoized per common git dir so agent spawn avoids redundant subprocesses.
  */
+const seededWorktreeContainerExcludes = new Set<string>();
 export function ensureWorktreeContainerExclude(pathInRepo: string): void {
-  appendGitInfoExcludeBlock(
-    pathInRepo,
+  const excludePath = gitInfoExcludePath(pathInRepo);
+  if (!excludePath || seededWorktreeContainerExcludes.has(excludePath)) return;
+  const result = appendGitInfoExcludeBlockAtPath(
+    excludePath,
     WORKTREE_CONTAINER_EXCLUDE,
     `${WORKTREE_CONTAINER_EXCLUDE_HEADER}\n${WORKTREE_CONTAINER_EXCLUDE}\n`,
     (err) => console.warn(`Failed to git-exclude ${WORKTREE_CONTAINER_EXCLUDE}:`, err),
   );
+  if (result === 'appended' || result === 'present') {
+    seededWorktreeContainerExcludes.add(excludePath);
+  }
 }
 
 /**
@@ -1429,6 +1432,11 @@ export function detectRepoRoot(worktreePath: string): string | null {
  * Pass `repoRoot` when the caller already resolved it (null meaning "not a
  * repo") to avoid a redundant `git rev-parse` subprocess.
  */
+// Remember when a worktree's node_modules was last synchronized against the source
+// directory mtime, so repeated agent/terminal spawns in the same worktree don't
+// readdir and relink hundreds of packages synchronously when nothing changed.
+const nodeModulesLastSync = new Map<string, number>();
+
 export function refreshWorktreeNodeModules(worktreePath: string, repoRoot?: string | null): void {
   const root = repoRoot === undefined ? detectRepoRoot(worktreePath) : repoRoot;
   if (!root) return;
@@ -1440,7 +1448,16 @@ export function refreshWorktreeNodeModules(worktreePath: string, repoRoot?: stri
   const source = path.join(root, 'node_modules');
   const target = path.join(worktreePath, 'node_modules');
   if (!isManagedNodeModules(source, target)) return;
-  ensureNodeModulesEntryLinks(source, target);
+
+  try {
+    const sourceMtime = fs.statSync(source).mtimeMs;
+    const lastSync = nodeModulesLastSync.get(target);
+    if (lastSync !== undefined && lastSync === sourceMtime) return;
+    ensureNodeModulesEntryLinks(source, target);
+    nodeModulesLastSync.set(target, sourceMtime);
+  } catch {
+    ensureNodeModulesEntryLinks(source, target);
+  }
 }
 
 export async function removeWorktree(
@@ -1464,6 +1481,7 @@ export async function removeWorktree(
 
   if (fs.existsSync(worktreePath)) {
     await forceRemoveWorktreeDir(repoRoot, worktreePath);
+    nodeModulesLastSync.delete(path.join(worktreePath, 'node_modules'));
   }
 
   // Prune stale worktree entries
@@ -1650,11 +1668,21 @@ export async function getChangedFiles(
   });
   const seen = new Set(files.map((file) => file.path));
 
-  // Untracked (new) files: count all lines as added
-  for (const p of untrackedPaths) {
-    if (seen.has(p)) continue;
-    const added = await countReadableTextLines(path.join(worktreePath, p));
-    files.push({ path: p, lines_added: added, lines_removed: 0, status: '?', committed: false });
+  // Untracked (new) files: count all lines as added concurrently
+  const missingUntracked = [...untrackedPaths].filter((p) => !seen.has(p));
+  if (missingUntracked.length > 0) {
+    const counts = await Promise.all(
+      missingUntracked.map((p) => countReadableTextLines(path.join(worktreePath, p))),
+    );
+    for (let i = 0; i < missingUntracked.length; i++) {
+      files.push({
+        path: missingUntracked[i],
+        lines_added: counts[i],
+        lines_removed: 0,
+        status: '?',
+        committed: false,
+      });
+    }
   }
 
   files.sort((a, b) => {
@@ -1725,16 +1753,24 @@ async function getUntrackedChangedFiles(
     return [];
   }
 
-  const files: ChangedFile[] = [];
+  const paths: string[] = [];
   for (const line of stdout.split('\n')) {
     const p = normalizeStatusPath(line);
     if (!p || seen.has(p)) continue;
     seen.add(p);
-
-    const added = await countReadableTextLines(path.join(worktreePath, p));
-    files.push({ path: p, lines_added: added, lines_removed: 0, status: '?', committed: false });
+    paths.push(p);
   }
-  return files;
+
+  const counts = await Promise.all(
+    paths.map((p) => countReadableTextLines(path.join(worktreePath, p))),
+  );
+  return paths.map((p, i) => ({
+    path: p,
+    lines_added: counts[i],
+    lines_removed: 0,
+    status: '?',
+    committed: false,
+  }));
 }
 
 export async function getDiffBaseSha(worktreePath: string, baseBranch?: string): Promise<string> {
@@ -2002,15 +2038,23 @@ export async function getWorktreeStatus(
       .catch(() => null),
   ]);
 
-  const mergeBase = await detectMergeBase(worktreePath, 'HEAD', resolvedBaseBranch ?? undefined);
+  const mergeBase = await detectMergeBase(
+    worktreePath,
+    headSha ?? undefined,
+    resolvedBaseBranch ?? undefined,
+  );
   let hasCommittedChanges = false;
-  try {
-    const { stdout: logOut } = await exec('git', ['log', `${mergeBase}..HEAD`, '--oneline'], {
-      cwd: worktreePath,
-    });
-    hasCommittedChanges = logOut.trim().length > 0;
-  } catch {
-    /* ignore */
+  if (mergeBase && headSha && mergeBase === headSha) {
+    hasCommittedChanges = false;
+  } else {
+    try {
+      const { stdout: logOut } = await exec('git', ['log', `${mergeBase}..HEAD`, '--oneline'], {
+        cwd: worktreePath,
+      });
+      hasCommittedChanges = logOut.trim().length > 0;
+    } catch {
+      /* ignore */
+    }
   }
 
   return {
@@ -2516,7 +2560,9 @@ export async function getBranchCommits(
   recentFallback?: number,
 ): Promise<CommitInfo[]> {
   if (!fs.existsSync(worktreePath)) return [];
-  const mergeBase = await detectMergeBase(worktreePath, 'HEAD', baseBranch);
+  const headHash = await pinHead(worktreePath);
+  const mergeBase = await detectMergeBase(worktreePath, headHash, baseBranch);
+  if (!recentFallback && mergeBase === headHash) return [];
   try {
     const { stdout } = await exec(
       'git',

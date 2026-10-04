@@ -1585,6 +1585,17 @@ describe('resolveSpawnTarget', () => {
     });
   });
 
+  it('remembers missing programs briefly to avoid blocking on every launch', () => {
+    withPlatform('win32', () => {
+      mockExecFileSync.mockImplementation(() => {
+        throw new Error('not found');
+      });
+      expect(resolveSpawnTarget('missing-agent', []).file).toBe('missing-agent');
+      expect(resolveSpawnTarget('missing-agent', []).file).toBe('missing-agent');
+      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+    });
+  });
+
   function withPlatform(value: NodeJS.Platform, run: () => void): void {
     const platform = Object.getOwnPropertyDescriptor(process, 'platform');
     Object.defineProperty(process, 'platform', { value });
