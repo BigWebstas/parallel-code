@@ -17,6 +17,7 @@ import {
   store,
   retryCloseTask,
   activateTaskFromPointer,
+  uncollapseTask,
   setActiveAgent,
   clearInitialPrompt,
   clearPrefillPrompt,
@@ -955,11 +956,32 @@ export function TaskPanel(props: TaskPanelProps) {
               gap: '12px',
             }}
           >
-            <span>{autoSendChildUpdates() ? 'Automatic child updates' : 'Child task'}</span>
+            <Show
+              when={props.task.coordinatedBy ? store.tasks[props.task.coordinatedBy] : undefined}
+              fallback={
+                <span>{props.task.coordinatedBy ? 'Subtask' : 'Automatic subtask updates'}</span>
+              }
+            >
+              {(parent) => (
+                <button
+                  class="delegation-button delegation-parent-link"
+                  title={`${parent().collapsed ? 'Resume and open parent' : 'Parent task'}: ${parent().name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (parent().collapsed) uncollapseTask(parent().id);
+                    activateTaskFromPointer(parent().id);
+                  }}
+                >
+                  {parent().collapsed ? 'Resume and open parent' : 'Parent task'}: {parent().name}
+                </button>
+              )}
+            </Show>
             <Show
               when={!!props.task.stagedNotification && !props.task.stagedNotification.userEdited}
             >
-              <span style={{ color: theme.accent, 'font-size': '11px' }}>{stagedCountdown()}</span>
+              <span style={{ color: theme.accent, 'font-size': '11px', 'flex-shrink': '0' }}>
+                {stagedCountdown()}
+              </span>
             </Show>
           </div>
           <Show when={!!props.task.stagedNotification && !props.task.stagedNotification.userEdited}>
