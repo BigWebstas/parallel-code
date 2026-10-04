@@ -762,6 +762,20 @@ fun SettingsScreen(
                 }
             }
 
+            // BACKUP SECTION
+            item {
+                SectionHeader("BACKUP")
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, AppTheme.extra.border),
+                ) {
+                    Box(Modifier.fillMaxWidth().padding(16.dp)) { BackupSettings() }
+                }
+            }
+
             // ABOUT SECTION
             item {
                 SectionHeader("ABOUT")

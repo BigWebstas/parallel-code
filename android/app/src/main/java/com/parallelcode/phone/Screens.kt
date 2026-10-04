@@ -227,6 +227,14 @@ fun ConnectScreen(
                 }
             }
         }
+        if (onCancel == null) {
+            Text(
+                "Set up this phone before? Restore its backup:",
+                style = MaterialTheme.typography.bodySmall,
+                color = AppTheme.extra.textMuted,
+            )
+            RestoreBackupButton(Modifier.fillMaxWidth())
+        }
         onCancel?.let { TextButton(onClick = it) { Text("Cancel") } }
     }
 }

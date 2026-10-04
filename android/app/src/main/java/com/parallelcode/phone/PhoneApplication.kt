@@ -32,7 +32,7 @@ class PhoneApplication : Application() {
         networkMonitor = NetworkMonitor(this)
         networkMonitor.start()
         client = RemoteClient(
-            CredentialStore(getSharedPreferences("desktop", Context.MODE_PRIVATE)),
+            CredentialStore(getSharedPreferences(CredentialStore.PREFS_NAME, Context.MODE_PRIVATE)),
             vpnActive = networkMonitor.isVpnActive,
             wifiSsid = networkMonitor.wifiSsid,
             waitForVpn = { settings.waitForVpn },
