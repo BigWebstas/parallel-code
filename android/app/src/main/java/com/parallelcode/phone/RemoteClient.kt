@@ -291,6 +291,23 @@ class RemoteClient(
         )
     }
 
+    /** The task's uncommitted files and what is staged; readable with the view-only token. */
+    suspend fun fetchCommitStatus(taskId: String): CommitStatus =
+        parseCommitStatus(api("GET", commitPath(taskId), null, credentials.pairedToken ?: credentials.link?.token))
+
+    /** Stage every change in the task's worktree (`git add -A`); answers the new status. */
+    suspend fun stageAll(taskId: String): CommitStatus = commitAction(taskId, JSONObject().put("action", "stage-all"))
+
+    /** Unstage everything, keeping the file changes (`git reset`); answers the new status. */
+    suspend fun unstageAll(taskId: String): CommitStatus = commitAction(taskId, JSONObject().put("action", "unstage-all"))
+
+    /** Commit what is staged. Runs real git, so like staging it needs the paired token. */
+    suspend fun commitStaged(taskId: String, message: String): CommitStatus =
+        commitAction(taskId, JSONObject().put("action", "commit").put("message", message))
+
+    private suspend fun commitAction(taskId: String, body: JSONObject): CommitStatus =
+        parseCommitStatus(api("POST", commitPath(taskId), body, pairedTokenOrThrow()))
+
     private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
 
     /** The last usage snapshot fetched, for the widget. */
@@ -310,6 +327,8 @@ class RemoteClient(
     }
 
     private fun notesPath(taskId: String) = "/api/mobile/notes/" + encodePath(taskId)
+
+    private fun commitPath(taskId: String) = "/api/mobile/tasks/${encodePath(taskId)}/commit"
 
     private fun encodePath(segment: String) = URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
 
