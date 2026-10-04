@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { AgentDetail } from './AgentDetail';
 import { fetchMergeReadiness, fetchNotes, fetchTaskDiff, mergeTask, closeTask } from './api';
-import { sendInput } from './ws';
+import type { RemoteAgent } from '../../electron/remote/protocol';
+import { agents, sendInput } from './ws';
 
 const terminalMocks = vi.hoisted(() => ({
   scrollLines: vi.fn(),
@@ -53,15 +55,7 @@ const READY_MERGE = {
 };
 
 vi.mock('./ws', () => ({
-  agents: () => [
-    {
-      agentId: 'a1',
-      taskId: 't1',
-      taskName: 'First task',
-      status: 'running',
-      attention: 'needs_input',
-    },
-  ],
+  agents: vi.fn<() => RemoteAgent[]>(),
   status: () => 'connected',
   canControl: () => wsMocks.canControl,
   reconnect: vi.fn(),
@@ -91,6 +85,7 @@ vi.mock('./api', () => ({
 
 let host: HTMLDivElement;
 let dispose: () => void;
+const onNextTask = vi.fn();
 beforeEach(() => {
   vi.clearAllMocks();
   // clearAllMocks drops queued one-shot values too, but re-establish the
@@ -101,6 +96,19 @@ beforeEach(() => {
   vi.mocked(mergeTask).mockResolvedValue(undefined);
   vi.mocked(closeTask).mockResolvedValue({ warnings: [] });
   wsMocks.canControl = true;
+  vi.mocked(agents)
+    .mockReset()
+    .mockReturnValue([
+      {
+        agentId: 'a1',
+        taskId: 't1',
+        taskName: 'First task',
+        status: 'running',
+        attention: 'needs_input',
+        exitCode: null,
+        lastLine: '',
+      },
+    ]);
   terminalMocks.options.fontSize = 14;
   localStorage.clear();
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
@@ -112,15 +120,15 @@ afterEach(() => {
   host.remove();
   vi.restoreAllMocks();
 });
-function mount(onBack: () => void = () => {}) {
+function mount(agentId = 'a1', onBack: () => void = () => {}) {
   dispose = render(
     () => (
       <AgentDetail
-        agentId="a1"
+        agentId={agentId}
         taskName="First task"
         onBack={onBack}
         onNeedsPairing={() => {}}
-        onNextTask={() => {}}
+        onNextTask={onNextTask}
       />
     ),
     host,
@@ -274,6 +282,83 @@ describe('phone reply composer', () => {
     click('Notes');
     expect(host.querySelector<HTMLTextAreaElement>('#task-notes')?.value).toBe('');
     expect(host.textContent).toContain('Draft saved on this phone');
+  });
+});
+
+describe('phone next task navigation', () => {
+  it.each(['needs_input', 'error'] as const)(
+    'floats navigation to a task with %s above the terminal keys',
+    (attention) => {
+      const first = agents()[0];
+      vi.mocked(agents).mockReturnValue([
+        first,
+        { ...first, agentId: 'a2', taskId: 't2', attention: 'active' },
+        { ...first, agentId: 'a3', taskId: 't3', taskName: 'Needs attention', attention },
+      ]);
+      mount();
+      expect(
+        host.querySelector('.mobile-output-actions .mobile-next-task')?.getAttribute('aria-label'),
+      ).toBe('Next task needing you: Needs attention');
+      expect(host.querySelector('.mobile-task-header .mobile-next-task')).toBeNull();
+      expect(host.querySelector('.mobile-keys .mobile-next-task')).toBeNull();
+      click('Next task →');
+      expect(onNextTask).toHaveBeenCalledWith('t3');
+      expect(sendInput).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['a1', 't2'],
+    ['a2', 't3'],
+    ['a3', 't1'],
+  ])('cycles from %s to %s when no other task needs attention', (agentId, nextTaskId) => {
+    const first = agents()[0];
+    vi.mocked(agents).mockReturnValue(
+      ['a1', 'a2', 'a3'].map((id, index) => ({
+        ...first,
+        agentId: id,
+        taskId: `t${index + 1}`,
+        attention: id === agentId ? 'needs_input' : 'active',
+      })),
+    );
+    mount(agentId);
+    expect(host.querySelector('.mobile-task-header .mobile-next-task')?.textContent).toBe('→');
+    expect(host.querySelector('.mobile-output-actions .mobile-next-task')).toBeNull();
+    click('→');
+    expect(onNextTask).toHaveBeenCalledWith(nextTaskId);
+  });
+
+  it('updates navigation as attention changes and hides it when no other task exists', () => {
+    const first = agents()[0];
+    const second: RemoteAgent = {
+      ...first,
+      agentId: 'a2',
+      taskId: 't2',
+      taskName: 'Second task',
+      attention: 'active',
+    };
+    const [list, setList] = createSignal([first]);
+    // eslint-disable-next-line solid/reactivity -- the component tracks reads through this mock
+    vi.mocked(agents).mockImplementation(list);
+    mount();
+    expect(host.querySelector('.mobile-next-task')).toBeNull();
+    setList([first, second]);
+    expect(
+      host.querySelector('.mobile-task-header .mobile-next-task')?.getAttribute('aria-label'),
+    ).toBe('Next task: Second task');
+    setList([first, { ...second, attention: 'needs_input' }]);
+    expect(host.querySelector('.mobile-task-header .mobile-next-task')).toBeNull();
+    expect(
+      host.querySelector('.mobile-output-actions .mobile-next-task')?.getAttribute('aria-label'),
+    ).toBe('Next task needing you: Second task');
+    click('Next task →');
+    expect(onNextTask).toHaveBeenLastCalledWith('t2');
+    setList([first, second]);
+    expect(host.querySelector('.mobile-output-actions .mobile-next-task')).toBeNull();
+    click('→');
+    expect(onNextTask).toHaveBeenLastCalledWith('t2');
+    setList([first]);
+    expect(host.querySelector('.mobile-next-task')).toBeNull();
   });
 });
 
@@ -484,7 +569,7 @@ describe('phone terminal viewport', () => {
 
   it('merges with the chosen options and returns to the list', async () => {
     const back = vi.fn();
-    mount(back);
+    mount('a1', back);
     await openTab('Diff');
     await openMergeDialog();
     // First tap opens the confirm step; the option checkboxes live there.
