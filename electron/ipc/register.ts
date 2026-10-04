@@ -74,6 +74,8 @@ import type { UsageProvider, UsageState } from './shared-types.js';
 import type {
   RemoteAttentionState,
   RemoteCloseResult,
+  RemoteCommitAction,
+  RemoteCommitStatus,
   RemoteMergeReadiness,
   RemoteTaskContext,
   RemoteTaskDiff,
@@ -1698,6 +1700,13 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<RemoteMergeReadiness>(IPC.Remote_GetMergeReadinessRequest, { taskId }),
     mergeTaskFromMobile: (req: { taskId: string; squash: boolean; cleanup: boolean }) =>
       callRenderer<{ ok: boolean }>(IPC.Remote_MergeTaskRequest, req).then(() => {}),
+    getCommitStatus: (taskId: string) =>
+      callRenderer<RemoteCommitStatus>(IPC.Remote_GetCommitStatusRequest, { taskId }),
+    commitActionFromMobile: (req: {
+      taskId: string;
+      action: RemoteCommitAction;
+      message?: string;
+    }) => callRenderer<RemoteCommitStatus>(IPC.Remote_CommitActionRequest, req),
     getTaskAttention: (taskId: string): RemoteAttentionState => taskAttention.get(taskId) ?? 'idle',
     getTaskContext: (taskId: string) => taskContext.get(taskId),
     getCollapsedTaskIds: (): string[] => {

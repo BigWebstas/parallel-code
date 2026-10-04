@@ -105,6 +105,19 @@ class SettingsStore(private val prefs: SharedPreferences) {
         get() = prefs.getBoolean(KEY_NOTIFY_FINISHED, false)
         set(value) = prefs.edit { putBoolean(KEY_NOTIFY_FINISHED, value) }
 
+    /** Wait to connect until an active VPN (such as Tailscale or WireGuard) is up. */
+    var waitForVpn: Boolean
+        get() = prefs.getBoolean(KEY_WAIT_FOR_VPN, false)
+        set(value) = prefs.edit { putBoolean(KEY_WAIT_FOR_VPN, value) }
+
+    /** On this Wi-Fi network, connect without waiting for a VPN. Null when unset. */
+    var homeWifiSsid: String?
+        get() = prefs.getString(KEY_HOME_WIFI_SSID, null)
+        set(value) {
+            val ssid = value?.trim()?.ifEmpty { null }
+            prefs.edit { if (ssid == null) remove(KEY_HOME_WIFI_SSID) else putString(KEY_HOME_WIFI_SSID, ssid) }
+        }
+
     fun notifiesFor(event: AgentEvent): Boolean = when (event) {
         AgentEvent.NEEDS_INPUT -> notifyNeedsInput
         AgentEvent.ERROR -> notifyErrors
@@ -113,6 +126,8 @@ class SettingsStore(private val prefs: SharedPreferences) {
 
     companion object {
         const val PREFS_NAME = "settings"
+        const val KEY_WAIT_FOR_VPN = "waitForVpn"
+        const val KEY_HOME_WIFI_SSID = "homeWifiSsid"
         const val KEY_KEEP_SCREEN_ON = "keepScreenOn"
         const val KEY_KEEP_SCREEN_ON_ONLY_ACTIVE = "keepScreenOnOnlyActive"
         const val KEY_THEME_MODE = "themeMode"

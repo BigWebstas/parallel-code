@@ -32,6 +32,9 @@ import {
   type RemoteCloseResult,
   type RemoteMergeReadiness,
   type RemoteTaskDiff,
+  REMOTE_COMMIT_ACTIONS,
+  type RemoteCommitAction,
+  type RemoteCommitStatus,
 } from './protocol.js';
 import {
   createChatSubscriptions,
@@ -62,6 +65,8 @@ const MAX_LOG_ENTRIES = 200;
 const REST_COORDINATOR_SENTINEL = 'api';
 const MAX_REST_PROMPT_BYTES = 16 * 1024;
 const MAX_NOTES_BYTES = 100 * 1024;
+/** A commit message from a phone; far above any real one, well under the body cap. */
+const MAX_COMMIT_MESSAGE_BYTES = 16 * 1024;
 /** Give the TUI a read of its own for a prefix keystroke before the paste lands. */
 const PREFIX_KEY_DELAY_MS = 50;
 // Device pairing: a mobile client proves it can see the desktop by entering a
@@ -969,6 +974,14 @@ export function startRemoteServer(opts: {
     squash: boolean;
     cleanup: boolean;
   }) => Promise<void>;
+  /** A task's uncommitted files and what is staged (renderer-backed). */
+  getCommitStatus?: (taskId: string) => Promise<RemoteCommitStatus>;
+  /** Stage, unstage or commit on behalf of a paired phone; answers the new status (renderer-backed). */
+  commitActionFromMobile?: (req: {
+    taskId: string;
+    action: RemoteCommitAction;
+    message?: string;
+  }) => Promise<RemoteCommitStatus>;
   /** Persist a task's notes (renderer-backed). */
   setTaskNotes?: (taskId: string, notes: string) => Promise<void>;
   /** The desktop's last agent-subscription usage snapshot (renderer-backed). */
@@ -1597,6 +1610,61 @@ export function startRemoteServer(opts: {
           })
           .catch(() => jsonEnd(400, { error: 'bad request' }));
         return;
+      }
+
+      // --- Commit (read: mobile + paired; write: paired) ---
+      // The desktop commit dialog: GET lists uncommitted files and what is
+      // staged; POST stages everything, unstages everything, or commits what is
+      // staged. Writes run real git in the task's worktree, so they need pairing.
+      const commitMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/commit$/);
+      if (commitMatch) {
+        if (tokenClass !== 'mobile' && tokenClass !== 'paired')
+          return jsonEnd(403, { error: 'forbidden' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(commitMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+
+        if (req.method === 'GET') {
+          const getCommitStatus = opts.getCommitStatus;
+          if (!getCommitStatus) return jsonEnd(503, { error: 'commit unavailable' });
+          getCommitStatus(taskId)
+            .then((status) => jsonEnd(200, status))
+            .catch((err) => jsonEnd(500, { error: String(err) }));
+          return;
+        }
+
+        if (req.method === 'POST') {
+          if (tokenClass !== 'paired') return jsonEnd(403, { error: 'pairing required' });
+          const commitAction = opts.commitActionFromMobile;
+          if (!commitAction) return jsonEnd(503, { error: 'commit unavailable' });
+          readJsonBody(req)
+            .then((body) => {
+              const action = REMOTE_COMMIT_ACTIONS.find((a) => a === body.action);
+              if (!action) return jsonEnd(400, { error: 'unknown commit action' });
+              let message: string | undefined;
+              if (action === 'commit') {
+                if (typeof body.message !== 'string' || !body.message.trim())
+                  return jsonEnd(400, { error: 'commit message required' });
+                if (Buffer.byteLength(body.message, 'utf8') > MAX_COMMIT_MESSAGE_BYTES)
+                  return jsonEnd(400, { error: 'commit message too long' });
+                message = body.message.trim();
+              }
+              return commitAction({ taskId, action, message }).then(
+                (status) => jsonEnd(200, status),
+                (err: unknown) => jsonEnd(500, { error: String(err) }),
+              );
+            })
+            .catch(() => jsonEnd(400, { error: 'bad request' }));
+          return;
+        }
+
+        return jsonEnd(405, { error: 'method not allowed' });
       }
 
       // Coordinator agents reach their own tasks and canvases, never other agents' terminals.

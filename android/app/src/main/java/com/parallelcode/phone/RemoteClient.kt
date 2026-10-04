@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,7 +30,11 @@ import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
-enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED }
+enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED, WAITING_FOR_VPN }
+
+/** With "Wait for VPN" on, hold off connecting until a VPN is up, unless the phone is on the home Wi-Fi. */
+fun waitsForVpn(waitForVpn: Boolean, vpnActive: Boolean, wifiSsid: String?, homeWifiSsid: String?): Boolean =
+    waitForVpn && !vpnActive && (homeWifiSsid == null || wifiSsid != homeWifiSsid)
 
 /** What the UI needs to know about the link to the desktop. */
 data class ConnectionState(
@@ -73,7 +78,13 @@ data class MergeReadiness(
  * UI in src/remote/ws.ts: authenticate with the first WebSocket message, prefer the paired token,
  * and fall back to view-only when the desktop revokes it. All state changes on the main thread.
  */
-class RemoteClient(private val credentials: CredentialStore) {
+class RemoteClient(
+    private val credentials: CredentialStore,
+    private val vpnActive: StateFlow<Boolean> = MutableStateFlow(true),
+    private val wifiSsid: StateFlow<String?> = MutableStateFlow(null),
+    private val waitForVpn: () -> Boolean = { false },
+    private val homeWifiSsid: () -> String? = { null },
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -82,6 +93,11 @@ class RemoteClient(private val credentials: CredentialStore) {
 
     private val _state = MutableStateFlow(ConnectionState(link = credentials.link))
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
+
+    init {
+        scope.launch { combine(vpnActive, wifiSsid) { _, _ -> }.collect { onVpnPolicyChanged() } }
+    }
+
     private val _agents = MutableStateFlow<List<RemoteAgent>>(emptyList())
     val agents: StateFlow<List<RemoteAgent>> = _agents.asStateFlow()
     private val _computers = MutableStateFlow(credentials.computers)
@@ -187,6 +203,19 @@ class RemoteClient(private val credentials: CredentialStore) {
         if (started) connect()
     }
 
+    /** Pauses or resumes connecting when the VPN, the Wi-Fi network, or the wait-for-VPN settings change. */
+    fun onVpnPolicyChanged() {
+        if (!started) return
+        if (mustWaitForVpn()) {
+            closeSocket()
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+        } else if (_state.value.status == ConnectionStatus.WAITING_FOR_VPN) {
+            connect()
+        }
+    }
+
+    private fun mustWaitForVpn() = waitsForVpn(waitForVpn(), vpnActive.value, wifiSsid.value, homeWifiSsid())
+
     /** Trade the desktop's six-digit PIN for a paired token, then reconnect with it. */
     suspend fun pair(pin: String, remember: Boolean) {
         val reply = api(
@@ -262,6 +291,23 @@ class RemoteClient(private val credentials: CredentialStore) {
         )
     }
 
+    /** The task's uncommitted files and what is staged; readable with the view-only token. */
+    suspend fun fetchCommitStatus(taskId: String): CommitStatus =
+        parseCommitStatus(api("GET", commitPath(taskId), null, credentials.pairedToken ?: credentials.link?.token))
+
+    /** Stage every change in the task's worktree (`git add -A`); answers the new status. */
+    suspend fun stageAll(taskId: String): CommitStatus = commitAction(taskId, JSONObject().put("action", "stage-all"))
+
+    /** Unstage everything, keeping the file changes (`git reset`); answers the new status. */
+    suspend fun unstageAll(taskId: String): CommitStatus = commitAction(taskId, JSONObject().put("action", "unstage-all"))
+
+    /** Commit what is staged. Runs real git, so like staging it needs the paired token. */
+    suspend fun commitStaged(taskId: String, message: String): CommitStatus =
+        commitAction(taskId, JSONObject().put("action", "commit").put("message", message))
+
+    private suspend fun commitAction(taskId: String, body: JSONObject): CommitStatus =
+        parseCommitStatus(api("POST", commitPath(taskId), body, pairedTokenOrThrow()))
+
     private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
 
     /** The last usage snapshot fetched, for the widget. */
@@ -282,6 +328,8 @@ class RemoteClient(private val credentials: CredentialStore) {
 
     private fun notesPath(taskId: String) = "/api/mobile/notes/" + encodePath(taskId)
 
+    private fun commitPath(taskId: String) = "/api/mobile/tasks/${encodePath(taskId)}/commit"
+
     private fun encodePath(segment: String) = URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
 
     private fun pairedTokenOrThrow(): String =
@@ -297,6 +345,9 @@ class RemoteClient(private val credentials: CredentialStore) {
     private suspend fun apiRaw(method: String, path: String, body: JSONObject?, token: String?): String {
         val link = credentials.link ?: throw ApiException("Not connected to a computer.")
         if (token == null) throw ApiException("Not connected to a computer.")
+        if (mustWaitForVpn()) {
+            throw ApiException("Waiting for VPN connection. Connect your VPN and try again.")
+        }
         val request = Request.Builder()
             .url(link.baseUrl + path)
             .header("Authorization", "Bearer $token")
@@ -490,6 +541,11 @@ class RemoteClient(private val credentials: CredentialStore) {
     private fun connect() {
         if (socket != null) return
         val link = credentials.link ?: return
+        if (mustWaitForVpn()) {
+            reconnectJob?.cancel()
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false, linkExpired = false) }
+            return
+        }
         val paired = credentials.pairedToken
         authKind = if (paired != null) TokenKind.PAIRED else TokenKind.MOBILE
         val token = paired ?: link.token
@@ -614,6 +670,10 @@ class RemoteClient(private val credentials: CredentialStore) {
             }
         }
         if (!started) return
+        if (mustWaitForVpn()) {
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+            return
+        }
         reconnectJob = scope.launch {
             delay(RECONNECT_DELAY_MS)
             connect()

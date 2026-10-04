@@ -70,6 +70,26 @@ export interface RemoteMergeReadiness {
   branchName: string;
 }
 
+/** One uncommitted file in a phone's commit dialog; `staged` when the index holds a change to it. */
+export interface RemoteCommitFile {
+  path: string;
+  status: string;
+  staged: boolean;
+}
+
+/**
+ * A task's uncommitted files, as the desktop's commit dialog lists them.
+ * `unsupported` marks a task without a worktree of its own to commit in.
+ */
+export interface RemoteCommitStatus {
+  files: RemoteCommitFile[];
+  unsupported?: boolean;
+}
+
+/** What a paired phone may do from its commit dialog. */
+export const REMOTE_COMMIT_ACTIONS = ['stage-all', 'unstage-all', 'commit'] as const;
+export type RemoteCommitAction = (typeof REMOTE_COMMIT_ACTIONS)[number];
+
 /** Metadata attached to a task's remote agent entry. */
 export type RemoteTaskContext = Pick<
   RemoteAgent,

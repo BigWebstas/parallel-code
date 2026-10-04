@@ -387,7 +387,7 @@ fun AgentsScreen(
                             ) {
                                 val statusDotColor = when (state.status) {
                                     ConnectionStatus.CONNECTED -> AppTheme.extra.success
-                                    ConnectionStatus.CONNECTING -> AppTheme.extra.warningText
+                                    ConnectionStatus.CONNECTING, ConnectionStatus.WAITING_FOR_VPN -> AppTheme.extra.warningText
                                     ConnectionStatus.DISCONNECTED -> MaterialTheme.colorScheme.error
                                 }
                                 val infiniteTransition = rememberInfiniteTransition(label = "connPulse")
@@ -541,7 +541,7 @@ fun AgentsScreen(
                             )
                             Spacer(Modifier.width(12.dp))
                             Text(
-                                "Reaching your computer…",
+                                if (state.status == ConnectionStatus.WAITING_FOR_VPN) "Waiting for VPN connection…" else "Reaching your computer…",
                                 color = AppTheme.extra.textMuted,
                             )
                         }
@@ -898,6 +898,7 @@ fun AgentScreen(
     var tab by rememberSaveable { mutableStateOf(AgentTab.TERMINAL) }
     var closing by remember { mutableStateOf(false) }
     var merging by remember { mutableStateOf(false) }
+    var committing by remember { mutableStateOf(false) }
     var viewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // With "Fit the terminal to this phone" on and paired, the PTY takes this screen's size so
@@ -929,6 +930,14 @@ fun AgentScreen(
                 merging = false
                 onBack()
             },
+        )
+    }
+
+    if (committing && agent != null) {
+        CommitTaskDialog(
+            taskId = agent.taskId,
+            client = client,
+            onDismiss = { committing = false },
         )
     }
 
@@ -979,6 +988,9 @@ fun AgentScreen(
                         if (agent != null && state.canControl) {
                             TextButton(onClick = { merging = true }) {
                                 Text("Merge", fontWeight = FontWeight.SemiBold)
+                            }
+                            TextButton(onClick = { committing = true }) {
+                                Text("Commit", fontWeight = FontWeight.SemiBold)
                             }
                             TextButton(onClick = { closing = true }) {
                                 Text("Close", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
@@ -1618,6 +1630,7 @@ private fun ReplyBox(
 fun statusLabel(state: ConnectionState) = when (state.status) {
     ConnectionStatus.CONNECTED -> if (state.canControl) "Connected" else "Connected, view only"
     ConnectionStatus.CONNECTING -> "Connecting…"
+    ConnectionStatus.WAITING_FOR_VPN -> "Waiting for VPN…"
     ConnectionStatus.DISCONNECTED -> "Offline"
 }
 

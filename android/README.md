@@ -10,7 +10,7 @@ Native companion app for the desktop's **Connect Phone** (Remote Access) feature
 - **Agents:** live list with each agent's status and last line, under the desktop's Claude, Codex, and Antigravity 5-hour and weekly usage meters (hidden on desktops without `/api/mobile/usage`).
 - **Minimized tasks:** tasks minimized on the desktop are pinned below the live list; a setting hides them.
 - **Looks:** the same 15 themes as the desktop, in Settings → Appearance. Follow system / always dark / always light picks the tone, and a separate dark and light look is remembered, so switching your phone's theme switches the look with it. Each look is drawn with a live swatch, and every color and corner radius comes from the desktop's own stylesheet. See [Looks](#looks).
-- **Settings:** theme and looks, keep the screen on, widget background transparency and card color, connection status, and forget this computer.
+- **Settings:** theme and looks, keep the screen on, widget background transparency and card color, connection status, wait for VPN (skipped on your home Wi-Fi, which needs location access to read the network name), and forget this computer.
 - **Swipe between tasks:** with a task open, swipe sideways to the previous or next one in the list; the header shows its position ("2 of 5").
 - **Terminal:** an agent's terminal in the colors of the look you picked, matching the desktop. Once paired: a reply box and keys a phone keyboard lacks (Enter, Esc, Tab, arrows, Ctrl+C). With "Fit the terminal to this phone" on (Settings, off by default), the terminal takes the phone's size while open so full-screen agents such as Claude Code fill it; the computer's own terminal shifts meanwhile and gets its size back when you leave.
 - **Changes:** the task's diff against its base branch, file by file with added and removed lines.
@@ -56,6 +56,10 @@ cd android
 ./gradlew assembleDebug       # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew installDebug        # install on a connected device
 ```
+
+### Releases
+
+`.github/workflows/android.yml` tests and builds the app whenever `android/` changes. Pushing a tag such as `android-v0.2.0` also publishes a signed APK as a GitHub release, kept separate from the desktop's `v*` releases. Signing reads `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` from the environment; CI fills them from repository secrets of the same names, with the keystore stored base64-encoded as `ANDROID_KEYSTORE_BASE64`. Every update must be signed with the same key, so keep a backup of it.
 
 QR scanning uses the Google Play services code scanner, so the app needs no camera permission. On phones without Play services, paste the link instead.
 

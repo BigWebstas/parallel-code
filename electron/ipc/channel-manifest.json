@@ -105,6 +105,8 @@
   "Remote_GetDiffRequest": "remote_get_diff_request",
   "Remote_GetMergeReadinessRequest": "remote_get_merge_readiness_request",
   "Remote_MergeTaskRequest": "remote_merge_task_request",
+  "Remote_GetCommitStatusRequest": "remote_get_commit_status_request",
+  "Remote_CommitActionRequest": "remote_commit_action_request",
   "Remote_UpdateTaskStatus": "remote_update_task_status",
   "Remote_RendererReply": "remote_renderer_reply",
   "PlanContent": "plan_content",
