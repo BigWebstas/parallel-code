@@ -101,20 +101,46 @@ fun widgetPalette(key: String?): WidgetPalette =
 /** The card shape for [key] at [percent] opacity. */
 fun widgetBackground(key: String?, percent: Int): Int = widgetPalette(key).background(percent)
 
-/** What the widget shows, worked out from the live agent list and usage snapshot. */
-data class WidgetSummary(val headline: String, val usage: String)
+/** The status dot's color: what most needs the user right now. */
+enum class WidgetTone(val color: Int) {
+    OFFLINE(0xFFD9645B.toInt()),
+    ATTENTION(0xFFE0A84E.toInt()),
+    WORKING(0xFF5FBF77.toInt()),
+    QUIET(0xFF8A8A8A.toInt()),
+}
 
-fun widgetSummary(agents: List<RemoteAgent>, usage: List<ProviderUsage>, connected: Boolean): WidgetSummary {
-    val live = agents.filter { !it.collapsed }
+/** What the widget shows, worked out from the live agent list and usage snapshot. */
+data class WidgetSummary(val headline: String, val usage: String, val tone: WidgetTone = WidgetTone.QUIET)
+
+/**
+ * [agents] are the connected computer's; [others] are the lists of the other saved computers that
+ * answered. With more than one computer counted, the headline sums them all and says how many,
+ * e.g. "3 working · 2 comps".
+ */
+fun widgetSummary(
+    agents: List<RemoteAgent>,
+    usage: List<ProviderUsage>,
+    connected: Boolean,
+    others: List<List<RemoteAgent>> = emptyList(),
+): WidgetSummary {
+    val computers = (if (connected) listOf(agents) else emptyList()) + others
+    val live = computers.flatten().filter { !it.collapsed }
     val needInput = live.count { it.attention == "needs_input" || it.attention == "error" }
     val working = live.count { it.running && (it.attention == "active" || it.attention == "shell_busy") }
-    val headline = when {
-        !connected -> "Not connected"
+    val status = when {
+        computers.isEmpty() -> "Not connected"
         needInput > 0 && working > 0 -> "$needInput need you · $working working"
         needInput > 0 -> "$needInput need${if (needInput == 1) "s" else ""} you"
         working > 0 -> "$working working"
         live.isEmpty() -> "No agents running"
         else -> "All quiet"
+    }
+    val headline = if (computers.size > 1) "$status · ${computers.size} comps" else status
+    val tone = when {
+        computers.isEmpty() -> WidgetTone.OFFLINE
+        needInput > 0 -> WidgetTone.ATTENTION
+        working > 0 -> WidgetTone.WORKING
+        else -> WidgetTone.QUIET
     }
     val lines = usage.filter { it.hasSnapshot }.map { provider ->
         val windows = listOfNotNull(
@@ -123,7 +149,7 @@ fun widgetSummary(agents: List<RemoteAgent>, usage: List<ProviderUsage>, connect
         ).joinToString("  ")
         "${provider.label.padEnd(11)} $windows"
     }
-    return WidgetSummary(headline, if (lines.isEmpty()) "" else "Left:\n" + lines.joinToString("\n"))
+    return WidgetSummary(headline, if (lines.isEmpty()) "" else "Left:\n" + lines.joinToString("\n"), tone)
 }
 
 /**
@@ -139,14 +165,20 @@ class AgentWidget : AppWidgetProvider() {
         private const val KEY_HEADLINE = "headline"
         private const val KEY_USAGE = "usage"
         private const val KEY_UPDATED = "updated"
+        private const val KEY_TONE = "tone"
 
         /** Store [summary] and redraw every placed widget. */
         fun publish(context: Context, summary: WidgetSummary) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            if (prefs.getString(KEY_HEADLINE, null) == summary.headline && prefs.getString(KEY_USAGE, null) == summary.usage) return
+            if (
+                prefs.getString(KEY_HEADLINE, null) == summary.headline &&
+                prefs.getString(KEY_USAGE, null) == summary.usage &&
+                prefs.getString(KEY_TONE, null) == summary.tone.name
+            ) return
             prefs.edit {
                 putString(KEY_HEADLINE, summary.headline)
                 putString(KEY_USAGE, summary.usage)
+                putString(KEY_TONE, summary.tone.name)
                 putString(KEY_UPDATED, LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")))
             }
             refresh(context)
@@ -170,9 +202,17 @@ class AgentWidget : AppWidgetProvider() {
             )
             val palette = widgetPalette(settings.getString(SettingsStore.KEY_WIDGET_PALETTE, null))
             val transparency = settings.getInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 100)
+            val usage = prefs.getString(KEY_USAGE, null).orEmpty()
+            val tone = WidgetTone.entries.firstOrNull { it.name == prefs.getString(KEY_TONE, null) } ?: WidgetTone.OFFLINE
             val views = RemoteViews(context.packageName, R.layout.widget_agents).apply {
                 setTextViewText(R.id.widget_headline, prefs.getString(KEY_HEADLINE, null) ?: "Open the app to connect")
-                setTextViewText(R.id.widget_usage, prefs.getString(KEY_USAGE, null).orEmpty())
+                setTextViewText(R.id.widget_usage, usage)
+                setInt(R.id.widget_status, "setColorFilter", tone.color)
+                // The rule under the headline separates it from the usage meters; alone it is clutter.
+                val usageVisibility = if (usage.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+                setViewVisibility(R.id.widget_divider, usageVisibility)
+                setViewVisibility(R.id.widget_usage, usageVisibility)
+                setInt(R.id.widget_divider, "setBackgroundColor", (palette.updated and 0x00FFFFFF) or 0x40000000)
                 setTextViewText(R.id.widget_updated, prefs.getString(KEY_UPDATED, null).orEmpty())
                 // The card's color picks the text colors too, so a light card stays readable.
                 setTextColor(R.id.widget_title, palette.title)

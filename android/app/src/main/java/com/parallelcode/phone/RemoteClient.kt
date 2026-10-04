@@ -104,6 +104,14 @@ class RemoteClient(
 
     /** Every desktop this phone has linked to; [ConnectionState.link] is the one in use. */
     val computers: StateFlow<List<SavedComputer>> = _computers.asStateFlow()
+    private val _otherComputers = MutableStateFlow<Map<String, List<RemoteAgent>>>(emptyMap())
+
+    /**
+     * Agent lists of the saved computers other than the one in use, by address, from those that
+     * answered the last poll (see [pollOtherComputers]). Feeds the home-screen widget.
+     */
+    val otherComputers: StateFlow<Map<String, List<RemoteAgent>>> = _otherComputers.asStateFlow()
+    private var pollJob: Job? = null
     private val _latencyMs = MutableStateFlow<Long?>(null)
     val latencyMs: StateFlow<Long?> = _latencyMs.asStateFlow()
 
@@ -138,6 +146,7 @@ class RemoteClient(
         holders.add(holder)
         started = true
         connect()
+        if (pollJob == null) pollOtherComputers()
     }
 
     fun stop(holder: String) {
@@ -145,6 +154,41 @@ class RemoteClient(
         if (holders.isNotEmpty()) return
         started = false
         closeSocket()
+        pollJob?.cancel()
+        pollJob = null
+    }
+
+    /**
+     * While a holder keeps the app connected, ask every other saved computer for its agents each
+     * [OTHER_COMPUTERS_POLL_MS] over plain HTTP, rather than holding a socket open to each.
+     */
+    private fun pollOtherComputers() {
+        pollJob?.cancel()
+        pollJob = scope.launch {
+            while (true) {
+                val active = credentials.link?.baseUrl
+                val others = credentials.computers.filter { it.baseUrl != active }
+                _otherComputers.value = if (others.isEmpty() || mustWaitForVpn()) {
+                    emptyMap()
+                } else {
+                    others.mapNotNull { c -> fetchAgentsFrom(c)?.let { c.baseUrl to it } }.toMap()
+                }
+                delay(OTHER_COMPUTERS_POLL_MS)
+            }
+        }
+    }
+
+    /** [computer]'s agents, or null when it can't be reached or refuses the token. */
+    private suspend fun fetchAgentsFrom(computer: SavedComputer): List<RemoteAgent>? = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(computer.baseUrl + "/api/agents")
+            .header("Authorization", "Bearer ${computer.pairedToken ?: computer.token}")
+            .build()
+        try {
+            http.newCall(request).execute().use { if (it.isSuccessful) parseAgentList(it.body.string()) else null }
+        } catch (_: IOException) {
+            null
+        }
     }
 
     fun link(link: ConnectionLink) {
@@ -171,6 +215,7 @@ class RemoteClient(
         val inUse = baseUrl == credentials.link?.baseUrl
         credentials.remove(baseUrl)
         _computers.value = credentials.computers
+        _otherComputers.update { it - baseUrl }
         if (!inUse) return
         closeSocket()
         resetSession()
@@ -184,6 +229,7 @@ class RemoteClient(
         _computers.value = credentials.computers
         _state.value = ConnectionState(link = credentials.link)
         reconnect()
+        if (started) pollOtherComputers()
     }
 
     private fun resetSession() {
@@ -709,6 +755,7 @@ class RemoteClient(
         const val HANDSHAKE_TIMEOUT_MS = 10_000L
         const val RECONNECT_DELAY_MS = 3_000L
         const val REQUEST_TIMEOUT_MS = 10_000L
+        const val OTHER_COMPUTERS_POLL_MS = 60_000L
 
         // The server drops a socket message past 64 KiB; leave room for the envelope.
         const val MAX_CHAT_MESSAGE_LENGTH = 60_000

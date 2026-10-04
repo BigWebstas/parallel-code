@@ -41,8 +41,8 @@ class PhoneApplication : Application() {
         promptHistory = PromptHistoryStore(getSharedPreferences(PromptHistoryStore.PREFS_NAME, Context.MODE_PRIVATE))
         // Keep the home-screen widget current whenever the connection is open.
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-            combine(client.agents, client.usage, client.state) { agents, usage, state ->
-                widgetSummary(agents, usage, state.status == ConnectionStatus.CONNECTED)
+            combine(client.agents, client.usage, client.state, client.otherComputers) { agents, usage, state, others ->
+                widgetSummary(agents, usage, state.status == ConnectionStatus.CONNECTED, others.values.toList())
             }.collect { AgentWidget.publish(this@PhoneApplication, it) }
         }
     }
