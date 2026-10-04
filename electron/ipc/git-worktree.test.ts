@@ -15,6 +15,7 @@ import {
   refreshWorktreeNodeModules,
   removeWorktree,
   stageAll,
+  unstageAll,
 } from './git.js';
 
 const tempDirs: string[] = [];
@@ -638,6 +639,11 @@ describe('commit staging', () => {
 
     await stageAll(root);
     expect((await getStagedFiles(root)).sort()).toEqual(['new.txt', 'tracked.txt']);
+
+    await unstageAll(root);
+    expect(await getStagedFiles(root)).toEqual([]);
+    expect(fs.readFileSync(path.join(root, 'tracked.txt'), 'utf8')).toBe('changed\n');
+    await stageAll(root);
 
     git(root, ['config', 'user.name', 'Parallel Code Tests']);
     git(root, ['config', 'user.email', 'tests@parallel-code.local']);
