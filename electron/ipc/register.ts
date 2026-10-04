@@ -116,7 +116,7 @@ import {
   getUncommittedChangedFiles,
   getUncommittedFileDiffs,
 } from './git.js';
-import { createTask, deleteTask } from './tasks.js';
+import { createPrTask, createTask, deleteTask } from './tasks.js';
 import { settleWorktreeIntents } from './worktree-intents.js';
 import { windowNotifier } from './window-notifier.js';
 import { createMcpRuntime } from './mcp-runtime.js';
@@ -162,6 +162,7 @@ import {
 } from './validate.js';
 import { registerDocumentHandlers } from '../documents/register.js';
 import { registerSuperProductivityHandlers } from '../super-productivity/register.js';
+import { registerGitHubHandlers } from '../github/register.js';
 import { listSessionsForCwd } from '../sessions/scan.js';
 import { validateBranchName as sharedValidateBranchName, validateUUID } from '../mcp/validation.js';
 import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
@@ -925,6 +926,27 @@ export function registerAllHandlers(win: BrowserWindow): void {
       });
     return result;
   });
+  ipcMain.handle(IPC.CreatePrTask, (_e, args) => {
+    assertString(args.name, 'name');
+    validatePath(args.projectRoot, 'projectRoot');
+    assertStringArray(args.symlinkDirs, 'symlinkDirs');
+    assertOptionalString(args.branchPrefix, 'branchPrefix');
+    if (!Number.isInteger(args.prNumber) || args.prNumber <= 0) {
+      throw new Error('prNumber must be a positive integer');
+    }
+    const result = createPrTask(
+      args.projectRoot,
+      args.prNumber,
+      args.symlinkDirs,
+      args.branchPrefix ?? 'task',
+    );
+    result
+      .then((r: { id: string }) => taskNames.set(r.id, args.name))
+      .catch((err: unknown) => {
+        logWarn('tasks', 'createPrTask resolution failed', { err: errMessage(err) });
+      });
+    return result;
+  });
   ipcMain.handle(IPC.DeleteTask, async (_e, args) => {
     assertStringArray(args.agentIds, 'agentIds');
     validatePath(args.projectRoot, 'projectRoot');
@@ -1388,6 +1410,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   registerDocumentHandlers(win);
   registerSuperProductivityHandlers();
+  registerGitHubHandlers();
 
   // --- File links ---
   ipcMain.handle(IPC.OpenPath, (_e, args) => {
