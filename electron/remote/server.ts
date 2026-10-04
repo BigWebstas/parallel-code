@@ -1715,7 +1715,7 @@ export function startRemoteServer(opts: {
   const clientChats = new WeakMap<WebSocket, ReturnType<typeof createChatSubscriptions>>();
   // A phone on a slow link cannot drain a full conversation every frame interval;
   // past this backlog, chat frames wait rather than pile up in the send buffer.
-  const CHAT_SOCKET_BACKLOG_BYTES = 1024 * 1024;
+  const SOCKET_BACKLOG_BYTES = 1024 * 1024;
 
   function broadcast(msg: ServerMessage): void {
     const json = JSON.stringify(msg);
@@ -1766,7 +1766,7 @@ export function startRemoteServer(opts: {
           (message) => {
             if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
           },
-          () => ws.bufferedAmount > CHAT_SOCKET_BACKLOG_BYTES,
+          () => ws.bufferedAmount > SOCKET_BACKLOG_BYTES,
         ),
       );
 
@@ -1974,6 +1974,12 @@ export function startRemoteServer(opts: {
 
           const cb = (encoded: string) => {
             if (ws.readyState === WebSocket.OPEN) {
+              if (ws.bufferedAmount > SOCKET_BACKLOG_BYTES) {
+                // Terminal chunks cannot be skipped safely. Release the queued bytes;
+                // the phone reconnects and resets its terminal from scrollback replay.
+                ws.terminate();
+                return;
+              }
               ws.send(
                 JSON.stringify({
                   type: 'output',

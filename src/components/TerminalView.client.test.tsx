@@ -1,4 +1,5 @@
 import { render } from 'solid-js/web';
+import type { ComponentProps } from 'solid-js';
 import type { Terminal } from '@xterm/xterm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IPC } from '../../electron/ipc/channels';
@@ -57,7 +58,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function mountTerminal(onData?: (data: Uint8Array) => void): Terminal {
+function mountTerminal(
+  onData?: (data: Uint8Array) => void,
+  onStepNavReady?: ComponentProps<typeof TerminalView>['onStepNavReady'],
+): Terminal {
   const host = document.createElement('div');
   document.body.append(host);
   disposers.push(
@@ -71,6 +75,7 @@ function mountTerminal(onData?: (data: Uint8Array) => void): Terminal {
           cwd="/tmp"
           isShell
           onData={onData}
+          onStepNavReady={onStepNavReady}
         />
       ),
       host,
@@ -86,6 +91,34 @@ function writesToAgent(): unknown[] {
 }
 
 describe('TerminalView', () => {
+  it('releases step markers when scrollback truncates their lines', async () => {
+    const onStepNavReady =
+      vi.fn<NonNullable<ComponentProps<typeof TerminalView>['onStepNavReady']>>();
+    const term = mountTerminal(undefined, onStepNavReady);
+    const nav = onStepNavReady.mock.calls[0]?.[0];
+    if (!nav) throw new Error('TerminalView did not register step navigation');
+    term.options.scrollback = 0;
+    const registerMarker = vi.spyOn(term, 'registerMarker');
+    const scrollToLine = vi.spyOn(term, 'scrollToLine').mockImplementation(() => {});
+
+    nav.mark('step');
+    nav.mark('step');
+    expect(registerMarker).toHaveBeenCalledTimes(1);
+    expect(nav.jump('step')).toBe(true);
+    const marker = registerMarker.mock.results[0].value;
+
+    await new Promise<void>((resolve) => term.write('\r\n'.repeat(term.rows + 2), resolve));
+    expect(marker.isDisposed).toBe(true);
+    expect(nav.jump('step')).toBe(false);
+
+    nav.mark('step');
+    expect(registerMarker).toHaveBeenCalledTimes(2);
+    expect(nav.jump('step')).toBe(true);
+    expect(scrollToLine).toHaveBeenCalledTimes(2);
+    disposers.pop()?.();
+    expect(onStepNavReady).toHaveBeenLastCalledWith(undefined);
+  });
+
   it('holds input until the agent has spawned', async () => {
     const term = mountTerminal();
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith(IPC.SpawnAgent, expect.anything()));

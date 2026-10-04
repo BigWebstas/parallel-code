@@ -518,13 +518,16 @@ export function TerminalView(props: TerminalViewProps) {
     // user can jump from the steps panel back to the terminal moment a step was written.
     // Markers auto-track buffer truncation; once the marker scrolls past the scrollback
     // limit xterm disposes it, in which case `jump` returns false so the caller can no-op.
-    // The map is owned by xterm and freed implicitly when term.dispose() runs in onCleanup.
+    // Remove disposed markers so truncated scrollback does not retain old steps.
     const stepMarkers = new Map<string, IMarker>();
     const stepNavApi = {
       mark(key: string) {
         if (!term || stepMarkers.has(key)) return;
         const m = term.registerMarker(0);
-        if (m) stepMarkers.set(key, m);
+        if (m) {
+          stepMarkers.set(key, m);
+          m.onDispose(() => stepMarkers.delete(key));
+        }
       },
       jump(key: string): boolean {
         if (!term) return false;
