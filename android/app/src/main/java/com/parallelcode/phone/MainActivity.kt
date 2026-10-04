@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -556,9 +557,14 @@ private fun PhoneApp(model: PhoneViewModel) {
                     Task(currentScreen.agentId, active = true, pageLabel = null)
                 } else {
                     val pager = rememberPagerState(initialPage = openIndex) { pages.size }
-                    LaunchedEffect(pager, pages) {
+                    val currentPages by rememberUpdatedState(pages)
+                    LaunchedEffect(pager) {
                         snapshotFlow { pager.settledPage }.collect { page ->
-                            pages.getOrNull(page)?.let { screenKey = "agent:${it.agentId}" }
+                            // Only a swipe moves between tasks. This page stays composed while it
+                            // animates out, so once the screen is left (Back, or closing the task,
+                            // which also changes the list) it must not navigate to a neighbour.
+                            if (!screenKey.startsWith("agent:")) return@collect
+                            currentPages.getOrNull(page)?.let { screenKey = "agent:${it.agentId}" }
                         }
                     }
                     HorizontalPager(

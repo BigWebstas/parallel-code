@@ -32,7 +32,7 @@ class PhoneApplication : Application() {
         networkMonitor = NetworkMonitor(this)
         networkMonitor.start()
         client = RemoteClient(
-            CredentialStore(getSharedPreferences("desktop", Context.MODE_PRIVATE)),
+            CredentialStore(getSharedPreferences(CredentialStore.PREFS_NAME, Context.MODE_PRIVATE)),
             vpnActive = networkMonitor.isVpnActive,
             wifiSsid = networkMonitor.wifiSsid,
             waitForVpn = { settings.waitForVpn },
@@ -41,8 +41,8 @@ class PhoneApplication : Application() {
         promptHistory = PromptHistoryStore(getSharedPreferences(PromptHistoryStore.PREFS_NAME, Context.MODE_PRIVATE))
         // Keep the home-screen widget current whenever the connection is open.
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-            combine(client.agents, client.usage, client.state) { agents, usage, state ->
-                widgetSummary(agents, usage, state.status == ConnectionStatus.CONNECTED)
+            combine(client.agents, client.usage, client.state, client.otherComputers) { agents, usage, state, others ->
+                widgetSummary(agents, usage, state.status == ConnectionStatus.CONNECTED, others.values.toList())
             }.collect { AgentWidget.publish(this@PhoneApplication, it) }
         }
     }

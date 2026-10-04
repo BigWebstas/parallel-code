@@ -1,5 +1,6 @@
 package com.parallelcode.phone
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 // Mirrors the server messages in electron/remote/protocol.ts that this app uses.
@@ -67,6 +68,14 @@ fun parseServerMessage(raw: String): ServerMessage? = try {
         )
         else -> null
     }
+} catch (_: Exception) {
+    null
+}
+
+/** The desktop's `GET /api/agents` reply; null when malformed. */
+fun parseAgentList(raw: String): List<RemoteAgent>? = try {
+    val list = JSONArray(raw)
+    List(list.length()) { i -> parseAgent(list.getJSONObject(i)) }
 } catch (_: Exception) {
     null
 }

@@ -3,8 +3,8 @@ import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
 import { AgentDetail } from './AgentDetail';
 import { fetchMergeReadiness, fetchNotes, fetchTaskDiff, mergeTask, closeTask } from './api';
-import type { RemoteAgent } from '../../electron/remote/protocol';
 import { agents, sendInput } from './ws';
+import type { RemoteAgent } from '../../electron/remote/protocol';
 
 const terminalMocks = vi.hoisted(() => ({
   scrollLines: vi.fn(),
