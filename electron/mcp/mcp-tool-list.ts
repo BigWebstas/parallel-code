@@ -271,6 +271,21 @@ export const SUBTASK_TOOLS: ToolDef[] = [
   },
 ];
 
+/**
+ * Node's fetch (undici) fails a request that gets no response headers for ~300s, and the
+ * coordinator's own default wait is 300s, so unclamped legacy waits surfaced as "fetch failed".
+ * Stay well below that ceiling; callers loop on timeout.
+ */
+export const LEGACY_WAIT_DEFAULT_MS = 240_000;
+export const LEGACY_WAIT_MAX_MS = 240_000;
+
+const legacyWait = {
+  type: 'number',
+  minimum: 1,
+  maximum: LEGACY_WAIT_MAX_MS,
+  description: `Timeout in milliseconds (default: ${LEGACY_WAIT_DEFAULT_MS} = 4 min, max: ${LEGACY_WAIT_MAX_MS}). On timeout, call again.`,
+};
+
 export const COORDINATOR_TOOLS: ToolDef[] = [
   {
     name: 'create_task',
@@ -330,10 +345,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         taskId: { type: 'string', description: 'Task ID' },
-        timeoutMs: {
-          type: 'number',
-          description: 'Timeout in milliseconds (default: 300000 = 5 min)',
-        },
+        timeoutMs: legacyWait,
       },
       required: ['taskId'],
     },
@@ -396,10 +408,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        timeoutMs: {
-          type: 'number',
-          description: 'Timeout in milliseconds (default: 300000 = 5 min)',
-        },
+        timeoutMs: legacyWait,
       },
       required: [],
     },

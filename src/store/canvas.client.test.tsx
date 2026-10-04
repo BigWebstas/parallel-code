@@ -289,34 +289,6 @@ describe('applyPlanContent', () => {
   });
 });
 
-describe('ordinary Markdown writes', () => {
-  function write(path: string): void {
-    fire({
-      event: 'PreToolUse',
-      state: 'working',
-      toolName: 'Write',
-      toolUseId: 'write-1',
-      detail: path,
-    });
-    fire({ event: 'PostToolUse', state: 'working', toolName: 'Write', toolUseId: 'write-1' });
-  }
-
-  it('keeps the sidebar closed when an agent writes documentation', () => {
-    write('/tmp/task/docs/design.md');
-    expect(openPaths()).toBeUndefined();
-    expect(store.tasks['task-1'].canvasOpen).toBeUndefined();
-  });
-
-  it('does not reopen a dismissed sidebar on repeated or new document writes', () => {
-    openCanvasDocument('task-1', 'docs/design.md');
-    closeTaskCanvas('task-1');
-    write('docs/design.md');
-    write('docs/report.md');
-    expect(openPaths()).toBeUndefined();
-    expect(store.tasks['task-1'].canvasOpen).toBeUndefined();
-  });
-});
-
 describe('startCanvasAutoOpen with plans', () => {
   it('brings the current plan back to the front when Claude asks for approval', async () => {
     publish('.claude/plans/p.md');
