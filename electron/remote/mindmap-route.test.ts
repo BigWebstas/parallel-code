@@ -408,10 +408,14 @@ it('distinguishes oversized, conflicting and unavailable requests by status and 
     await blocked;
     return structuredClone(map);
   });
+  read.mockClear();
   const inFlight = Array.from({ length: 4 }, () => fetch(endpoint, { headers }));
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  expect((await fetch(endpoint, { headers })).status).toBe(429);
-  finish();
+  try {
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(4));
+    expect((await fetch(endpoint, { headers })).status).toBe(429);
+  } finally {
+    finish();
+  }
   expect((await Promise.all(inFlight)).map((response) => response.status)).toEqual([
     200, 200, 200, 200,
   ]);
