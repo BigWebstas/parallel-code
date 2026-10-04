@@ -29,6 +29,8 @@ beforeEach(() => {
   // happy-dom has no canvas; xterm's DOM renderer only measures glyph widths.
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
     font: '',
+    fillRect: vi.fn(),
+    clearRect: vi.fn(),
     measureText: () => ({ width: 8 }),
   } as unknown as CanvasRenderingContext2D);
   vi.stubGlobal('OffscreenCanvas', undefined);
@@ -91,6 +93,49 @@ function writesToAgent(): unknown[] {
 }
 
 describe('TerminalView', () => {
+  it.each([
+    'https://example.com/',
+    '\x1b]8;;https://example.com/\x07https://example.com/\x1b]8;;\x07',
+  ])('opens a terminal URL once per modified click: %j', async (output) => {
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(256);
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(16);
+    const term = mountTerminal();
+    await new Promise<void>((resolve) => term.write(`\x1b[?1000h\x1b[?1006h${output}`, resolve));
+    const mouseReports: string[] = [];
+    term.onData((data) => mouseReports.push(data));
+    const screen = term.element?.querySelector<HTMLElement>('.xterm-screen');
+    if (!screen) throw new Error('Missing terminal screen');
+    screen.style.padding = '0px';
+    const click = (modified: boolean, clientX = 4) => {
+      for (const type of ['mousemove', 'mousedown', 'mouseup']) {
+        screen.dispatchEvent(
+          new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            clientX,
+            clientY: 8,
+            ctrlKey: modified,
+            metaKey: modified,
+            buttons: type === 'mousedown' ? 1 : 0,
+          }),
+        );
+      }
+    };
+    click(true);
+    expect(mouseReports).toEqual([]);
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === IPC.ShellOpenExternal)).toEqual([
+      [IPC.ShellOpenExternal, { url: 'https://example.com/' }],
+    ]);
+
+    // Ordinary clicks still reach the TUI, including after a handled link click.
+    click(false);
+    expect(mouseReports).toEqual(['\x1b[<0;1;1M', '\x1b[<0;1;1m']);
+    mouseReports.length = 0;
+    click(true, 196);
+    expect(mouseReports).toEqual(['\x1b[<16;25;1M', '\x1b[<16;25;1m']);
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === IPC.ShellOpenExternal)).toHaveLength(1);
+  });
+
   it('releases step markers when scrollback truncates their lines', async () => {
     const onStepNavReady =
       vi.fn<NonNullable<ComponentProps<typeof TerminalView>['onStepNavReady']>>();

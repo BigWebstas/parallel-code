@@ -467,6 +467,23 @@ export function TerminalView(props: TerminalViewProps) {
     term.open(containerRef);
     // The screen element is created by open(); cache it for cell-height measurement.
     screenEl = (term.element?.querySelector('.xterm-screen') as HTMLElement | null) ?? undefined;
+    // xterm's linkifier sees mouse-down on the screen before mouse reporting on
+    // its parent. Keep modified link clicks here: Codex also opens links from
+    // PTY mouse-down reports, which would duplicate our mouse-up activation.
+    const linkScreen = screenEl;
+    const handleLinkMouseDown = (event: MouseEvent) => {
+      if (
+        event.button !== 0 ||
+        !(isMac ? event.metaKey : event.ctrlKey) ||
+        !linkScreen?.classList.contains('xterm-cursor-pointer')
+      )
+        return;
+      event.preventDefault();
+      event.stopPropagation();
+      term?.focus();
+    };
+    linkScreen?.addEventListener('mousedown', handleLinkMouseDown);
+    onCleanup(() => linkScreen?.removeEventListener('mousedown', handleLinkMouseDown));
 
     // Block direct PTY keyboard input only after self-landing has removed the
     // backend PTY. Coordinator automation now waits for user activity instead of
