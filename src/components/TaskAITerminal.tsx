@@ -21,7 +21,7 @@ import {
   showNotification,
   toggleAITerminalLayout,
 } from '../store/store';
-import { markDirty } from '../lib/terminalFitManager';
+import { markDirty, redrawTerminal } from '../lib/terminalFitManager';
 import { isAgentAskingQuestion, isAgentSettled } from '../store/taskStatus';
 import { errMessage, warn as logWarn } from '../lib/log';
 import { InfoBar } from './InfoBar';
@@ -217,9 +217,15 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
     if (props.visible === false) return;
     if (tabsMode()) {
       const id = visibleAgentId();
-      if (id) markDirty(id);
+      if (id) {
+        markDirty(id);
+        redrawTerminal(id);
+      }
     } else if (props.visible === true) {
-      for (const id of props.task.agentIds) markDirty(id);
+      for (const id of props.task.agentIds) {
+        markDirty(id);
+        redrawTerminal(id);
+      }
     }
   });
 

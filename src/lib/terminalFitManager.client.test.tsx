@@ -72,6 +72,10 @@ function terminal(viewportY = 5, rowChange = -6) {
       scrollbarY = Math.max(0, scrollbarY + line - buffer.viewportY);
       buffer.viewportY = scrollbarY;
     },
+    scrollToBottom() {
+      scrollbarY = buffer.baseY;
+      buffer.viewportY = scrollbarY;
+    },
   };
   const addon = {
     fit() {
@@ -106,6 +110,37 @@ describe('terminal resize scroll position', () => {
     const { buffer } = terminal(100);
     frame();
     expect(buffer.viewportY).toBe(buffer.baseY);
+  });
+
+  it('pins terminals to the new bottom when reflow shifts baseY', () => {
+    const buffer = { viewportY: 100, baseY: 100 };
+    const container = document.createElement('div');
+    const term = {
+      rows: 20,
+      cols: 80,
+      buffer: { active: buffer },
+      scrollToLine: vi.fn(),
+      scrollToBottom: vi.fn(() => {
+        buffer.viewportY = buffer.baseY;
+      }),
+    };
+    const addon = {
+      fit() {
+        buffer.baseY = 110;
+      },
+    };
+    manager.registerTerminal(
+      'reflow-test',
+      container,
+      addon as unknown as FitAddon,
+      term as unknown as Terminal,
+    );
+    manager.markDirty('reflow-test');
+    vi.advanceTimersByTime(150);
+    frame();
+    expect(term.scrollToBottom).toHaveBeenCalled();
+    expect(buffer.viewportY).toBe(110);
+    manager.unregisterTerminal('reflow-test');
   });
 });
 

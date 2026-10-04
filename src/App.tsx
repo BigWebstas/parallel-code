@@ -375,10 +375,10 @@ function App() {
           // The compositor can throttle the window's WebGL surface while it's
           // backgrounded, leaving a corrupt glyph atlas (issue #121). Repaint
           // every terminal on refocus so the corruption clears reliably.
-          // macOS-only: the corruption has never been reported on Linux, so
-          // Linux users don't pay the per-refocus repaint. The manual
-          // redrawTerminals shortcut stays cross-platform as an escape hatch.
-          if (focused && isMac) redrawAllTerminals();
+          // Enabled on macOS and Windows (D3D11/ANGLE), where compositors
+          // throttle background surfaces and drop presentation frames.
+          const isLinux = navigator.userAgent.includes('Linux');
+          if (focused && !isLinux) redrawAllTerminals();
         });
       } catch {
         unlistenFocusChanged = null;

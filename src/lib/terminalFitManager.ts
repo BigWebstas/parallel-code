@@ -62,12 +62,24 @@ function resizePreservingScroll(term: Terminal, resize: () => void): void {
 
   resize();
 
-  if (wasScrolledUp && buf.viewportY !== savedViewportY) {
-    const target = Math.min(savedViewportY, buf.baseY);
-    term.scrollToLine(target);
-    // The first call reconciles the buffer and scrollbar, but can land at
-    // the wrong line. Correct that offset before the browser paints.
-    if (buf.viewportY !== target) term.scrollToLine(target);
+  if (wasScrolledUp) {
+    if (buf.viewportY !== savedViewportY) {
+      const target = Math.min(savedViewportY, buf.baseY);
+      term.scrollToLine(target);
+      // The first call reconciles the buffer and scrollbar, but can land at
+      // the wrong line. Correct that offset before the browser paints.
+      if (buf.viewportY !== target) term.scrollToLine(target);
+    }
+  } else {
+    // Terminals following live output stay pinned to the bottom. During reflow
+    // (e.g. column changes), lines re-wrap and baseY increases; without an
+    // explicit scroll to bottom, viewportY < baseY leaves the terminal
+    // stranded in scrollback where xterm disables auto-scrolling.
+    if (typeof term.scrollToBottom === 'function') {
+      term.scrollToBottom();
+    } else {
+      term.scrollToLine(buf.baseY);
+    }
   }
 }
 

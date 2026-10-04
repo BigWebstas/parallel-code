@@ -1174,7 +1174,7 @@ export function TerminalView(props: TerminalViewProps) {
         if (!webglAddon && webglReattachTimer === undefined) {
           // loadAddon → setRenderer already repaints this pane in full.
           attachWebgl();
-        } else if (isMac && prevOnScreen === false) {
+        } else if (prevOnScreen === false) {
           redrawTerminal(agentId);
         }
       } else if (webglDetachTimer === undefined) {
