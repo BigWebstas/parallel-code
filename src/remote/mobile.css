@@ -477,9 +477,6 @@ textarea.mobile-input {
   max-height: 160px;
   resize: none;
 }
-.mobile-next-task {
-  margin-left: auto;
-}
 .mobile-composer > .mobile-error {
   margin-bottom: 8px;
 }
