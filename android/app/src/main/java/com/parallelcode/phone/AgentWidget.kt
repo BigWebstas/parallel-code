@@ -115,7 +115,7 @@ data class WidgetSummary(val headline: String, val usage: String, val tone: Widg
 /**
  * [agents] are the connected computer's; [others] are the lists of the other saved computers that
  * answered. With more than one computer counted, the headline sums them all and says how many,
- * e.g. "3 working · 2 comps".
+ * e.g. "3 working · 2 computers".
  */
 fun widgetSummary(
     agents: List<RemoteAgent>,
@@ -135,7 +135,7 @@ fun widgetSummary(
         live.isEmpty() -> "No agents running"
         else -> "All quiet"
     }
-    val headline = if (computers.size > 1) "$status · ${computers.size} comps" else status
+    val headline = if (computers.size > 1) "$status · ${computers.size} computers" else status
     val tone = when {
         computers.isEmpty() -> WidgetTone.OFFLINE
         needInput > 0 -> WidgetTone.ATTENTION
