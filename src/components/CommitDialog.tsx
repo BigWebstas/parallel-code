@@ -8,6 +8,8 @@ import type { Task } from '../store/types';
 import type { ChangedFile } from '../ipc/types';
 import { errMessage } from '../lib/log';
 
+type BusyKind = 'staging' | 'unstaging' | 'committing';
+
 interface CommitDialogProps {
   open: boolean;
   task: Task;
@@ -30,7 +32,7 @@ async function loadSnapshot(worktreePath: string): Promise<CommitSnapshot> {
 export function CommitDialog(props: CommitDialogProps) {
   const [message, setMessage] = createSignal('');
   const [error, setError] = createSignal('');
-  const [busy, setBusy] = createSignal<'staging' | 'committing' | null>(null);
+  const [busy, setBusy] = createSignal<BusyKind | null>(null);
 
   const [snapshot, { refetch, mutate }] = createResource(
     () => (props.open ? props.task.worktreePath : null),
@@ -50,10 +52,7 @@ export function CommitDialog(props: CommitDialogProps) {
     }
   });
 
-  async function run(
-    kind: 'staging' | 'committing',
-    action: (worktreePath: string) => Promise<unknown>,
-  ) {
+  async function run(kind: BusyKind, action: (worktreePath: string) => Promise<unknown>) {
     const { id: taskId, worktreePath } = props.task;
     setError('');
     setBusy(kind);
@@ -71,6 +70,11 @@ export function CommitDialog(props: CommitDialogProps) {
 
   async function stageAll() {
     await run('staging', (worktreePath) => invoke(IPC.StageAll, { worktreePath }));
+    void refetch();
+  }
+
+  async function unstageAll() {
+    await run('unstaging', (worktreePath) => invoke(IPC.UnstageAll, { worktreePath }));
     void refetch();
   }
 
@@ -106,24 +110,20 @@ export function CommitDialog(props: CommitDialogProps) {
                 {stagedCount()} staged, {unstagedCount()} not staged
               </Show>
             </span>
-            <button
-              type="button"
-              disabled={busy() !== null || unstagedCount() === 0}
-              onClick={() => void stageAll()}
-              title="git add -A"
-              style={{
-                padding: '4px 12px',
-                background: theme.bgInput,
-                border: `1px solid ${theme.border}`,
-                'border-radius': 'var(--radius-sm)',
-                color: theme.fg,
-                cursor: busy() !== null || unstagedCount() === 0 ? 'not-allowed' : 'pointer',
-                opacity: busy() !== null || unstagedCount() === 0 ? '0.5' : '1',
-                'font-size': '13px',
-              }}
-            >
-              {busy() === 'staging' ? 'Staging...' : 'Stage all'}
-            </button>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <StagingButton
+                label={busy() === 'unstaging' ? 'Unstaging...' : 'Unstage all'}
+                title="git reset"
+                disabled={busy() !== null || stagedCount() === 0}
+                onClick={() => void unstageAll()}
+              />
+              <StagingButton
+                label={busy() === 'staging' ? 'Staging...' : 'Stage all'}
+                title="git add -A"
+                disabled={busy() !== null || unstagedCount() === 0}
+                onClick={() => void stageAll()}
+              />
+            </div>
           </div>
           <Show
             when={files().length > 0}
@@ -210,5 +210,33 @@ export function CommitDialog(props: CommitDialogProps) {
       onConfirm={() => void commit()}
       onCancel={() => props.onDone()}
     />
+  );
+}
+
+function StagingButton(props: {
+  label: string;
+  title: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={props.disabled}
+      onClick={() => props.onClick()}
+      title={props.title}
+      style={{
+        padding: '4px 12px',
+        background: theme.bgInput,
+        border: `1px solid ${theme.border}`,
+        'border-radius': 'var(--radius-sm)',
+        color: theme.fg,
+        cursor: props.disabled ? 'not-allowed' : 'pointer',
+        opacity: props.disabled ? '0.5' : '1',
+        'font-size': '13px',
+      }}
+    >
+      {props.label}
+    </button>
   );
 }

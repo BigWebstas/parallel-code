@@ -36,6 +36,7 @@
   "CommitAll": "commit_all",
   "GetStagedFiles": "get_staged_files",
   "StageAll": "stage_all",
+  "UnstageAll": "unstage_all",
   "CommitStaged": "commit_staged",
   "DiscardUncommitted": "discard_uncommitted",
   "GetBranchCommits": "get_branch_commits",

@@ -43,6 +43,7 @@ const ALLOWED_CHANNELS = new Set([
   'commit_all',
   'get_staged_files',
   'stage_all',
+  'unstage_all',
   'commit_staged',
   'discard_uncommitted',
   'get_branch_commits',
