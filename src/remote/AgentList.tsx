@@ -3,6 +3,7 @@ import { agents, status, canControl } from './ws';
 import { agentStatusDisplay } from './attention';
 import { ConnectionBanner } from './ConnectionBanner';
 import { UsageStrip } from './UsageStrip';
+import { NotificationSettings } from './NotificationSettings';
 import { readLocal, writeLocal } from './storage';
 import { ProjectSwatch } from '../components/ProjectSwatch';
 import type { RemoteAgent } from '../../electron/remote/protocol';
@@ -74,6 +75,9 @@ export function AgentList(props: AgentListProps) {
       </Show>
       <main class="mobile-scroll">
         <UsageStrip />
+        <Show when={canControl()}>
+          <NotificationSettings />
+        </Show>
         <Show when={agents().length > 0}>
           <div class="mobile-search-field">
             <input
