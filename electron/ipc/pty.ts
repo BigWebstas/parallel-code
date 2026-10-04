@@ -1133,7 +1133,7 @@ export function subscribeToAgent(agentId: string, cb: (encoded: string) => void)
 }
 
 /**
- * Subscribe starting from a rendered snapshot: the screen and up to 1000 lines
+ * Subscribe starting from a rendered snapshot: the screen and up to 10k lines
  * of history from the main-process mirror, as ANSI text, instead of the raw
  * byte replay, which redraw-heavy TUIs fill with repaints of one screen.
  * Output already in the snapshot is not sent again; later output reaches `cb`
