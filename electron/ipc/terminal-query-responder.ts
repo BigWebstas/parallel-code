@@ -5,13 +5,12 @@ const { Terminal } = headless;
 const { SerializeAddon } = serializeAddon;
 
 /**
- * Lines kept above the viewport. Widening a terminal unwraps lines and pulls
- * scrollback back into view, which moves the cursor row, so the mirror needs
- * about a screen's worth to agree with the renderer's xterm. Phones are sent
- * this history when they open a terminal. Far below the renderer's 10k because
- * one mirror runs per PTY in the main process.
+ * Lines kept above the viewport. Phones are sent this history when they open a
+ * terminal, so it matches the desktop renderer's scrollback (10k, see
+ * TERMINAL_SCROLL_OPTIONS) — any less and a phone shows a truncated history.
+ * Lines are allocated as output arrives, so a short session costs little.
  */
-const SCROLLBACK_LINES = 1000;
+const SCROLLBACK_LINES = 10_000;
 
 // A cursor position report: CSI row;col R, or the DEC form CSI ? row;col R.
 // eslint-disable-next-line no-control-regex

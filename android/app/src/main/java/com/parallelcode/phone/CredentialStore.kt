@@ -29,19 +29,7 @@ class CredentialStore(private val prefs: SharedPreferences) {
     }
 
     val computers: List<SavedComputer>
-        get() {
-            val array = runCatching { JSONArray(prefs.getString(KEY_COMPUTERS, "[]")) }.getOrElse { JSONArray() }
-            return List(array.length()) { i ->
-                val c = array.getJSONObject(i)
-                SavedComputer(
-                    c.getString("baseUrl"),
-                    c.getString("token"),
-                    if (c.isNull("pairedToken")) null else c.optString("pairedToken").ifEmpty { null },
-                    // Written by newer builds; missing on older ones.
-                    if (c.isNull("alias")) null else c.optString("alias").ifEmpty { null },
-                )
-            }
-        }
+        get() = runCatching { parseComputers(prefs.getString(KEY_COMPUTERS, "[]") ?: "[]") }.getOrElse { emptyList() }
 
     private val active: SavedComputer?
         get() = prefs.getString(KEY_ACTIVE, null)?.let { url -> computers.firstOrNull { it.baseUrl == url } }
@@ -127,11 +115,41 @@ class CredentialStore(private val prefs: SharedPreferences) {
         }
     }
 
-    private companion object {
-        const val KEY_COMPUTERS = "computers"
-        const val KEY_ACTIVE = "active"
-        const val LEGACY_BASE_URL = "baseUrl"
-        const val LEGACY_TOKEN = "token"
-        const val LEGACY_PAIRED_TOKEN = "pairedToken"
+    companion object {
+        const val PREFS_NAME = "desktop"
+        private const val KEY_COMPUTERS = "computers"
+        private const val KEY_ACTIVE = "active"
+        private const val LEGACY_BASE_URL = "baseUrl"
+        private const val LEGACY_TOKEN = "token"
+        private const val LEGACY_PAIRED_TOKEN = "pairedToken"
+
+        private fun parseComputers(json: String): List<SavedComputer> {
+            val array = JSONArray(json)
+            return List(array.length()) { i ->
+                val c = array.getJSONObject(i)
+                SavedComputer(
+                    c.getString("baseUrl"),
+                    c.getString("token"),
+                    if (c.isNull("pairedToken")) null else c.optString("pairedToken").ifEmpty { null },
+                    // Written by newer builds; missing on older ones.
+                    if (c.isNull("alias")) null else c.optString("alias").ifEmpty { null },
+                )
+            }
+        }
+
+        /**
+         * Whether [values], a whole copy of this store's preferences (as a backup holds them),
+         * describes computers this phone can connect to: Remote Access addresses with tokens, and an
+         * active one among them.
+         */
+        fun isValid(values: Map<String, Any>): Boolean {
+            val json = values[KEY_COMPUTERS] ?: return !values.containsKey(KEY_ACTIVE)
+            val computers = (json as? String)?.let { runCatching { parseComputers(it) }.getOrNull() } ?: return false
+            val wellFormed = computers.all { c ->
+                c.token.isNotEmpty() && ConnectionLink.parse("${c.baseUrl}/?token=t")?.baseUrl == c.baseUrl
+            }
+            val active = values[KEY_ACTIVE]
+            return wellFormed && (active == null || computers.any { it.baseUrl == active })
+        }
     }
 }
