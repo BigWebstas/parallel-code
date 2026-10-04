@@ -11,7 +11,7 @@ import { produce, unwrap } from 'solid-js/store';
 import { batch } from 'solid-js';
 import { IPC } from '../../electron/ipc/channels';
 import { isAgentHookEventPayload } from '../../electron/agent-hooks/status';
-import { isPlanApprovalEvent, nextCanvasOpen } from '../lib/canvas-auto-open';
+import { isPlanApprovalEvent } from '../lib/canvas-auto-open';
 import { canvasTabKey, isTaskCanvasVisible, withTab, withoutTab } from '../lib/canvas-tabs';
 import { resizeTaskColumnForCanvas } from './task-column';
 import { store, setStore } from './core';
@@ -286,23 +286,18 @@ function openLivePlan(taskId: string): void {
 }
 
 /**
- * Puts the Markdown file an agent just wrote on its task's canvas, when
- * nothing is open there. Tabs the user has stay; they can switch by hand.
- * A plan waiting for approval comes back to the front, provided this run is
- * what produced it. Returns the unsubscribe.
+ * Brings a plan waiting for approval to the front, provided this run produced
+ * it. Ordinary Markdown writes must not open or reopen the sidebar.
+ * Returns the unsubscribe.
  */
 export function startCanvasAutoOpen(): () => void {
-  const pending = new Map<string, string>();
   return window.electron.ipcRenderer.on(IPC.AgentHookEvent, (data: unknown) => {
     if (!isAgentHookEventPayload(data)) return;
     const task = store.tasks[data.taskId];
     if (!task?.worktreePath) return;
     if (isPlanApprovalEvent(data)) {
       openLivePlan(data.taskId);
-      return;
     }
-    const opened = nextCanvasOpen(pending, data, task.worktreePath);
-    if (opened && !task.canvasTabs?.length) openCanvasDocument(task.id, opened);
   });
 }
 
