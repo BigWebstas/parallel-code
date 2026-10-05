@@ -144,6 +144,19 @@ describe('PromptInput draft persistence', () => {
     expect(setTaskPromptDraft).toHaveBeenCalledWith('task-1', 'remember the migration');
   });
 
+  it('preserves selection range when typing or editing inside the draft', () => {
+    storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'] } };
+    const textarea = mount('task-1');
+    textarea.focus();
+
+    textarea.value = 'hello world';
+    textarea.setSelectionRange(5, 5);
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(textarea.selectionStart).toBe(5);
+    expect(textarea.selectionEnd).toBe(5);
+  });
+
   it('clears the stored draft once the prompt is sent', async () => {
     storeMock.tasks = { 'task-1': { id: 'task-1', agentIds: ['agent-1'], promptDraft: 'send me' } };
     const textarea = mount('task-1');

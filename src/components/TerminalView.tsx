@@ -58,6 +58,7 @@ import { isTerminalPaneOnScreen, WEBGL_DETACH_DELAY_MS } from '../lib/terminalPa
 import type { PtyOutput } from '../ipc/types';
 
 let windowUnloading = false;
+const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Win');
 if (typeof window !== 'undefined') {
   const markWindowUnloading = () => {
     windowUnloading = true;
@@ -457,6 +458,7 @@ export function TerminalView(props: TerminalViewProps) {
       rightClickSelectsWord: false,
       ...TERMINAL_SCROLL_OPTIONS,
       disableStdin: taskPtyDetached(),
+      ...(isWindows ? { windowsPty: { backend: 'conpty', buildNumber: 22621 } } : {}),
       linkHandler: {
         activate: openTerminalHttpLinkWithModifier,
         allowNonHttpProtocols: false,
@@ -926,8 +928,11 @@ export function TerminalView(props: TerminalViewProps) {
         });
       }
 
-      // Flush large bursts promptly to keep perceived latency low.
-      if (outputQueuedBytes >= 64 * 1024) {
+      // For idle terminals or single interactive keystrokes, flush immediately
+      // without waiting for requestAnimationFrame so echo latency is minimized.
+      if (!outputWriteInFlight && outputQueuedBytes <= 1024 && outputRaf === undefined) {
+        flushOutputQueue();
+      } else if (outputQueuedBytes >= 64 * 1024) {
         flushOutputQueue();
       } else {
         scheduleOutputFlush();
@@ -982,12 +987,18 @@ export function TerminalView(props: TerminalViewProps) {
         flushPendingInput();
         return;
       }
-      if (inputFlushTimer !== undefined) return;
-      // eslint-disable-next-line solid/reactivity
-      inputFlushTimer = window.setTimeout(() => {
-        inputFlushTimer = undefined;
-        flushPendingInput();
-      }, 8);
+      if (inputFlushTimer === undefined) {
+        // Leading edge: dispatch interactive keystroke immediately so typing has 0ms latency.
+        if (ptyReady) {
+          flushPendingInput();
+        }
+        // eslint-disable-next-line solid/reactivity
+        inputFlushTimer = window.setTimeout(() => {
+          inputFlushTimer = undefined;
+          flushPendingInput();
+        }, 8);
+        return;
+      }
     }
 
     function noteUserTerminalInput(data: string) {

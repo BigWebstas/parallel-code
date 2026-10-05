@@ -451,6 +451,11 @@
   resize: none;
   font: 13px/22px var(--font-ui);
 }
+.chat-composer textarea::placeholder {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
 .chat-composer :is(.chat-send, .chat-stop) {
   display: grid;
   place-items: center;

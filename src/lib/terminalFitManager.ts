@@ -104,6 +104,14 @@ function flush(settled: boolean) {
   for (const [, entry] of entries) {
     // Off-screen panes stay dirty and fit when they come back into view.
     if (!entry.dirty || !entry.visible) continue;
+    if (typeof entry.fitAddon.proposeDimensions === 'function') {
+      const dims = entry.fitAddon.proposeDimensions();
+      if (dims && dims.cols === entry.term.cols && dims.rows === entry.term.rows) {
+        entry.dirty = false;
+        entry.fitInFull = false;
+        continue;
+      }
+    }
     didWork = true;
     if (!settled && !entry.fitInFull && deferColumnReflow(entry)) continue;
     entry.dirty = false;

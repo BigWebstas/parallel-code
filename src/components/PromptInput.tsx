@@ -747,6 +747,18 @@ export function PromptInput(props: PromptInputProps) {
 
   let textareaRef: HTMLTextAreaElement | undefined;
 
+  createEffect(() => {
+    const val = text();
+    if (textareaRef && textareaRef.value !== val) {
+      const start = textareaRef.selectionStart;
+      const end = textareaRef.selectionEnd;
+      textareaRef.value = val;
+      if (document.activeElement === textareaRef && start !== null && end !== null) {
+        textareaRef.setSelectionRange(Math.min(start, val.length), Math.min(end, val.length));
+      }
+    }
+  });
+
   function hasUserPromptDraft(staged = props.stagedNotification): boolean {
     return hasUserPromptDraftText(text(), props.autoSendChildUpdates ? staged?.text : undefined);
   }
@@ -954,10 +966,10 @@ export function PromptInput(props: PromptInputProps) {
           class="prompt-textarea"
           ref={(el) => {
             textareaRef = el;
+            el.value = text();
             props.ref?.(el);
           }}
           rows={3}
-          value={text()}
           // Intentionally NOT disabled while a question is active: typing is
           // harmless (nothing leaves the box until handleSend, which still
           // guards on questionActive()).  Hard-disabling here could latch the
@@ -1002,6 +1014,7 @@ export function PromptInput(props: PromptInputProps) {
             'font-family': "'JetBrains Mono', monospace",
             resize: 'none',
             outline: 'none',
+            'overflow-y': 'auto',
             opacity: questionActive() ? '0.5' : '1',
           }}
         />

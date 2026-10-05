@@ -1,4 +1,4 @@
-import { For, Show } from 'solid-js';
+import { For, Show, createEffect } from 'solid-js';
 import type { AgentChatState, ChatPermissionMode } from '../../../electron/shared/agent-chat-types';
 import { ChatContext } from './ChatContext';
 import { ContextMeter } from './ContextMeter';
@@ -108,6 +108,17 @@ export function Composer(props: ComposerProps) {
   const hasContent = () => !!props.draft.trim() || c.images().length > 0 || c.files().length > 0;
   const busy = () => c.sending() || c.readingImages() || c.stopping();
   let textarea: HTMLTextAreaElement | undefined;
+  createEffect(() => {
+    const val = props.draft;
+    if (textarea && textarea.value !== val) {
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      textarea.value = val;
+      if (document.activeElement === textarea && start !== null && end !== null) {
+        textarea.setSelectionRange(Math.min(start, val.length), Math.min(end, val.length));
+      }
+    }
+  });
   const mention = createFileMention({
     textarea: () => textarea,
     draft: () => props.draft,
@@ -146,12 +157,12 @@ export function Composer(props: ComposerProps) {
           <textarea
             ref={(element) => {
               textarea = element;
+              element.value = props.draft;
               props.textarea(element);
             }}
             aria-label={`Message ${props.agentName}`}
             placeholder={placeholder()}
             disabled={props.disabled}
-            value={props.draft}
             onInput={(event) => {
               props.onDraft(event.currentTarget.value);
               if (props.onListFiles) mention.onInput(event);

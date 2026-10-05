@@ -178,6 +178,18 @@ describe('TerminalView', () => {
     );
   });
 
+  it('flushes user input immediately on the leading edge once pty is ready', async () => {
+    const term = mountTerminal();
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith(IPC.SpawnAgent, expect.anything()));
+    resolveSpawn();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(writesToAgent()).toEqual([]);
+
+    term.input('a');
+    // Leading-edge flush delivers immediately without waiting for debounce timer
+    expect(writesToAgent()).toEqual([expect.objectContaining({ data: 'a' })]);
+  });
+
   it('flushes output when animation frames never arrive', async () => {
     vi.stubGlobal('requestAnimationFrame', () => 1);
     vi.stubGlobal('cancelAnimationFrame', () => undefined);

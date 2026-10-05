@@ -142,6 +142,36 @@ describe('terminal resize scroll position', () => {
     expect(buffer.viewportY).toBe(110);
     manager.unregisterTerminal('reflow-test');
   });
+
+  it('skips fitting and preserves scroll position when dimensions are unchanged', () => {
+    const buffer = { viewportY: 50, baseY: 100 };
+    const container = document.createElement('div');
+    const term = {
+      rows: 24,
+      cols: 80,
+      buffer: { active: buffer },
+      scrollToLine: vi.fn(),
+      scrollToBottom: vi.fn(),
+    };
+    const addon = {
+      proposeDimensions: vi.fn(() => ({ cols: 80, rows: 24 })),
+      fit: vi.fn(),
+    };
+    manager.registerTerminal(
+      'noop-test',
+      container,
+      addon as unknown as FitAddon,
+      term as unknown as Terminal,
+    );
+    manager.markDirty('noop-test');
+    vi.advanceTimersByTime(150);
+    frame();
+    expect(addon.fit).not.toHaveBeenCalled();
+    expect(term.scrollToBottom).not.toHaveBeenCalled();
+    expect(term.scrollToLine).not.toHaveBeenCalled();
+    expect(buffer.viewportY).toBe(50);
+    manager.unregisterTerminal('noop-test');
+  });
 });
 
 describe('terminal unregistration', () => {

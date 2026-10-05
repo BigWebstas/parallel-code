@@ -213,18 +213,36 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
   // switch. As a pane becomes the visible tab, re-fit it (its container may
   // have resized while hidden). The repaint / WebGL reattach on that edge is
   // TerminalView's job, driven by the `visible` prop passed below.
+  let lastVisible: boolean | undefined = undefined;
+  let lastActiveId: string | undefined = undefined;
+  let lastWasTabsMode: boolean | undefined = undefined;
+
   createEffect(() => {
-    if (props.visible === false) return;
-    if (tabsMode()) {
-      const id = visibleAgentId();
-      if (id) {
-        markDirty(id);
-        redrawTerminal(id);
-      }
-    } else if (props.visible === true) {
-      for (const id of props.task.agentIds) {
-        markDirty(id);
-        redrawTerminal(id);
+    const isVis = props.visible !== false;
+    const isTabs = tabsMode();
+    const activeId = isTabs ? visibleAgentId() : undefined;
+
+    const becameVisible = isVis && lastVisible === false;
+    const switchedTab = isVis && isTabs && activeId !== lastActiveId;
+    const switchedMode = isVis && isTabs !== lastWasTabsMode;
+
+    lastVisible = isVis;
+    lastActiveId = activeId;
+    lastWasTabsMode = isTabs;
+
+    if (!isVis) return;
+
+    if (becameVisible || switchedTab || switchedMode) {
+      if (isTabs) {
+        if (activeId) {
+          markDirty(activeId);
+          redrawTerminal(activeId);
+        }
+      } else {
+        for (const id of props.task.agentIds) {
+          markDirty(id);
+          redrawTerminal(id);
+        }
       }
     }
   });

@@ -740,6 +740,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const promptInputChild: PanelChild = {
     id: 'prompt',
     minSize: 54,
+    defaultSize: 72,
     content: () => promptInputEl,
   };
 
