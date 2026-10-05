@@ -242,6 +242,8 @@ function ProviderUsage(props: { provider: UsageProvider }) {
           </Show>
         </span>
         <Show when={headline()}>{(h) => <UsageMeter label={h().label} window={h().window} />}</Show>
+        {/* Pay-per-use logins have no rate-limit windows; their spend is the headline. */}
+        <Show when={!headline() && usage().creditUsage}>{(c) => <CreditMeter credit={c()} />}</Show>
         <Show when={!hasUsageSnapshot(usage())}>
           <span>usage unavailable · {usage().error}</span>
         </Show>
