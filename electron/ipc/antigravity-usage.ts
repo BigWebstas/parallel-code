@@ -261,7 +261,6 @@ export function parseAntigravityUsageResponse(
     status: 'ok',
     fiveHour,
     sevenDay,
-    spend: null,
     fetchedAt,
   };
 }

@@ -3,14 +3,18 @@ import { fetchUsage } from './api';
 import { status } from './ws';
 import {
   USAGE_WARN_PERCENT,
+  formatCurrency,
   formatReset,
-  formatSpend,
   hasUsageSnapshot,
   remainingPercent,
-  spendPercent,
   usageVisible,
 } from '../components/usage-format';
-import type { UsageProvider, UsageState, UsageWindow } from '../../electron/ipc/shared-types';
+import type {
+  CreditUsage,
+  UsageProvider,
+  UsageState,
+  UsageWindow,
+} from '../../electron/ipc/shared-types';
 
 // The desktop polls the usage endpoints itself; this only re-reads its snapshot.
 const POLL_INTERVAL_MS = 60_000;
@@ -41,6 +45,21 @@ function Meter(props: { label: string; window: UsageWindow }) {
       <Show when={reset()}>
         <span class="usage-reset">{reset()}</span>
       </Show>
+    </div>
+  );
+}
+
+function Credits(props: { credit: CreditUsage }) {
+  const used = () => formatCurrency(props.credit.used, props.credit.currency);
+  const limit = () =>
+    props.credit.limit === null ? null : formatCurrency(props.credit.limit, props.credit.currency);
+  return (
+    <div
+      class="usage-meter"
+      classList={{ warn: (props.credit.usedPercent ?? 0) >= USAGE_WARN_PERCENT }}
+    >
+      <span class="usage-label">credits</span>
+      <span class="usage-left">{limit() ? `${used()} / ${limit()}` : `${used()} used`}</span>
     </div>
   );
 }
@@ -84,17 +103,7 @@ export function UsageStrip() {
                   <span class="usage-name">{PROVIDER_LABELS[provider]}</span>
                   <Show when={state().fiveHour}>{(w) => <Meter label="5h" window={w()} />}</Show>
                   <Show when={state().sevenDay}>{(w) => <Meter label="7d" window={w()} />}</Show>
-                  <Show when={state().spend}>
-                    {(s) => (
-                      <div
-                        class="usage-meter"
-                        classList={{ warn: (spendPercent(s()) ?? 0) >= USAGE_WARN_PERCENT }}
-                      >
-                        <span class="usage-label">spend</span>
-                        <span class="usage-left">{formatSpend(s())}</span>
-                      </div>
-                    )}
-                  </Show>
+                  <Show when={state().creditUsage}>{(c) => <Credits credit={c()} />}</Show>
                   <Show when={!hasUsageSnapshot(state())}>
                     <span class="usage-reset">usage unavailable · {state().error}</span>
                   </Show>

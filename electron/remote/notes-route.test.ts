@@ -252,7 +252,6 @@ describe('GET /api/mobile/usage', () => {
     claude: {
       fiveHour: { usedPercent: 40, resetsAt: null },
       sevenDay: null,
-      spend: null,
       fetchedAt: 1,
       status: 'ok' as const,
       error: null,
@@ -260,7 +259,6 @@ describe('GET /api/mobile/usage', () => {
     codex: {
       fiveHour: null,
       sevenDay: null,
-      spend: null,
       fetchedAt: null,
       status: 'idle' as const,
       error: null,
@@ -268,7 +266,6 @@ describe('GET /api/mobile/usage', () => {
     antigravity: {
       fiveHour: null,
       sevenDay: null,
-      spend: null,
       fetchedAt: null,
       status: 'idle' as const,
       error: null,
