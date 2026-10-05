@@ -136,13 +136,19 @@ fun widgetSummary(
     val live = computers.flatMap { it.agents }.filter { !it.collapsed }
     val needInput = live.count { it.attention == "needs_input" || it.attention == "error" }
     val working = live.count { it.running && (it.attention == "active" || it.attention == "shell_busy") }
+    // Idle is every shown agent that is neither waiting on the user nor working (idle, ready, review).
+    val idle = live.size - needInput - working
+    val counts = listOfNotNull(
+        working.takeIf { it > 0 }?.let { "$it working" },
+        idle.takeIf { it > 0 }?.let { "$it idle" },
+    )
     val status = when {
         computers.isEmpty() -> "Not connected"
-        needInput > 0 && working > 0 -> "$needInput need you · $working working"
-        needInput > 0 -> "$needInput need${if (needInput == 1) "s" else ""} you"
-        working > 0 -> "$working working"
         live.isEmpty() -> "No agents running"
-        else -> "All quiet"
+        // "1 needs you" alone, but "1 need you · 2 working" in a list.
+        needInput > 0 -> (listOf("$needInput need${if (needInput == 1 && counts.isEmpty()) "s" else ""} you") + counts)
+            .joinToString(" · ")
+        else -> counts.joinToString(" · ")
     }
     val headline = if (computers.size > 1) "$status · ${computers.size} computers" else status
     val tone = when {

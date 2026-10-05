@@ -29,6 +29,18 @@ class AgentWidgetTest {
     }
 
     @Test
+    fun countsIdleAgentsToo() {
+        val agents = listOf(
+            agent("a", "needs_input"), agent("b", "active"), agent("c", "idle"), agent("d", "review"),
+            agent("e", "idle", collapsed = true),
+        )
+        assertEquals("1 need you · 1 working · 2 idle", widgetSummary(agents, emptyList(), connected = true).headline)
+        assertEquals("1 need you · 2 idle", widgetSummary(agents - agents[1], emptyList(), connected = true).headline)
+        assertEquals("2 idle", widgetSummary(agents.drop(2), emptyList(), connected = true).headline)
+        assertEquals("No agents running", widgetSummary(agents.takeLast(1), emptyList(), connected = true).headline)
+    }
+
+    @Test
     fun sumsEverySavedComputerThatAnswered() {
         val here = listOf(agent("a", "active"), agent("b", "needs_input"))
         val other = listOf(agent("c", "active"), agent("d", "shell_busy"))
@@ -42,7 +54,7 @@ class AgentWidgetTest {
             widgetSummary(emptyList(), emptyList(), connected = false, others = listOf(other, emptyList())).headline,
         )
         assertEquals(
-            "All quiet · 2 computers",
+            "1 idle · 2 computers",
             widgetSummary(listOf(agent("e", "idle")), emptyList(), connected = true, others = listOf(emptyList())).headline,
         )
     }
