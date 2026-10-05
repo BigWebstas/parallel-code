@@ -58,6 +58,9 @@ class ApiException(message: String, val status: Int = 0, val json: JSONObject? =
 
 data class MobileProject(val id: String, val name: String, val agentName: String?)
 
+/** What another saved computer reported in the last poll, under the name the phone shows for it. */
+data class ComputerSnapshot(val label: String, val agents: List<RemoteAgent>, val usage: List<ProviderUsage>)
+
 /** One row of the desktop's merge-readiness panel, as that panel labels it. */
 data class ReadinessCheck(val label: String, val status: String, val detail: String)
 
@@ -104,13 +107,13 @@ class RemoteClient(
 
     /** Every desktop this phone has linked to; [ConnectionState.link] is the one in use. */
     val computers: StateFlow<List<SavedComputer>> = _computers.asStateFlow()
-    private val _otherComputers = MutableStateFlow<Map<String, List<RemoteAgent>>>(emptyMap())
+    private val _otherComputers = MutableStateFlow<Map<String, ComputerSnapshot>>(emptyMap())
 
     /**
-     * Agent lists of the saved computers other than the one in use, by address, from those that
-     * answered the last poll (see [pollOtherComputers]). Feeds the home-screen widget.
+     * The saved computers other than the one in use, by address, from those that answered the last
+     * poll (see [pollOtherComputers]). Feeds the home-screen widget.
      */
-    val otherComputers: StateFlow<Map<String, List<RemoteAgent>>> = _otherComputers.asStateFlow()
+    val otherComputers: StateFlow<Map<String, ComputerSnapshot>> = _otherComputers.asStateFlow()
     private var pollJob: Job? = null
     private val _latencyMs = MutableStateFlow<Long?>(null)
     val latencyMs: StateFlow<Long?> = _latencyMs.asStateFlow()
@@ -159,8 +162,8 @@ class RemoteClient(
     }
 
     /**
-     * While a holder keeps the app connected, ask every other saved computer for its agents each
-     * [OTHER_COMPUTERS_POLL_MS] over plain HTTP, rather than holding a socket open to each.
+     * While a holder keeps the app connected, ask every other saved computer for its agents and usage
+     * each [OTHER_COMPUTERS_POLL_MS] over plain HTTP, rather than holding a socket open to each.
      */
     private fun pollOtherComputers() {
         pollJob?.cancel()
@@ -171,21 +174,33 @@ class RemoteClient(
                 _otherComputers.value = if (others.isEmpty() || mustWaitForVpn()) {
                     emptyMap()
                 } else {
-                    others.mapNotNull { c -> fetchAgentsFrom(c)?.let { c.baseUrl to it } }.toMap()
+                    others.mapNotNull { c -> fetchSnapshotFrom(c)?.let { c.baseUrl to it } }.toMap()
                 }
                 delay(OTHER_COMPUTERS_POLL_MS)
             }
         }
     }
 
-    /** [computer]'s agents, or null when it can't be reached or refuses the token. */
-    private suspend fun fetchAgentsFrom(computer: SavedComputer): List<RemoteAgent>? = withContext(Dispatchers.IO) {
+    /**
+     * [computer]'s agents and usage, or null when it can't be reached or refuses the token. A desktop
+     * that answers for agents but not usage still counts, with no usage.
+     */
+    private suspend fun fetchSnapshotFrom(computer: SavedComputer): ComputerSnapshot? {
+        val agents = getFrom(computer, "/api/agents")?.let(::parseAgentList) ?: return null
+        val usage = getFrom(computer, "/api/mobile/usage")
+            ?.let { runCatching { parseUsage(JSONObject(it)) }.getOrNull() }
+            .orEmpty()
+        return ComputerSnapshot(computer.label, agents, usage)
+    }
+
+    /** The body of a GET to [path] on [computer], or null when it fails. */
+    private suspend fun getFrom(computer: SavedComputer, path: String): String? = withContext(Dispatchers.IO) {
         val request = Request.Builder()
-            .url(computer.baseUrl + "/api/agents")
+            .url(computer.baseUrl + path)
             .header("Authorization", "Bearer ${computer.pairedToken ?: computer.token}")
             .build()
         try {
-            http.newCall(request).execute().use { if (it.isSuccessful) parseAgentList(it.body.string()) else null }
+            http.newCall(request).execute().use { if (it.isSuccessful) it.body.string() else null }
         } catch (_: IOException) {
             null
         }
@@ -207,6 +222,8 @@ class RemoteClient(
     fun rename(baseUrl: String, alias: String?) {
         credentials.rename(baseUrl, alias)
         _computers.value = credentials.computers
+        val label = credentials.computers.firstOrNull { it.baseUrl == baseUrl }?.label
+        _otherComputers.update { all -> all[baseUrl]?.let { all + (baseUrl to it.copy(label = label ?: it.label)) } ?: all }
     }
 
     /** Forget a saved computer; forgetting the one in use leaves the phone unlinked. */

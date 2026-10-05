@@ -41,8 +41,14 @@ class PhoneApplication : Application() {
         promptHistory = PromptHistoryStore(getSharedPreferences(PromptHistoryStore.PREFS_NAME, Context.MODE_PRIVATE))
         // Keep the home-screen widget current whenever the connection is open.
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-            combine(client.agents, client.usage, client.state, client.otherComputers) { agents, usage, state, others ->
-                widgetSummary(agents, usage, state.status == ConnectionStatus.CONNECTED, others.values.toList())
+            combine(client.agents, client.usage, client.state, client.otherComputers, client.computers) {
+                    agents, usage, state, others, computers ->
+                val label = computers.firstOrNull { it.baseUrl == state.link?.baseUrl }?.label.orEmpty()
+                widgetSummary(
+                    ComputerSnapshot(label, agents, usage),
+                    state.status == ConnectionStatus.CONNECTED,
+                    others.values.toList(),
+                )
             }.collect { AgentWidget.publish(this@PhoneApplication, it) }
         }
     }
