@@ -7,7 +7,6 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
   const idle: UsageState = {
     fiveHour: null,
     sevenDay: null,
-    spend: null,
     fetchedAt: null,
     status: 'idle',
     error: null,
@@ -19,7 +18,6 @@ const { mockRefreshUsage, usage } = vi.hoisted(() => {
       claude: {
         fiveHour: { usedPercent: 40, resetsAt: inAnHour },
         sevenDay: { usedPercent: 10, resetsAt: inAnHour },
-        spend: null,
         fetchedAt: Date.now(),
         status: 'ok',
         error: null,
@@ -94,17 +92,18 @@ describe('UsageStatusBar', () => {
     expect(mockRefreshUsage).toHaveBeenCalledWith('claude', { force: true });
   });
 
-  it('shows spend for a login with no rate-limit windows', () => {
+  it('shows credit spend inline for a login with no rate-limit windows', () => {
     const saved = { ...usage.claude };
     Object.assign(usage.claude, {
       fiveHour: null,
       sevenDay: null,
-      spend: { used: 1234, limit: 5000, currency: 'USD' },
+      creditUsage: { used: 12.34, limit: 50, currency: 'USD', usedPercent: 24.68 },
     });
     try {
       const container = mount();
       const entry = container.querySelector<HTMLElement>('[role="status"]');
-      expect(entry?.textContent).toMatch(/spend.*12\.34.*50\.00/);
+      expect(entry?.textContent).toContain('Credits');
+      expect(entry?.textContent).toContain('$12.34 / $50.00');
       expect(entry?.textContent).not.toContain('unavailable');
     } finally {
       Object.assign(usage.claude, saved);

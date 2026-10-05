@@ -53,26 +53,25 @@ class UsageTest {
     }
 
     @Test
-    fun showsSpendForLoginsWithoutRateLimitWindows() {
+    fun showsCreditsForLoginsWithoutRateLimitWindows() {
         val usage = parseUsage(
             JSONObject(
                 """{
                 "claude": {"fiveHour": null, "sevenDay": null,
-                           "spend": {"used": 4500, "limit": 5000, "currency": "USD"},
+                           "creditUsage": {"used": 45, "limit": 50, "currency": "USD", "usedPercent": 90},
                            "fetchedAt": 1, "status": "ok", "error": null}
                 }""",
             ),
         )
-        val spend = usage.single().spend
-        assertEquals(UsageSpend(4500.0, 5000.0, "USD"), spend)
-        assertTrue(spend?.warn == true)
-        assertEquals("\$45.00 / \$50.00", spend?.let { formatSpend(it, Locale.US) })
+        val credit = usage.single().creditUsage
+        assertEquals(CreditUsage(45.0, 50.0, "USD", 90.0), credit)
+        assertTrue(credit?.warn == true)
+        assertEquals("\$45.00 / \$50.00", credit?.let { formatCredit(it, Locale.US) })
     }
 
     @Test
-    fun formatsSpendWithoutACapInTheCurrencyUnits() {
-        assertEquals("\$9.00 spent", formatSpend(UsageSpend(900.0, null, "USD"), Locale.US))
-        assertTrue(formatSpend(UsageSpend(500.0, null, "JPY"), Locale.US).endsWith("500 spent"))
+    fun formatsCreditsWithoutACap() {
+        assertEquals("\$9.00 used", formatCredit(CreditUsage(9.0, null, "USD", null), Locale.US))
     }
 
     @Test

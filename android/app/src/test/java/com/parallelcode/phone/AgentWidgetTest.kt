@@ -64,10 +64,10 @@ class AgentWidgetTest {
     }
 
     @Test
-    fun listsSpendForProvidersBilledPerUse() {
-        val usage = listOf(ProviderUsage("Claude", null, null, "ok", null, UsageSpend(1234.0, 5000.0, "USD")))
+    fun listsCreditsForProvidersBilledPerUse() {
+        val usage = listOf(ProviderUsage("Claude", null, null, "ok", null, CreditUsage(12.34, 50.0, "USD", 24.68)))
         val line = widgetSummary(emptyList(), usage, connected = true).usage.lines().last()
-        assertTrue(line, line.matches(Regex("Claude {6}spend .*12\\.34 / .*50\\.00")))
+        assertTrue(line, line.matches(Regex("Claude {6}credits .*12\\.34 / .*50\\.00")))
     }
 
     @Test

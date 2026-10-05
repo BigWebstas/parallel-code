@@ -1,4 +1,4 @@
-import type { UsageSpend, UsageWindow } from '../ipc/types';
+import type { UsageWindow } from '../ipc/types';
 import type { UsageState } from '../store/types';
 
 /** Past this share of a window, the meter turns amber. */
@@ -29,31 +29,21 @@ export function formatFetchedAt(fetchedAt: number, now = Date.now()): string {
   return `${date.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
 }
 
-/** Share of the spend cap used, 0–100; null when uncapped. */
-export function spendPercent(spend: UsageSpend): number | null {
-  if (spend.limit === null) return null;
-  return Math.min(100, (spend.used / spend.limit) * 100);
-}
-
-function formatMoney(minor: number, currency: string): string {
+export function formatCurrency(amount: number, currency = 'USD'): string {
   try {
-    const fmt = new Intl.NumberFormat(undefined, { style: 'currency', currency });
-    return fmt.format(minor / 10 ** (fmt.resolvedOptions().maximumFractionDigits ?? 2));
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
   } catch {
-    // Unknown currency code: assume cents rather than hiding the amount.
-    return `${(minor / 100).toFixed(2)} ${currency}`;
+    return `$${amount.toFixed(2)}`;
   }
 }
 
-/** "$12.34 / $50.00" against a cap, "$12.34 spent" without one. */
-export function formatSpend(spend: UsageSpend): string {
-  const used = formatMoney(spend.used, spend.currency);
-  if (spend.limit === null) return `${used} spent`;
-  return `${used} / ${formatMoney(spend.limit, spend.currency)}`;
-}
-
 export function hasUsageSnapshot(state: UsageState): boolean {
-  return state.fiveHour !== null || state.sevenDay !== null || state.spend !== null;
+  return state.fiveHour !== null || state.sevenDay !== null || Boolean(state.creditUsage);
 }
 
 /** A provider shows once it has a snapshot, and stays up through refresh errors

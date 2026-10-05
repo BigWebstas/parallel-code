@@ -55,10 +55,10 @@ data class UsageWindow(val usedPercent: Double, val resetsAt: Long?) {
         get() = usedPercent >= USAGE_WARN_PERCENT
 }
 
-/** Pay-as-you-go spend for the billing period, in minor units of [currency] (cents for USD). */
-data class UsageSpend(val used: Double, val limit: Double?, val currency: String) {
+/** Pay-as-you-go spend for the billing period, in standard units of [currency] (2.12 for $2.12). */
+data class CreditUsage(val used: Double, val limit: Double?, val currency: String, val usedPercent: Double?) {
     val warn: Boolean
-        get() = limit != null && used / limit * 100 >= USAGE_WARN_PERCENT
+        get() = (usedPercent ?: 0.0) >= USAGE_WARN_PERCENT
 }
 
 data class ProviderUsage(
@@ -68,10 +68,10 @@ data class ProviderUsage(
     /** `error` keeps the last snapshot but marks it stale. */
     val status: String,
     val error: String?,
-    val spend: UsageSpend? = null,
+    val creditUsage: CreditUsage? = null,
 ) {
     val hasSnapshot: Boolean
-        get() = fiveHour != null || sevenDay != null || spend != null
+        get() = fiveHour != null || sevenDay != null || creditUsage != null
 }
 
 /** Past this share of a window, the meter turns amber. */
@@ -122,33 +122,32 @@ private fun parseProvider(label: String, p: JSONObject) = ProviderUsage(
     sevenDay = p.optJSONObject("sevenDay")?.let(::parseWindow),
     status = p.optString("status"),
     error = if (p.isNull("error")) null else p.optString("error"),
-    spend = p.optJSONObject("spend")?.let(::parseSpend),
+    creditUsage = p.optJSONObject("creditUsage")?.let(::parseCreditUsage),
 )
 
-private fun parseSpend(s: JSONObject) = UsageSpend(
-    used = s.optDouble("used", 0.0),
-    limit = if (s.isNull("limit")) null else s.optDouble("limit").takeIf { it > 0 },
-    currency = s.optString("currency").ifEmpty { "USD" },
+private fun parseCreditUsage(c: JSONObject) = CreditUsage(
+    used = c.optDouble("used", 0.0),
+    limit = if (c.isNull("limit")) null else c.optDouble("limit").takeIf { it > 0 },
+    currency = c.optString("currency").ifEmpty { "USD" },
+    usedPercent = if (c.isNull("usedPercent")) null else c.optDouble("usedPercent").takeIf { !it.isNaN() },
 )
 
-private fun formatMoney(minor: Double, code: String, locale: Locale): String {
+// Matches formatCurrency in src/components/usage-format.ts: always two decimals.
+private fun formatMoney(amount: Double, code: String, locale: Locale): String {
     val currency = runCatching { Currency.getInstance(code) }.getOrNull()
-        // Unknown code: assume cents rather than hiding the amount.
-        ?: return String.format(locale, "%.2f %s", minor / 100, code)
-    val digits = currency.defaultFractionDigits.coerceAtLeast(0)
-    val fmt = NumberFormat.getCurrencyInstance(locale).apply {
+        ?: return String.format(locale, "$%.2f", amount)
+    return NumberFormat.getCurrencyInstance(locale).apply {
         this.currency = currency
-        minimumFractionDigits = digits
-        maximumFractionDigits = digits
-    }
-    return fmt.format(minor / Math.pow(10.0, digits.toDouble()))
+        minimumFractionDigits = 2
+        maximumFractionDigits = 2
+    }.format(amount)
 }
 
-/** "$12.34 / $50.00" against a cap, "$12.34 spent" without one. */
-fun formatSpend(spend: UsageSpend, locale: Locale = Locale.getDefault()): String {
-    val used = formatMoney(spend.used, spend.currency, locale)
-    val limit = spend.limit ?: return "$used spent"
-    return "$used / ${formatMoney(limit, spend.currency, locale)}"
+/** "$12.34 / $50.00" against a cap, "$12.34 used" without one, as the desktop bar shows it. */
+fun formatCredit(credit: CreditUsage, locale: Locale = Locale.getDefault()): String {
+    val used = formatMoney(credit.used, credit.currency, locale)
+    val limit = credit.limit ?: return "$used used"
+    return "$used / ${formatMoney(limit, credit.currency, locale)}"
 }
 
 private fun parseWindow(w: JSONObject) = UsageWindow(
@@ -213,7 +212,7 @@ fun UsageStrip(client: RemoteClient, connected: Boolean) {
                     )
                     provider.fiveHour?.let { UsageMeter("5h", it, stale) }
                     provider.sevenDay?.let { UsageMeter("7d", it, stale) }
-                    provider.spend?.let { SpendRow(it, stale) }
+                    provider.creditUsage?.let { CreditRow(it, stale) }
                     if (!provider.hasSnapshot) {
                         Text(
                             "usage unavailable · ${provider.error.orEmpty()}",
@@ -229,21 +228,21 @@ fun UsageStrip(client: RemoteClient, connected: Boolean) {
 
 /** Pay-as-you-go spend against the period cap, for logins billed per use. */
 @Composable
-private fun SpendRow(spend: UsageSpend, stale: Boolean) {
+private fun CreditRow(credit: CreditUsage, stale: Boolean) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
-            "spend",
+            "credits",
             Modifier.padding(end = 8.dp),
             style = MaterialTheme.typography.bodySmall,
             color = AppTheme.extra.textMuted,
         )
         Text(
-            formatSpend(spend),
+            formatCredit(credit),
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
             color = when {
                 stale -> AppTheme.extra.textSubtle
-                spend.warn -> AppTheme.extra.warningText
+                credit.warn -> AppTheme.extra.warningText
                 else -> MaterialTheme.colorScheme.onSurface
             },
         )

@@ -210,14 +210,15 @@ export interface UsageWindow {
   resetsAt: number | null;
 }
 
-/** Pay-as-you-go spend for the billing period (Claude "extra usage"). */
-export interface UsageSpend {
-  /** Spent so far, in minor units of `currency` (cents for USD). */
+export interface CreditUsage {
+  /** Amount used in standard currency units (e.g. 2.12 for $2.12). */
   used: number;
-  /** Period cap in minor units; null when uncapped. */
+  /** Spending limit in standard currency units, null if unlimited or not set. */
   limit: number | null;
-  /** ISO 4217 code. */
+  /** Currency code, e.g. "USD". */
   currency: string;
+  /** Percent of limit used (0–100), null if limit is not set. */
+  usedPercent: number | null;
 }
 
 export type UsageResult =
@@ -225,7 +226,7 @@ export type UsageResult =
       status: 'ok';
       fiveHour: UsageWindow | null;
       sevenDay: UsageWindow | null;
-      spend: UsageSpend | null;
+      creditUsage?: CreditUsage | null;
       fetchedAt: number;
     }
   /** No subscription login to read — the status bar hides itself. */
