@@ -4,14 +4,15 @@ import path from 'path';
 import crypto from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import type { UsageResult, UsageWindow } from './shared-types.js';
+import type { UsageResult, UsageSpend, UsageWindow } from './shared-types.js';
 import { warn as logWarn, errMessage } from '../log.js';
 import { clampPercent, finite, parseResetsAt, requestUsage } from './usage-shared.js';
 
 /**
  * Reads the rate-limit windows Claude Code shows under `/usage`, from the same
- * OAuth endpoint the CLI calls. Only subscription logins (Pro/Max) carry these
- * windows; API-key users get `unavailable` and the status bar stays hidden.
+ * OAuth endpoint the CLI calls. Subscription logins (Pro/Max) carry these
+ * windows; logins billed per use carry only `extra_usage` spend instead. API-key
+ * users get `unavailable` and the status bar stays hidden.
  * The endpoint is undocumented, so the parser tolerates both field spellings
  * seen in the wild (`utilization` and `used_percentage`).
  */
@@ -44,14 +45,35 @@ function parseWindow(value: unknown): UsageWindow | null {
   return { usedPercent: clampPercent(usedPercent), resetsAt: parseResetsAt(raw.resets_at) };
 }
 
-/** Parses the usage endpoint body. Returns null when neither window is present. */
+interface ExtraUsageJson {
+  monthly_limit?: unknown;
+  used_credits?: unknown;
+  currency?: unknown;
+}
+
+/** `extra_usage` amounts are minor units of `currency`, which older responses omit (USD). */
+function parseSpend(value: unknown): UsageSpend | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const raw = value as ExtraUsageJson;
+  const used = finite(raw.used_credits);
+  if (used === null) return null;
+  const limit = finite(raw.monthly_limit);
+  return {
+    used: Math.max(0, used),
+    limit: limit !== null && limit > 0 ? limit : null,
+    currency: typeof raw.currency === 'string' && raw.currency ? raw.currency : 'USD',
+  };
+}
+
+/** Parses the usage endpoint body. Returns null when it carries neither a window nor spend. */
 export function parseClaudeUsageResponse(body: unknown, now = Date.now()): UsageResult | null {
   if (typeof body !== 'object' || body === null) return null;
-  const raw = body as { five_hour?: unknown; seven_day?: unknown };
+  const raw = body as { five_hour?: unknown; seven_day?: unknown; extra_usage?: unknown };
   const fiveHour = parseWindow(raw.five_hour);
   const sevenDay = parseWindow(raw.seven_day);
-  if (!fiveHour && !sevenDay) return null;
-  return { status: 'ok', fiveHour, sevenDay, fetchedAt: now };
+  const spend = parseSpend(raw.extra_usage);
+  if (!fiveHour && !sevenDay && !spend) return null;
+  return { status: 'ok', fiveHour, sevenDay, spend, fetchedAt: now };
 }
 
 /** Extracts the OAuth access token from a Claude credentials JSON document. */

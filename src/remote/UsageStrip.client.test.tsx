@@ -26,14 +26,23 @@ it('shows the providers the desktop has a snapshot for', async () => {
     claude: {
       fiveHour: { usedPercent: 85, resetsAt: null },
       sevenDay: { usedPercent: 20, resetsAt: null },
+      spend: null,
       fetchedAt: 1,
       status: 'ok',
       error: null,
     },
-    codex: { fiveHour: null, sevenDay: null, fetchedAt: null, status: 'unavailable', error: 'x' },
+    codex: {
+      fiveHour: null,
+      sevenDay: null,
+      spend: null,
+      fetchedAt: null,
+      status: 'unavailable',
+      error: 'x',
+    },
     antigravity: {
       fiveHour: { usedPercent: 30, resetsAt: null },
       sevenDay: null,
+      spend: null,
       fetchedAt: 1,
       status: 'ok',
       error: null,
@@ -50,13 +59,46 @@ it('shows the providers the desktop has a snapshot for', async () => {
   expect(host.querySelector('.usage-meter.warn')).not.toBeNull();
 });
 
+it('shows spend for a login with no rate-limit windows', async () => {
+  const idle = { fiveHour: null, sevenDay: null, spend: null, fetchedAt: null, error: null };
+  vi.mocked(fetchUsage).mockResolvedValue({
+    claude: {
+      ...idle,
+      spend: { used: 1234, limit: 5000, currency: 'USD' },
+      fetchedAt: 1,
+      status: 'ok',
+    },
+    codex: { ...idle, status: 'idle' },
+    antigravity: { ...idle, status: 'idle' },
+  });
+  const host = await mount();
+  await vi.waitFor(() => expect(host.querySelector('.mobile-usage')).not.toBeNull());
+  expect(host.textContent).toMatch(/spend.*12\.34.*50\.00/);
+  expect(host.textContent).not.toContain('unavailable');
+});
+
 it('stays hidden when no subscription usage is readable', async () => {
   vi.mocked(fetchUsage).mockResolvedValue({
-    claude: { fiveHour: null, sevenDay: null, fetchedAt: null, status: 'unavailable', error: 'x' },
-    codex: { fiveHour: null, sevenDay: null, fetchedAt: null, status: 'idle', error: null },
+    claude: {
+      fiveHour: null,
+      sevenDay: null,
+      spend: null,
+      fetchedAt: null,
+      status: 'unavailable',
+      error: 'x',
+    },
+    codex: {
+      fiveHour: null,
+      sevenDay: null,
+      spend: null,
+      fetchedAt: null,
+      status: 'idle',
+      error: null,
+    },
     antigravity: {
       fiveHour: null,
       sevenDay: null,
+      spend: null,
       fetchedAt: null,
       status: 'unavailable',
       error: null,

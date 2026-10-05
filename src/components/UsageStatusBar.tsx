@@ -3,14 +3,16 @@ import { Portal } from 'solid-js/web';
 import { store, refreshUsage, USAGE_PROVIDERS } from '../store/store';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
-import type { UsageProvider, UsageWindow } from '../ipc/types';
+import type { UsageProvider, UsageSpend, UsageWindow } from '../ipc/types';
 import type { UsageState } from '../store/types';
 import {
   USAGE_WARN_PERCENT,
   formatFetchedAt,
   formatReset,
+  formatSpend,
   hasUsageSnapshot,
   remainingPercent,
+  spendPercent,
   usageVisible,
 } from './usage-format';
 
@@ -61,6 +63,19 @@ function UsageMeter(props: { label: string; window: UsageWindow; width?: number 
       <Show when={reset()}>
         <span style={{ color: theme.fgSubtle }}>{reset()}</span>
       </Show>
+    </span>
+  );
+}
+
+/** Pay-as-you-go spend against the period cap, for logins billed per use. */
+function SpendReadout(props: { spend: UsageSpend }) {
+  const warn = () => (spendPercent(props.spend) ?? 0) >= USAGE_WARN_PERCENT;
+  return (
+    <span style={{ display: 'inline-flex', 'align-items': 'center', gap: '6px' }}>
+      <span style={{ color: theme.fgSubtle }}>spend</span>
+      <span style={{ color: warn() ? theme.warning : theme.fg, 'font-weight': '500' }}>
+        {formatSpend(props.spend)}
+      </span>
     </span>
   );
 }
@@ -120,6 +135,7 @@ function UsagePopover(props: {
         <Show when={props.usage.sevenDay}>
           {(w) => <UsageMeter label="7d" window={w()} width={120} />}
         </Show>
+        <Show when={props.usage.spend}>{(s) => <SpendReadout spend={s()} />}</Show>
         <div
           style={{
             color: props.usage.status === 'error' ? theme.warning : theme.fgSubtle,
@@ -191,6 +207,7 @@ function ProviderUsage(props: { provider: UsageProvider }) {
           </Show>
         </span>
         <Show when={headline()}>{(h) => <UsageMeter label={h().label} window={h().window} />}</Show>
+        <Show when={!headline() && usage().spend}>{(s) => <SpendReadout spend={s()} />}</Show>
         <Show when={!hasUsageSnapshot(usage())}>
           <span>usage unavailable · {usage().error}</span>
         </Show>

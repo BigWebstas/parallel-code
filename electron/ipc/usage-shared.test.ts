@@ -17,7 +17,13 @@ describe('parseResetsAt', () => {
 });
 
 describe('requestUsage', () => {
-  const OK: UsageResult = { status: 'ok', fiveHour: null, sevenDay: null, fetchedAt: 1 };
+  const OK: UsageResult = {
+    status: 'ok',
+    fiveHour: null,
+    sevenDay: null,
+    spend: null,
+    fetchedAt: 1,
+  };
   const request = {
     scope: 'test-usage',
     agent: 'Test CLI',

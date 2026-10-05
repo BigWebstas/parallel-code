@@ -138,6 +138,7 @@ describe('parseAntigravityUsageResponse', () => {
         resetsAt: Date.parse('2026-09-29T03:00:00Z'),
       },
       sevenDay: null,
+      spend: null,
       fetchedAt: Date.parse('2026-09-28T20:00:00Z'),
     });
   });
@@ -163,6 +164,7 @@ describe('parseAntigravityUsageResponse', () => {
         resetsAt: Date.parse('2026-09-29T03:00:00Z'),
       },
       sevenDay: null,
+      spend: null,
       fetchedAt: NOW,
     });
   });
@@ -177,6 +179,7 @@ describe('parseAntigravityUsageResponse', () => {
       status: 'ok',
       fiveHour: { usedPercent: 60, resetsAt: NOW + 3_600_000 },
       sevenDay: { usedPercent: 10, resetsAt: NOW + 86_400_000 },
+      spend: null,
       fetchedAt: NOW,
     });
   });
@@ -192,6 +195,7 @@ describe('parseAntigravityUsageResponse', () => {
       status: 'ok',
       fiveHour: { usedPercent: 30, resetsAt: 1_738_425_600_000 },
       sevenDay: { usedPercent: 5, resetsAt: 1_738_900_000_000 },
+      spend: null,
       fetchedAt: 9999,
     });
   });
@@ -209,6 +213,7 @@ describe('parseAntigravityUsageResponse', () => {
       status: 'ok',
       fiveHour: { usedPercent: 65, resetsAt: Date.parse('2026-09-29T03:40:56Z') },
       sevenDay: { usedPercent: 55, resetsAt: Date.parse('2026-10-01T02:57:22Z') },
+      spend: null,
       fetchedAt: NOW,
     });
   });

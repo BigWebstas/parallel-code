@@ -24,6 +24,7 @@ export type {
   UsageProvider,
   UsageResult,
   UsageState,
+  UsageSpend,
   UsageWindow,
   VerificationRun,
   VerificationRunStatus,

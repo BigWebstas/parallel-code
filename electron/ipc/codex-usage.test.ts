@@ -62,6 +62,7 @@ describe('parseCodexUsageResponse', () => {
       status: 'ok',
       fiveHour: { usedPercent: 12, resetsAt: 1_738_425_600_000 },
       sevenDay: { usedPercent: 100, resetsAt: 1_738_900_000_000 },
+      spend: null,
       fetchedAt: NOW,
     });
   });
@@ -75,6 +76,7 @@ describe('parseCodexUsageResponse', () => {
       status: 'ok',
       fiveHour: { usedPercent: 5, resetsAt: NOW + 90_000 },
       sevenDay: null,
+      spend: null,
       fetchedAt: NOW,
     });
   });

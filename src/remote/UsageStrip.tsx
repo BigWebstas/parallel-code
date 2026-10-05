@@ -4,8 +4,10 @@ import { status } from './ws';
 import {
   USAGE_WARN_PERCENT,
   formatReset,
+  formatSpend,
   hasUsageSnapshot,
   remainingPercent,
+  spendPercent,
   usageVisible,
 } from '../components/usage-format';
 import type { UsageProvider, UsageState, UsageWindow } from '../../electron/ipc/shared-types';
@@ -82,6 +84,17 @@ export function UsageStrip() {
                   <span class="usage-name">{PROVIDER_LABELS[provider]}</span>
                   <Show when={state().fiveHour}>{(w) => <Meter label="5h" window={w()} />}</Show>
                   <Show when={state().sevenDay}>{(w) => <Meter label="7d" window={w()} />}</Show>
+                  <Show when={state().spend}>
+                    {(s) => (
+                      <div
+                        class="usage-meter"
+                        classList={{ warn: (spendPercent(s()) ?? 0) >= USAGE_WARN_PERCENT }}
+                      >
+                        <span class="usage-label">spend</span>
+                        <span class="usage-left">{formatSpend(s())}</span>
+                      </div>
+                    )}
+                  </Show>
                   <Show when={!hasUsageSnapshot(state())}>
                     <span class="usage-reset">usage unavailable · {state().error}</span>
                   </Show>
