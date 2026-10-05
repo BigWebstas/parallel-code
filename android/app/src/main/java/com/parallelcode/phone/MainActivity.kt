@@ -110,7 +110,7 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
         client.onVpnPolicyChanged()
     }
 
-    /** Reads the Wi-Fi name again, after location permission is granted. */
+    /** Reads the Wi-Fi name again, after location permission is granted or the app returns to the screen. */
     fun refreshWifi() = phoneApp.networkMonitor.refreshWifi()
 
     private val _keepScreenOnOnlyWhenActive = MutableStateFlow(settingsStore.keepScreenOnOnlyWhenActive)
@@ -285,6 +285,9 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         (application as PhoneApplication).inForeground = true
+        // Android hides the Wi-Fi name from apps in the background, so a name read while only the
+        // notification service was running is blank. Read it again now that the app is visible.
+        model.refreshWifi()
         model.client.start(HOLDER)
         model.client.resumeViewSize()
         AgentWatchService.sync(this)
@@ -423,9 +426,27 @@ private fun PhoneApp(model: PhoneViewModel) {
                     model.setNotifications(notifications.copy(enabled = granted))
                 }
                 val context = LocalContext.current
+                // Agent notifications run in the background, where Android hides the Wi-Fi name unless
+                // location is allowed all the time. Android 10+ asks for that after the usual location
+                // access, and Android 11+ shows it as a settings page.
+                val backgroundLocationPermission = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { model.refreshWifi() }
+                val requestBackgroundLocationIfNeeded = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        backgroundLocationPermission.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    }
+                }
                 val locationPermission = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions(),
-                ) { model.refreshWifi() }
+                ) { granted ->
+                    model.refreshWifi()
+                    if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) requestBackgroundLocationIfNeeded()
+                }
+                // Asks for location access; true while the Wi-Fi name is still hidden even on screen.
                 val requestLocationIfNeeded = {
                     val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
                         PackageManager.PERMISSION_GRANTED
@@ -433,6 +454,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                         locationPermission.launch(
                             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
                         )
+                    } else {
+                        requestBackgroundLocationIfNeeded()
                     }
                     !granted
                 }
