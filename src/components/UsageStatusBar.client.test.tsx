@@ -91,4 +91,22 @@ describe('UsageStatusBar', () => {
     container.querySelector<HTMLElement>('[role="status"]')?.click();
     expect(mockRefreshUsage).toHaveBeenCalledWith('claude', { force: true });
   });
+
+  it('shows credit spend inline for a login with no rate-limit windows', () => {
+    const saved = { ...usage.claude };
+    Object.assign(usage.claude, {
+      fiveHour: null,
+      sevenDay: null,
+      creditUsage: { used: 12.34, limit: 50, currency: 'USD', usedPercent: 24.68 },
+    });
+    try {
+      const container = mount();
+      const entry = container.querySelector<HTMLElement>('[role="status"]');
+      expect(entry?.textContent).toContain('Credits');
+      expect(entry?.textContent).toContain('$12.34 / $50.00');
+      expect(entry?.textContent).not.toContain('unavailable');
+    } finally {
+      Object.assign(usage.claude, saved);
+    }
+  });
 });

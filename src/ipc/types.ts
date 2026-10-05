@@ -21,6 +21,7 @@ export type {
   PrReviewDecision,
   PtyOutput,
   StepEntry,
+  CreditUsage,
   UsageProvider,
   UsageResult,
   UsageWindow,
