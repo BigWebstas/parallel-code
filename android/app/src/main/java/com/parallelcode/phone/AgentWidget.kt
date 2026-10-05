@@ -146,6 +146,7 @@ fun widgetSummary(
         val windows = listOfNotNull(
             provider.fiveHour?.let { "5h ${it.remainingPercent}%" },
             provider.sevenDay?.let { "7d ${it.remainingPercent}%" },
+            provider.spend?.let { "spend ${formatSpend(it)}" },
         ).joinToString("  ")
         "${provider.label.padEnd(11)} $windows"
     }

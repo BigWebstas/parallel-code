@@ -64,6 +64,13 @@ class AgentWidgetTest {
     }
 
     @Test
+    fun listsSpendForProvidersBilledPerUse() {
+        val usage = listOf(ProviderUsage("Claude", null, null, "ok", null, UsageSpend(1234.0, 5000.0, "USD")))
+        val line = widgetSummary(emptyList(), usage, connected = true).usage.lines().last()
+        assertTrue(line, line.matches(Regex("Claude {6}spend .*12\\.34 / .*50\\.00")))
+    }
+
+    @Test
     fun snapsTransparencyToTheOfferedStops() {
         assertEquals(100, widgetTransparencyStep(100))
         assertEquals(75, widgetTransparencyStep(80))
