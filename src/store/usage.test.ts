@@ -11,6 +11,7 @@ const core = vi.hoisted(() => ({
 const IDLE: UsageState = {
   fiveHour: null,
   sevenDay: null,
+  spend: null,
   fetchedAt: null,
   status: 'idle',
   error: null,
@@ -28,10 +29,11 @@ vi.mock('../../electron/ipc/channels', () => ({
 
 type Slice = typeof import('./usage');
 
-const OK: UsageResult = {
+const OK: Extract<UsageResult, { status: 'ok' }> = {
   status: 'ok',
   fiveHour: { usedPercent: 40, resetsAt: 1_000 },
   sevenDay: { usedPercent: 10, resetsAt: 2_000 },
+  spend: null,
   fetchedAt: 500,
 };
 
@@ -64,6 +66,7 @@ describe('usage store slice', () => {
     expect(state('codex')).toEqual({
       fiveHour: OK.fiveHour,
       sevenDay: OK.sevenDay,
+      spend: null,
       fetchedAt: 500,
       status: 'ok',
       error: null,
@@ -79,6 +82,7 @@ describe('usage store slice', () => {
     expect(state()).toEqual({
       fiveHour: null,
       sevenDay: null,
+      spend: null,
       fetchedAt: null,
       status: 'unavailable',
       error: 'logged out',

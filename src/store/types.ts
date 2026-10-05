@@ -16,6 +16,7 @@ import type {
   AgentDef,
   StepEntry,
   UsageProvider,
+  UsageSpend,
   UsageWindow,
   VerificationRun,
   WorktreeStatus,
@@ -500,6 +501,7 @@ export interface MCPStatus {
 export interface UsageState {
   fiveHour: UsageWindow | null;
   sevenDay: UsageWindow | null;
+  spend: UsageSpend | null;
   /** When the current windows were fetched; null until the first success. */
   fetchedAt: number | null;
   /** `unavailable` means no subscription login — the bar hides. `error` keeps the last snapshot. */

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { UsageState } from '../store/types';
-import { formatFetchedAt, formatReset, remainingPercent, usageVisible } from './usage-format';
+import {
+  formatFetchedAt,
+  formatReset,
+  formatSpend,
+  remainingPercent,
+  spendPercent,
+  usageVisible,
+} from './usage-format';
 
 const NOON = new Date(2026, 8, 2, 12, 0, 0).getTime();
 
@@ -45,10 +52,32 @@ describe('formatFetchedAt', () => {
   });
 });
 
+describe('formatSpend', () => {
+  it('converts minor units and shows the cap', () => {
+    expect(formatSpend({ used: 1234, limit: 5000, currency: 'USD' })).toMatch(/12\.34.*\/.*50\.00/);
+  });
+
+  it('says spent when uncapped', () => {
+    expect(formatSpend({ used: 900, limit: null, currency: 'USD' })).toMatch(/9\.00 spent$/);
+  });
+
+  it('uses the currency exponent', () => {
+    expect(formatSpend({ used: 500, limit: null, currency: 'JPY' })).toMatch(/500 spent$/);
+  });
+});
+
+describe('spendPercent', () => {
+  it('is null when uncapped and clamps overspend', () => {
+    expect(spendPercent({ used: 1, limit: null, currency: 'USD' })).toBeNull();
+    expect(spendPercent({ used: 6000, limit: 5000, currency: 'USD' })).toBe(100);
+  });
+});
+
 describe('usageVisible', () => {
   const idle: UsageState = {
     fiveHour: null,
     sevenDay: null,
+    spend: null,
     fetchedAt: null,
     status: 'idle',
     error: null,
@@ -57,6 +86,11 @@ describe('usageVisible', () => {
   it('hides idle and unavailable providers without a snapshot', () => {
     expect(usageVisible(idle)).toBe(false);
     expect(usageVisible({ ...idle, status: 'unavailable', error: 'no login' })).toBe(false);
+  });
+
+  it('shows a provider that only reports spend', () => {
+    const spend = { used: 100, limit: 5000, currency: 'USD' };
+    expect(usageVisible({ ...idle, spend, fetchedAt: 1, status: 'ok' })).toBe(true);
   });
 
   it('shows a provider with any window, and an error even without one', () => {

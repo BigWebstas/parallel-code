@@ -26,6 +26,7 @@ describe('parseClaudeUsageResponse', () => {
       status: 'ok',
       fiveHour: { usedPercent: 23.5, resetsAt: 1_738_425_600_000 },
       sevenDay: { usedPercent: 100, resetsAt: Date.parse('2025-02-06T16:00:00Z') },
+      spend: null,
       fetchedAt: NOW,
     });
   });
@@ -36,8 +37,51 @@ describe('parseClaudeUsageResponse', () => {
       status: 'ok',
       fiveHour: { usedPercent: 5, resetsAt: null },
       sevenDay: null,
+      spend: null,
       fetchedAt: NOW,
     });
+  });
+
+  it('reads extra-usage spend when the plan has no rate-limit windows', () => {
+    const result = parseClaudeUsageResponse(
+      {
+        five_hour: null,
+        seven_day: null,
+        extra_usage: {
+          is_enabled: true,
+          monthly_limit: 5000,
+          used_credits: 1234,
+          utilization: 24.68,
+        },
+      },
+      NOW,
+    );
+    expect(result).toEqual({
+      status: 'ok',
+      fiveHour: null,
+      sevenDay: null,
+      spend: { used: 1234, limit: 5000, currency: 'USD' },
+      fetchedAt: NOW,
+    });
+  });
+
+  it('keeps the spend currency and treats a missing cap as uncapped', () => {
+    const result = parseClaudeUsageResponse({
+      extra_usage: { is_enabled: true, monthly_limit: null, used_credits: 900, currency: 'EUR' },
+    });
+    expect(result?.status === 'ok' && result.spend).toEqual({
+      used: 900,
+      limit: null,
+      currency: 'EUR',
+    });
+  });
+
+  it('ignores extra usage that reports no spend', () => {
+    expect(
+      parseClaudeUsageResponse({
+        extra_usage: { is_enabled: false, monthly_limit: null, used_credits: null },
+      }),
+    ).toBeNull();
   });
 
   it('returns null when no window carries a percentage', () => {

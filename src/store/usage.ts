@@ -33,6 +33,7 @@ function applyResult(provider: UsageProvider, result: UsageResult): void {
     setStore('usage', provider, {
       fiveHour: result.fiveHour,
       sevenDay: result.sevenDay,
+      spend: result.spend,
       fetchedAt: result.fetchedAt,
       status: 'ok',
       error: null,
@@ -42,6 +43,7 @@ function applyResult(provider: UsageProvider, result: UsageResult): void {
     setStore('usage', provider, {
       fiveHour: null,
       sevenDay: null,
+      spend: null,
       fetchedAt: null,
       status: 'unavailable',
       error: result.reason,

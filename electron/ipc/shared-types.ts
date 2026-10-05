@@ -210,11 +210,22 @@ export interface UsageWindow {
   resetsAt: number | null;
 }
 
+/** Pay-as-you-go spend for the billing period (Claude "extra usage"). */
+export interface UsageSpend {
+  /** Spent so far, in minor units of `currency` (cents for USD). */
+  used: number;
+  /** Period cap in minor units; null when uncapped. */
+  limit: number | null;
+  /** ISO 4217 code. */
+  currency: string;
+}
+
 export type UsageResult =
   | {
       status: 'ok';
       fiveHour: UsageWindow | null;
       sevenDay: UsageWindow | null;
+      spend: UsageSpend | null;
       fetchedAt: number;
     }
   /** No subscription login to read — the status bar hides itself. */
