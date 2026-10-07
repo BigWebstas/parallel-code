@@ -35,6 +35,7 @@ import type { EditableTextHandle } from './EditableText';
 import { PromptInput, type PromptInputHandle } from './PromptInput';
 import { CloseTaskDialog } from './CloseTaskDialog';
 import { FinishDialog, type FinishAction } from './FinishDialog';
+import { PullRequestDialog } from './PullRequestDialog';
 import { DiffViewerDialog } from './DiffViewerDialog';
 import { PlanViewerDialog } from './PlanViewerDialog';
 import { EditProjectDialog } from './EditProjectDialog';
@@ -124,6 +125,7 @@ export function TaskPanel(props: TaskPanelProps) {
   // null while the finish dialog is closed; otherwise the option it shows.
   const [finishAction, setFinishAction] = createSignal<FinishAction | null>(null);
   const [showDelegationReview, setShowDelegationReview] = createSignal(false);
+  const [openPrUrl, setOpenPrUrl] = createSignal<string | null>(null);
   const [pushSuccess, setPushSuccess] = createSignal(false);
   const [pushing, setPushing] = createSignal(false);
   const isLandedTask = () => isLandedTaskState(props.task.landingState);
@@ -1051,7 +1053,11 @@ export function TaskPanel(props: TaskPanelProps) {
           <TaskCurrentStateLine task={props.task} nowMs={nowMs()} variant="card" />
         </Show>
         <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
-          <TaskBranchInfoBar task={props.task} onEditProject={(id) => setEditingProjectId(id)} />
+          <TaskBranchInfoBar
+            task={props.task}
+            onEditProject={(id) => setEditingProjectId(id)}
+            onOpenPullRequest={setOpenPrUrl}
+          />
         </div>
       </div>
       <div style={{ flex: '1', 'min-height': '0' }}>
@@ -1123,6 +1129,16 @@ export function TaskPanel(props: TaskPanelProps) {
           }}
           onClose={() => setFinishAction(null)}
         />
+      </Show>
+      <Show when={openPrUrl()}>
+        {(url) => (
+          <PullRequestDialog
+            open
+            task={props.task}
+            prUrl={url()}
+            onClose={() => setOpenPrUrl(null)}
+          />
+        )}
       </Show>
       <Show when={props.task.gitIsolation !== 'none'}>
         <DiffViewerDialog
