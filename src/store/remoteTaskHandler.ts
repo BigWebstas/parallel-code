@@ -9,7 +9,7 @@ import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } f
 import { getEvidenceForAgent, submitEvidence } from './evidence';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { store } from './core';
-import { codeProjects, getProjectPath } from './projects';
+import { codeProjects, getProject, getProjectPath } from './projects';
 import {
   closeTask,
   createTask,
@@ -280,6 +280,7 @@ async function handleGetMergeReadiness(req: GetTaskDiffRequest): Promise<void> {
         canMerge: false,
         baseBranch: task.baseBranch ?? '',
         branchName: task.branchName,
+        deleteBranchOnClose: false,
       });
       return;
     }
@@ -314,6 +315,10 @@ async function handleGetMergeReadiness(req: GetTaskDiffRequest): Promise<void> {
       canMerge: overall !== 'blocked',
       baseBranch: task.baseBranch ?? mergeStatus.base_branch ?? '',
       branchName: task.branchName,
+      // Same rule closeTask applies, so the phone's close copy matches what happens.
+      deleteBranchOnClose: task.externalWorktree
+        ? false
+        : (getProject(task.projectId)?.deleteBranchOnClose ?? true),
     });
   } catch (err) {
     reply(req.reqId, false, undefined, errMessage(err));

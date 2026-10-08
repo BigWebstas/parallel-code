@@ -612,17 +612,40 @@ describe('phone terminal viewport', () => {
     await vi.waitFor(() => expect(closeTask).toHaveBeenCalledWith('t1', false));
   });
 
-  it('keeps the dialog open and explains when a close would lose work', async () => {
-    vi.mocked(closeTask).mockResolvedValue({ warnings: ['2 child tasks still running'] });
+  it('keeps the dialog open and lists what a close would lose', async () => {
+    vi.mocked(closeTask).mockResolvedValue({
+      warnings: ['2 child tasks still running', '3 unmerged commits'],
+    });
     mount();
     await openTab('Diff');
     await openMergeDialog();
     dialogButton('Close').click();
     await vi.waitFor(() => expect(host.textContent).toContain('Close task'));
     dialogButton('Close task').click();
-    // The desktop refused; the reason is shown instead of navigating away.
-    await vi.waitFor(() => expect(host.textContent).toContain('2 child tasks still running'));
+    // The desktop refused; each reason is listed above the force option.
+    await vi.waitFor(() =>
+      expect([...host.querySelectorAll('.mobile-dialog li')].map((li) => li.textContent)).toEqual([
+        '2 child tasks still running',
+        '3 unmerged commits',
+      ]),
+    );
     expect(host.querySelector('.mobile-dialog')).not.toBeNull();
+  });
+
+  it.each([
+    [true, 'deletes its worktree and branch'],
+    [false, 'The branch is kept'],
+  ])('words the close from the project branch setting (%s)', async (deleteBranch, copy) => {
+    vi.mocked(fetchMergeReadiness).mockResolvedValue({
+      ...READY_MERGE,
+      deleteBranchOnClose: deleteBranch,
+    });
+    mount();
+    await openTab('Diff');
+    await openMergeDialog();
+    dialogButton('Close').click();
+    await vi.waitFor(() => expect(host.textContent).toContain(copy));
+    expect(host.textContent).not.toContain('stays on the branch');
   });
 
   it('retries a refused close with force only once the user asks', async () => {
