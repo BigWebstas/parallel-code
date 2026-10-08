@@ -1,12 +1,12 @@
 import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { DelegationPanel } from './DelegationPanel';
 import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
-import { TaskMindMap } from './TaskMindMap';
 import {
   Show,
   createSignal,
   createEffect,
   createMemo,
+  lazy,
   on,
   onMount,
   onCleanup,
@@ -64,7 +64,6 @@ import { theme } from '../lib/theme';
 import { isMac } from '../lib/platform';
 import type { Task } from '../store/types';
 import type { CommitInfo } from '../ipc/types';
-import { TaskReasoningGraphHost } from './TaskReasoningGraphHost';
 import type { TranscriptMarks } from '../investigation/transcript';
 import { isLandedTaskState } from '../store/landing';
 import { shouldPollTaskCommits } from './task-commit-polling';
@@ -80,6 +79,12 @@ import {
 import { parseAgentTour } from '../lib/understanding-tour';
 import { UnderstandingTourDialog } from './UnderstandingTourDialog';
 import { getTaskDiffBaseBranch } from '../lib/load-task-diff';
+
+// Lazy: d3 and the graph editors only load once a task opens one of these tabs.
+const TaskMindMap = lazy(() => import('./TaskMindMap').then((m) => ({ default: m.TaskMindMap })));
+const TaskReasoningGraphHost = lazy(() =>
+  import('./TaskReasoningGraphHost').then((m) => ({ default: m.TaskReasoningGraphHost })),
+);
 
 interface TaskPanelProps {
   task: Task;

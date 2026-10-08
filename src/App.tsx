@@ -11,7 +11,15 @@ import '@fontsource/space-grotesk/700.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import './styles.css';
-import { onMount, onCleanup, createEffect, Show, ErrorBoundary, createSignal } from 'solid-js';
+import {
+  onMount,
+  onCleanup,
+  createEffect,
+  Show,
+  ErrorBoundary,
+  createSignal,
+  lazy,
+} from 'solid-js';
 import { invoke } from './lib/ipc';
 import { IPC } from '../electron/ipc/channels';
 import { appWindow } from './lib/window';
@@ -89,7 +97,6 @@ import { applyAppearanceMode, markCustomThemesReady, loadCustomThemes } from './
 import { isMac } from './lib/platform';
 import { createCtrlWheelZoomHandler } from './lib/wheelZoom';
 import { redrawAllTerminals } from './lib/terminalFitManager';
-import { ArenaOverlay } from './arena/ArenaOverlay';
 import { isDocumentAgentTaskId } from './documents/agent-task';
 import {
   closeDocumentWorkspace,
@@ -111,6 +118,10 @@ import { startAgentHookStatusListener } from './store/agentHookStatus';
 import { applyPlanContent, startCanvasAutoOpen } from './store/canvas';
 import { startEvidenceAutoBuild } from './store/evidence-auto';
 import type { PlanContentMessage } from './store/canvas';
+
+const ArenaOverlay = lazy(() =>
+  import('./arena/ArenaOverlay').then((m) => ({ default: m.ArenaOverlay })),
+);
 
 const MIN_WINDOW_DIMENSION = 100;
 

@@ -9,6 +9,7 @@ import {
   onMount,
   onCleanup,
   ErrorBoundary,
+  lazy,
   type JSX,
 } from 'solid-js';
 import {
@@ -24,7 +25,6 @@ import {
   toggleNewTaskPanel,
   armSpCompletion,
 } from '../store/store';
-import { DocumentWorkspacePanel } from '../documents/DocumentWorkspacePanel';
 import { documentAgentTaskId } from '../documents/task-id';
 import { scrollTaskIntoView } from '../store/focused-panel';
 import { codeProjects } from '../store/projects';
@@ -39,6 +39,13 @@ import { mod } from '../lib/platform';
 import { createCtrlShiftWheelResizeHandler } from '../lib/wheelZoom';
 import { shouldAnimateTaskAppearance } from '../lib/reducedMotion';
 import { TASK_TILE_DEFAULT_WIDTH, TASK_TILE_MIN_WIDTH } from '../lib/layout-sizes';
+
+// Lazy: the document workspace (CodeMirror, parse5) loads when its panel opens.
+const DocumentWorkspacePanel = lazy(() =>
+  import('../documents/DocumentWorkspacePanel').then((m) => ({
+    default: m.DocumentWorkspacePanel,
+  })),
+);
 
 const VIEWPORT_EPSILON_PX = 4;
 
