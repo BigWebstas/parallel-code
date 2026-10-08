@@ -14,7 +14,7 @@ import { theme } from '../lib/theme';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { RemoteAccess } from '../store/types';
-import { PlugIcon, SyncIcon } from './icons';
+import { CloseIcon, SyncIcon } from './icons';
 
 type NetworkMode = 'wifi' | 'tailscale';
 
@@ -666,7 +666,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
             'font-weight': '400',
           }}
         >
-          <PlugIcon size={14} />
+          <CloseIcon size={14} />
           Disconnect
         </button>
       </Show>

@@ -2541,17 +2541,17 @@ html:is(
   border-right-color: color-mix(in srgb, var(--warning) 82%, white 18%);
 }
 
-.btn-primary {
-  position: relative;
-  overflow: hidden;
-}
-
 /* Leading-icon buttons: centres the glyph against the label whatever the button's width. */
 .btn-with-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
+}
+
+.btn-primary {
+  position: relative;
+  overflow: hidden;
 }
 
 .btn-primary:hover:not(:disabled) {

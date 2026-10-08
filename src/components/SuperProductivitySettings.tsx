@@ -8,7 +8,7 @@ import {
 import { theme } from '../lib/theme';
 import { errMessage } from '../lib/log';
 import type { SpConnectionState } from '../../electron/shared/super-productivity';
-import { PlugIcon, SyncIcon } from './icons';
+import { CloseIcon, PlugIcon, SyncIcon } from './icons';
 
 /** IPC errors arrive as "Error invoking remote method '…': Error: <message>". */
 function readableError(err: unknown): string {
@@ -149,7 +149,7 @@ export function SuperProductivitySettings() {
             style={buttonStyle(false)}
             onClick={() => void run(disconnectSuperProductivity)}
           >
-            <PlugIcon size={14} />
+            <CloseIcon size={14} />
             Disconnect
           </button>
         </div>
