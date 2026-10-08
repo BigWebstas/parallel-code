@@ -58,16 +58,30 @@ function mount(): HTMLElement {
 const panel = () => document.querySelector<HTMLElement>('[data-testid="resources-panel"]');
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+const toggleButton = (container: HTMLElement) =>
+  container.querySelector<HTMLButtonElement>('button') as HTMLButtonElement;
+
 describe('ResourcesPanel', () => {
-  it('does not sample until opened', () => {
-    mount();
-    expect(mockInvoke).not.toHaveBeenCalled();
+  it('shows the live machine total on the button before opening', async () => {
+    const container = mount();
+    await flush();
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
     expect(panel()).toBeNull();
+    // 84% of one core on 8 cores; 500 MB + 1 GB.
+    expect(toggleButton(container).textContent).toBe('Resources11% · 1.5 GB');
+    expect(toggleButton(container).style.color).not.toBe('var(--warning)');
+  });
+
+  it('turns the button to the warning colour when the machine is busy', async () => {
+    mockInvoke.mockImplementationOnce(async () => ({ ...snapshot, cpuCount: 1 }));
+    const container = mount();
+    await flush();
+    expect(toggleButton(container).style.color).toBe('var(--warning)');
   });
 
   it('lists groups by cpu with task names, and expands into processes', async () => {
     const container = mount();
-    container.querySelector('button')?.click();
+    toggleButton(container).click();
     await flush();
     const rows = [...(panel()?.querySelectorAll('button[aria-expanded]') ?? [])];
     expect(rows.map((r) => r.textContent)).toEqual([
@@ -77,58 +91,67 @@ describe('ResourcesPanel', () => {
     expect(panel()?.textContent).not.toContain('claude 21');
     (rows[0] as HTMLButtonElement).click();
     expect(panel()?.textContent).toContain('claude 21');
-    expect(snapshot.groups).toHaveLength(2);
   });
 
-  it('keeps an expanded row open across polls and stops polling when closed', async () => {
+  it('keeps an expanded row open across polls and slows down when closed', async () => {
     vi.useFakeTimers();
     const container = mount();
-    container.querySelector('button')?.click();
+    toggleButton(container).click();
     await vi.advanceTimersByTimeAsync(0);
     panel()?.querySelector<HTMLButtonElement>('button[aria-expanded]')?.click();
     await vi.advanceTimersByTimeAsync(2000);
-    expect(mockInvoke).toHaveBeenCalledTimes(2);
+    const whileOpen = mockInvoke.mock.calls.length;
     expect(panel()?.textContent).toContain('claude 21');
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     expect(panel()).toBeNull();
-    await vi.advanceTimersByTimeAsync(6000);
-    expect(mockInvoke).toHaveBeenCalledTimes(2);
+    const afterClose = mockInvoke.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(mockInvoke.mock.calls.length).toBe(afterClose);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(mockInvoke.mock.calls.length).toBe(afterClose + 1);
+    expect(whileOpen).toBeGreaterThan(1);
   });
 
   it('waits for a slow sample instead of stacking requests', async () => {
     vi.useFakeTimers();
     let resolve: (value: ResourceSnapshot) => void = () => {};
     mockInvoke.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
-    const container = mount();
-    container.querySelector('button')?.click();
-    await vi.advanceTimersByTimeAsync(6000);
+    mount();
+    await vi.advanceTimersByTimeAsync(15000);
     expect(mockInvoke).toHaveBeenCalledTimes(1);
     resolve(snapshot);
-    await vi.advanceTimersByTimeAsync(2000);
+    await vi.advanceTimersByTimeAsync(5000);
     expect(mockInvoke).toHaveBeenCalledTimes(2);
   });
 
-  it('drops a reply that lands after closing, so reopening starts fresh', async () => {
-    let resolve: (value: ResourceSnapshot) => void = () => {};
-    mockInvoke.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
-    mockInvoke.mockImplementationOnce(() => new Promise(() => {}));
+  it('skips samples while the window is hidden', async () => {
+    vi.useFakeTimers();
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    mount();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(mockInvoke).not.toHaveBeenCalled();
+    hidden.mockRestore();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a slow reply from a superseded poller', async () => {
+    let resolveStale: (value: ResourceSnapshot) => void = () => {};
+    mockInvoke.mockImplementationOnce(() => new Promise((r) => (resolveStale = r)));
     const container = mount();
-    const button = container.querySelector('button');
-    button?.click();
-    button?.click();
-    resolve(snapshot);
+    toggleButton(container).click();
     await flush();
-    button?.click();
+    resolveStale({ ...snapshot, groups: [] });
     await flush();
-    expect(panel()?.textContent).toContain('Measuring');
-    expect(panel()?.textContent).not.toContain('Fix login');
+    expect(toggleButton(container).textContent).toBe('Resources11% · 1.5 GB');
   });
 
   it('shows an error when sampling fails', async () => {
-    mockInvoke.mockImplementationOnce(() => Promise.reject(new Error('EPERM')));
     const container = mount();
-    container.querySelector('button')?.click();
+    await flush();
+    mockInvoke.mockImplementationOnce(() => Promise.reject(new Error('EPERM')));
+    toggleButton(container).click();
     await flush();
     expect(panel()?.textContent).toContain('Could not read processes: Error: EPERM');
   });

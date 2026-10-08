@@ -1,4 +1,4 @@
-import type { ResourceGroup } from '../ipc/types';
+import type { ResourceGroup, ResourceSnapshot } from '../ipc/types';
 
 /** The store fields needed to name a PTY group. */
 export interface GroupNameSource {
@@ -28,9 +28,27 @@ export function groupLabel(group: ResourceGroup, source: GroupNameSource): strin
  * Share of the whole machine. The backend reports percent of one core (top's
  * convention), which reads as 2400% on a busy 24-core machine.
  */
+export function cpuShare(percentOfOneCore: number, cpuCount: number): number {
+  return percentOfOneCore / Math.max(1, cpuCount);
+}
+
 export function formatCpu(percentOfOneCore: number, cpuCount: number): string {
-  const share = percentOfOneCore / Math.max(1, cpuCount);
+  const share = cpuShare(percentOfOneCore, cpuCount);
   return `${share < 10 ? share.toFixed(1) : Math.round(share)}%`;
+}
+
+/** Everything the app and its agents use, summed over all groups. */
+export function snapshotTotals(snapshot: ResourceSnapshot): {
+  cpuPercent: number;
+  memoryBytes: number;
+} {
+  return snapshot.groups.reduce(
+    (sum, group) => ({
+      cpuPercent: sum.cpuPercent + group.cpuPercent,
+      memoryBytes: sum.memoryBytes + group.memoryBytes,
+    }),
+    { cpuPercent: 0, memoryBytes: 0 },
+  );
 }
 
 export function formatBytes(bytes: number): string {

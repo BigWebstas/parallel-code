@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ResourceGroup } from '../ipc/types';
-import { formatBytes, formatCpu, groupLabel } from './resources-format';
+import { formatBytes, formatCpu, groupLabel, snapshotTotals } from './resources-format';
 
 const group = (over: Partial<ResourceGroup>): ResourceGroup => ({
   kind: 'agent',
@@ -48,5 +48,17 @@ describe('formatters', () => {
     expect(formatCpu(24, 24)).toBe('1.0%');
     expect(formatBytes(300 * 1024 ** 2)).toBe('300 MB');
     expect(formatBytes(1.5 * 1024 ** 3)).toBe('1.5 GB');
+  });
+});
+
+describe('snapshotTotals', () => {
+  it('sums cpu and memory over all groups', () => {
+    const snapshot = {
+      groups: [group({ cpuPercent: 10, memoryBytes: 5 }), group({ cpuPercent: 2, memoryBytes: 1 })],
+      cpuCount: 4,
+      totalMemoryBytes: 0,
+      sampledAt: 0,
+    };
+    expect(snapshotTotals(snapshot)).toEqual({ cpuPercent: 12, memoryBytes: 6 });
   });
 });
