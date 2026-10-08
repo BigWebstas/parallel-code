@@ -108,10 +108,13 @@ import {
   onPtyEvent,
   projectImageTag,
   resizeAgent,
+  setAgentRemoteSize,
+  setRemoteHistory,
   resolveProjectDockerfile,
   spawnAgent,
   setAgentHookRuntime,
   subscribeToAgent,
+  subscribeToAgentRendered,
   validateCommand,
   writeToAgent,
   writeAgentPrompt,
@@ -1103,6 +1106,18 @@ describe('spawnAgent terminal queries', () => {
     const proc = await launch('agent-query-cpr');
     proc.emitData('hi\x1b[6n');
     await vi.waitFor(() => expect(proc.write).toHaveBeenCalledWith('\x1b[1;3R'));
+  });
+
+  it('takes a phone size and restores the desktop size, remembering desktop resizes', async () => {
+    const proc = await launch('agent-remote-size');
+    resizeAgent('agent-remote-size', 100, 30);
+    setAgentRemoteSize('agent-remote-size', { cols: 60, rows: 50 });
+    expect(proc.resize).toHaveBeenLastCalledWith(60, 50);
+    // The desktop pane refits while the phone views: remembered, not applied.
+    resizeAgent('agent-remote-size', 110, 32);
+    expect(proc.resize).toHaveBeenLastCalledWith(60, 50);
+    setAgentRemoteSize('agent-remote-size', null);
+    expect(proc.resize).toHaveBeenLastCalledWith(110, 32);
   });
 
   it('answers at the size the PTY was resized to', async () => {
@@ -2170,6 +2185,72 @@ describe('Claude terminal handoff', () => {
       expect(() => writeToAgent(agentId, 'still here')).not.toThrow();
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('subscribeToAgentRendered', () => {
+  async function launch(agentId: string) {
+    await spawnAgent(
+      createMockNotify(),
+      buildSpawnArgs({ agentId, command: 'claude', args: [], dockerMode: false }),
+    );
+    return mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value as ReturnType<
+      typeof mockPtySpawn
+    >;
+  }
+
+  const decode = (encoded: string) => Buffer.from(encoded, 'base64').toString();
+
+  it('starts from the rendered screen and sends later output once, after it', async () => {
+    const proc = await launch('agent-rendered');
+    // Repaints of one line: the raw replay keeps every frame, the render only the last.
+    proc.emitData('first\r\nframe 1\rframe 2\rframe 3');
+    const events: string[] = [];
+    const subscriber = subscribeToAgentRendered(
+      'agent-rendered',
+      (snapshot) => events.push(`snapshot:${decode(snapshot?.data ?? '')}`),
+      (encoded) => events.push(`output:${decode(encoded)}`),
+    );
+    expect(subscriber).not.toBeNull();
+    proc.emitData('\r\nlater');
+
+    await vi.waitFor(() => expect(events.some((e) => e === 'output:\r\nlater')).toBe(true));
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain('first');
+    expect(events[0]).toContain('frame 3');
+    expect(events[0]).not.toContain('frame 1');
+    expect(events[1]).toBe('output:\r\nlater');
+  });
+
+  it('returns null for an unknown agent', () => {
+    expect(subscribeToAgentRendered('missing', vi.fn(), vi.fn())).toBeNull();
+  });
+
+  it('keeps long history in running mirrors only while phones can connect', async () => {
+    const snapshotOf = async (agentId: string) => {
+      let data: string | null = null;
+      subscribeToAgentRendered(
+        agentId,
+        (snapshot) => (data = decode(snapshot?.data ?? '')),
+        vi.fn(),
+      );
+      await vi.waitFor(() => expect(data).not.toBeNull());
+      return data ?? '';
+    };
+    const proc = await launch('agent-history');
+    try {
+      // Raised after launch, so this checks the running session follows, not just new ones.
+      setRemoteHistory(true);
+      for (let i = 0; i < 500; i++) proc.emitData(`line-${String(i).padStart(3, '0')}\r\n`);
+      expect(await snapshotOf('agent-history')).toContain('line-000');
+
+      setRemoteHistory(false);
+      const trimmed = await snapshotOf('agent-history');
+      expect(trimmed).not.toContain('line-000');
+      expect(trimmed).toContain('line-499');
+    } finally {
+      setRemoteHistory(false);
     }
   });
 });

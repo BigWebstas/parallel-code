@@ -1,6 +1,6 @@
 /**
  * IPC for GitHub issues and pull requests. Every channel validates its
- * arguments; PR URLs must be canonical github.com URLs before reaching `gh`.
+ * arguments; PR URLs must be HTTPS pull request URLs before reaching `gh`.
  */
 import { ipcMain } from 'electron';
 import { IPC } from '../ipc/channels.js';
