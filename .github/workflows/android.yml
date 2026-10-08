@@ -4,11 +4,24 @@ name: Android
 # android-v0.2.0) also publishes a signed APK as a GitHub release, separate from desktop v* releases.
 on:
   push:
-    branches: [main, feat/android-phone-app]
+    branches: [main]
     tags: ['android-v*']
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+      # LookPresetsGeneratedTest checks the generated looks against these desktop sources.
+      - 'scripts/generate-android-looks.mjs'
+      - 'src/styles.css'
+      - 'src/lib/look.ts'
+      - 'src/lib/theme.ts'
   pull_request:
-    paths: ['android/**', '.github/workflows/android.yml']
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+      - 'scripts/generate-android-looks.mjs'
+      - 'src/styles.css'
+      - 'src/lib/look.ts'
+      - 'src/lib/theme.ts'
 
 permissions:
   contents: read
@@ -22,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
@@ -41,13 +56,18 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           java-version: '21'
 
+      # A signed build must not restore caches that other workflow runs wrote.
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-disabled: true
 
       - name: Decode signing key
         env:

@@ -253,6 +253,62 @@ describe('paired phone view size', () => {
   });
 });
 
+describe('heartbeat', () => {
+  async function startWithHeartbeat() {
+    const server = await startRemoteServer({
+      port: 0,
+      host: '127.0.0.1',
+      staticDir: '/nonexistent',
+      getTaskName: (id) => id,
+      getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
+      getCoordinator: () => null,
+      heartbeatMs: 40,
+    });
+    return server;
+  }
+
+  it('drops a silent phone and hands its view size back to the desktop', async () => {
+    const server = await startWithHeartbeat();
+    try {
+      // autoPong off stands in for a phone that left Wi-Fi without a close frame.
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { autoPong: false });
+      await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: server.token })));
+        ws.once('message', () => resolve());
+        ws.on('error', reject);
+      });
+      ws.send(JSON.stringify({ type: 'view-size', agentId: 'agent-1', cols: 60, rows: 50 }));
+      await vi.waitFor(() =>
+        expect(pty.setAgentRemoteSize).toHaveBeenCalledWith('agent-1', { cols: 60, rows: 50 }),
+      );
+      await vi.waitFor(() => expect(ws.readyState).toBe(WebSocket.CLOSED));
+      expect(pty.setAgentRemoteSize).toHaveBeenLastCalledWith('agent-1', null);
+      expect(server.connectedClients()).toBe(0);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('keeps a phone that answers pings', async () => {
+    const server = await startWithHeartbeat();
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+      await new Promise<void>((resolve, reject) => {
+        ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: server.token })));
+        ws.once('message', () => resolve());
+        ws.on('error', reject);
+      });
+      let pings = 0;
+      ws.on('ping', () => pings++);
+      await vi.waitFor(() => expect(pings).toBeGreaterThanOrEqual(3));
+      expect(ws.readyState).toBe(WebSocket.OPEN);
+      ws.close();
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
 describe('paired token over WebSocket', () => {
   it('forwards input to the agent PTY', async () => {
     const ws = await connectAndAuth(await pair());

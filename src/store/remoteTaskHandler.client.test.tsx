@@ -272,3 +272,54 @@ it('answers a phone diff request with the task diff against its base', async () 
     baseBranch: 'main',
   });
 });
+
+it.each([
+  [undefined, true],
+  [false, false],
+])(
+  'reports merge readiness with a headline and the branch close rule (deleteBranchOnClose=%s)',
+  async (deleteBranchOnClose, expected) => {
+    setStore('projects', [
+      {
+        id: 'project',
+        name: 'Project',
+        path: '/tmp/project',
+        color: '',
+        ...(deleteBranchOnClose === undefined ? {} : { deleteBranchOnClose }),
+      },
+    ]);
+    vi.mocked(invoke).mockImplementation(async (channel: string) => {
+      if (channel === IPC.CheckMergeStatus)
+        return { main_ahead_count: 0, conflicting_files: [], base_branch: 'main' };
+      if (channel === IPC.GetWorktreeStatus)
+        return {
+          has_committed_changes: true,
+          has_uncommitted_changes: false,
+          current_branch: 'task/test',
+          base_branch: 'main',
+        };
+      return undefined;
+    });
+
+    listeners.get(IPC.Remote_GetMergeReadinessRequest)?.({ reqId: 'req', taskId: 'task' });
+    await vi.waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(IPC.Remote_RendererReply, expect.anything()),
+    );
+    const reply = vi
+      .mocked(invoke)
+      .mock.calls.find(([c]) => c === IPC.Remote_RendererReply)?.[1] as {
+      ok: boolean;
+      data: {
+        readiness: { overall: string; checks: Array<{ label: string }> };
+        canMerge: boolean;
+        deleteBranchOnClose: boolean;
+      };
+    };
+
+    expect(reply.ok).toBe(true);
+    expect(['ready', 'attention']).toContain(reply.data.readiness.overall);
+    expect(reply.data.canMerge).toBe(true);
+    expect(reply.data.readiness.checks.map((c) => c.label)).toContain('Evidence');
+    expect(reply.data.deleteBranchOnClose).toBe(expected);
+  },
+);

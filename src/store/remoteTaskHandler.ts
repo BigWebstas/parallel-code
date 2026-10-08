@@ -9,7 +9,7 @@ import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } f
 import { getEvidenceForAgent, submitEvidence } from './evidence';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { store } from './core';
-import { codeProjects, getProjectPath } from './projects';
+import { codeProjects, getProject, getProjectPath } from './projects';
 import {
   closeTask,
   createTask,
@@ -19,7 +19,8 @@ import {
 } from './tasks';
 import { getVerifyCommand } from './verification';
 import { getPrChecks } from './pr-checks-state';
-import { buildMergeReadiness } from '../components/merge-readiness';
+import { getEvidenceConfidence } from './evidence-state';
+import { buildMergeReadiness, type MergeReadinessCheck } from '../components/merge-readiness';
 import { invoke } from '../lib/ipc';
 import { errMessage } from '../lib/log';
 import { getTaskDiffBaseBranch, loadTaskDiff } from '../lib/load-task-diff';
@@ -279,6 +280,7 @@ async function handleGetMergeReadiness(req: GetTaskDiffRequest): Promise<void> {
         canMerge: false,
         baseBranch: task.baseBranch ?? '',
         branchName: task.branchName,
+        deleteBranchOnClose: false,
       });
       return;
     }
@@ -305,16 +307,32 @@ async function handleGetMergeReadiness(req: GetTaskDiffRequest): Promise<void> {
       // Coverage comparison needs a base report the phone has no way to read;
       // the check reports "no task coverage report" instead of guessing.
       coverage: null,
+      evidence: getEvidenceConfidence(task, worktreeStatus),
     });
+    const overall = summarizeReadiness(readiness.checks);
     reply(req.reqId, true, {
-      readiness,
-      canMerge: !readiness.checks.some((c) => c.status === 'blocked'),
+      readiness: { overall, checks: readiness.checks },
+      canMerge: overall !== 'blocked',
       baseBranch: task.baseBranch ?? mergeStatus.base_branch ?? '',
       branchName: task.branchName,
+      // Same rule closeTask applies, so the phone's close copy matches what happens.
+      deleteBranchOnClose: task.externalWorktree
+        ? false
+        : (getProject(task.projectId)?.deleteBranchOnClose ?? true),
     });
   } catch (err) {
     reply(req.reqId, false, undefined, errMessage(err));
   }
+}
+
+/** The phone shows one headline state; the worst check decides it. */
+function summarizeReadiness(
+  checks: MergeReadinessCheck[],
+): 'ready' | 'attention' | 'blocked' | 'checking' {
+  if (checks.some((check) => check.status === 'blocked')) return 'blocked';
+  if (checks.some((check) => check.status === 'checking')) return 'checking';
+  if (checks.some((check) => check.status === 'warning')) return 'attention';
+  return 'ready';
 }
 
 /** Merge a task from a paired phone. Runs the desktop's own mergeTask. */

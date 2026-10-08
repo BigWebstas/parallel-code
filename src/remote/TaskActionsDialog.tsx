@@ -55,8 +55,8 @@ export function TaskActionsDialog(props: TaskActionsDialogProps) {
   const [mode, setMode] = createSignal<Mode>(null);
   const [squash, setSquash] = createSignal(false);
   const [cleanup, setCleanup] = createSignal(false);
-  // Set only after the desktop refuses a close that would lose work.
-  const [closeRefused, setCloseRefused] = createSignal(false);
+  // What the desktop says closing would lose; non-empty only after it refused.
+  const [closeWarnings, setCloseWarnings] = createSignal<string[]>([]);
   const [closeForce, setCloseForce] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal('');
@@ -70,10 +70,20 @@ export function TaskActionsDialog(props: TaskActionsDialogProps) {
     OVERALL_COPY[readiness()?.readiness.overall ?? 'checking'] ?? OVERALL_COPY.checking;
   const canMerge = () => readiness()?.canMerge === true;
   const baseBranch = () => readiness()?.baseBranch || 'the base branch';
+  const closeCopy = () => {
+    const deleteBranch = readiness()?.deleteBranchOnClose;
+    if (deleteBranch === true) {
+      return 'This stops the agent and deletes its worktree and branch. Commits that are not merged are lost.';
+    }
+    if (deleteBranch === false) {
+      return 'This stops the agent and removes its worktree. The branch is kept.';
+    }
+    return 'This stops the agent and removes its worktree.';
+  };
 
   function start(next: Exclude<Mode, null>) {
     setError('');
-    setCloseRefused(false);
+    setCloseWarnings([]);
     setCloseForce(false);
     setMode(next);
   }
@@ -120,8 +130,7 @@ export function TaskActionsDialog(props: TaskActionsDialogProps) {
         // The desktop refused because closing would lose work. Stay on this step
         // and offer the explicit force option rather than closing silently. The
         // flag stays off: the user has to opt in, not merely retry.
-        setError(warnings.join(' '));
-        setCloseRefused(true);
+        setCloseWarnings(warnings);
         return false;
       }
       setCloseForce(false);
@@ -239,16 +248,19 @@ export function TaskActionsDialog(props: TaskActionsDialogProps) {
 
         <Show when={mode() === 'close'}>
           <h2 class="mobile-dialog-title">Close {props.taskName}?</h2>
-          <p class="muted">
-            This stops the agent and removes its worktree. Unmerged work on its branch stays on the
-            branch.
-          </p>
+          <p class="muted">{closeCopy()}</p>
           <Show when={error()}>
             <p class="mobile-error" role="alert">
               {error()}
             </p>
           </Show>
-          <Show when={closeRefused()}>
+          <Show when={closeWarnings().length > 0}>
+            <div class="mobile-error" role="alert">
+              <p>Closing would lose work:</p>
+              <ul>
+                <For each={closeWarnings()}>{(warning) => <li>{warning}</li>}</For>
+              </ul>
+            </div>
             <label class="mobile-dialog-option">
               <input
                 type="checkbox"

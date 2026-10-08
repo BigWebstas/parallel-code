@@ -20,6 +20,8 @@ import {
 import { loadEnvFile } from './env-file.js';
 import {
   createTerminalQueryResponder,
+  MIRROR_SCROLLBACK_LINES,
+  REMOTE_SCROLLBACK_LINES,
   type TerminalQueryResponder,
 } from './terminal-query-responder.js';
 import {
@@ -867,6 +869,7 @@ export async function spawnAgent(
       cols: args.cols,
       rows: args.rows,
       reply: (data) => proc.write(data),
+      scrollback: mirrorScrollback,
     }),
     containerName: spawnSpec.containerName,
   };
@@ -1017,6 +1020,20 @@ export async function writeAgentPrompt(
   }
 }
 
+// shortcut: the long history is kept for every PTY while Remote Access is on —
+// per-agent growth if desktops with many long-running agents need the memory.
+let mirrorScrollback = MIRROR_SCROLLBACK_LINES;
+
+/**
+ * Keep the full history in each PTY's mirror while phones can connect, so a
+ * phone opening a terminal sees what the desktop shows; desktop-only use keeps
+ * the short mirror.
+ */
+export function setRemoteHistory(enabled: boolean): void {
+  mirrorScrollback = enabled ? REMOTE_SCROLLBACK_LINES : MIRROR_SCROLLBACK_LINES;
+  for (const session of sessions.values()) session.queries.setScrollback(mirrorScrollback);
+}
+
 function applySize(session: PtySession, cols: number, rows: number): void {
   if (session.proc.cols === cols && session.proc.rows === rows) return;
   session.proc.resize(cols, rows);
@@ -1133,8 +1150,8 @@ export function subscribeToAgent(agentId: string, cb: (encoded: string) => void)
 }
 
 /**
- * Subscribe starting from a rendered snapshot: the screen and up to 10k lines
- * of history from the main-process mirror, as ANSI text, instead of the raw
+ * Subscribe starting from a rendered snapshot: the screen and the history the
+ * main-process mirror keeps (10k lines while Remote Access is on, see setRemoteHistory), as ANSI text, instead of the raw
  * byte replay, which redraw-heavy TUIs fill with repaints of one screen.
  * Output already in the snapshot is not sent again; later output reaches `cb`
  * after `onSnapshot`. The snapshot is null when the mirror is gone (the process

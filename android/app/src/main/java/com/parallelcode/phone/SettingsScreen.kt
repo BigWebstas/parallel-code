@@ -786,26 +786,7 @@ fun SettingsScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Parallel Code", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                            Text("v3.1.0", color = AppTheme.extra.textMuted, fontFamily = FontFamily.Monospace)
-                        }
-                        Text(
-                            "Mobile companion for monitoring and interacting with parallel AI agents.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = AppTheme.extra.textMuted,
-                        )
-                    }
+                    Box(Modifier.fillMaxWidth().padding(16.dp)) { UpdateSettings() }
                 }
             }
         }
@@ -959,7 +940,7 @@ private fun SectionHeader(title: String) {
 }
 
 @Composable
-private fun SettingSwitchRow(
+internal fun SettingSwitchRow(
     title: String,
     description: String,
     checked: Boolean,

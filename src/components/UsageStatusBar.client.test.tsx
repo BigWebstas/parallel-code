@@ -109,4 +109,21 @@ describe('UsageStatusBar', () => {
       Object.assign(usage.claude, saved);
     }
   });
+
+  it('draws the credit meter at 0% when a limit is set', () => {
+    const saved = { ...usage.claude };
+    Object.assign(usage.claude, {
+      fiveHour: null,
+      sevenDay: null,
+      creditUsage: { used: 0, limit: 50, currency: 'USD', usedPercent: 0 },
+    });
+    try {
+      const container = mount();
+      const meter = container.querySelector<HTMLElement>('[aria-label="Credit usage"]');
+      expect(meter?.getAttribute('aria-valuenow')).toBe('0');
+      expect(container.querySelector('[role="status"]')?.textContent).toContain('(0%)');
+    } finally {
+      Object.assign(usage.claude, saved);
+    }
+  });
 });

@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTerminalQueryResponder } from './terminal-query-responder.js';
+import {
+  createTerminalQueryResponder,
+  REMOTE_SCROLLBACK_LINES,
+} from './terminal-query-responder.js';
 
 function setup(cols = 80, rows = 24) {
   const replies: string[] = [];
@@ -70,8 +73,19 @@ describe('createTerminalQueryResponder', () => {
     await vi.waitFor(() => expect(replies).toEqual(['\x1b[5;1R']));
   });
 
-  it('serializes the same history depth the desktop terminal keeps', async () => {
+  it('keeps a short history by default', async () => {
     const { responder } = setup();
+    const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
+    responder.feed(lines.join('\r\n'));
+    const text = await responder.serialize();
+    expect(text).not.toContain('line 0\r\n');
+    expect(text).toContain('line 4999');
+    responder.dispose();
+  });
+
+  it('serializes the desktop history depth once the scrollback grows', async () => {
+    const { responder } = setup();
+    responder.setScrollback(REMOTE_SCROLLBACK_LINES);
     const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
     responder.feed(lines.join('\r\n'));
     const text = await responder.serialize();

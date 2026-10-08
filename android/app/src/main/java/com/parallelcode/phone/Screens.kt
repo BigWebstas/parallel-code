@@ -507,7 +507,8 @@ fun AgentsScreen(
                 refreshing = true
                 scope.launch {
                     client.reconnect()
-                    try { client.fetchUsage() } catch (_: Exception) {}
+                    // The connection status already reports an outage; the strip keeps its last reading.
+                    runCatching { client.fetchUsage() }
                     delay(600)
                     refreshing = false
                 }
@@ -522,6 +523,7 @@ fun AgentsScreen(
                 contentPadding = PaddingValues(vertical = 12.dp),
             ) {
                 item { UsageStrip(client, connected = state.status == ConnectionStatus.CONNECTED) }
+                item { UpdateBanner() }
                 if (state.status == ConnectionStatus.CONNECTED && !state.canControl) {
                     item { PairBanner(onPair) }
                 }
@@ -905,7 +907,6 @@ fun AgentScreen(
     var tab by rememberSaveable { mutableStateOf(AgentTab.TERMINAL) }
     var closing by remember { mutableStateOf(false) }
     var merging by remember { mutableStateOf(false) }
-    var committing by remember { mutableStateOf(false) }
     var viewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // With "Fit the terminal to this phone" on and paired, the PTY takes this screen's size so
@@ -937,14 +938,6 @@ fun AgentScreen(
                 merging = false
                 onBack()
             },
-        )
-    }
-
-    if (committing && agent != null) {
-        CommitTaskDialog(
-            taskId = agent.taskId,
-            client = client,
-            onDismiss = { committing = false },
         )
     }
 
@@ -995,9 +988,6 @@ fun AgentScreen(
                         if (agent != null && state.canControl) {
                             TextButton(onClick = { merging = true }) {
                                 Text("Merge", fontWeight = FontWeight.SemiBold)
-                            }
-                            TextButton(onClick = { committing = true }) {
-                                Text("Commit", fontWeight = FontWeight.SemiBold)
                             }
                             TextButton(onClick = { closing = true }) {
                                 Text("Close", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)

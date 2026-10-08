@@ -16,8 +16,6 @@
     <!-- Scheduled backups survive a reboot (a persisted JobScheduler job). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Remote Access serves plain HTTP on the LAN or Tailscale address, so cleartext is required.
-         Backups and device transfer are off so the phone's credentials never leave the device. -->
     <!-- Voice input: find the speech recognizer (package visibility, Android 11+). -->
     <queries>
         <intent>
@@ -25,6 +23,8 @@
         </intent>
     </queries>
 
+    <!-- Remote Access serves plain HTTP on the LAN or Tailscale address, so cleartext is required.
+         Backups and device transfer are off so the phone's credentials never leave the device. -->
     <application
         android:name=".PhoneApplication"
         android:allowBackup="false"

@@ -55,12 +55,16 @@ class AgentWatchService : Service() {
                 val notices = notifier.update(agents)
                 if (!canNotify()) return@collect
                 val manager = NotificationManagerCompat.from(this@AgentWatchService)
-                if (!app.inForeground) {
-                    notices.filter { app.settings.notifiesFor(it.event) }.forEach { notice ->
-                        manager.notify(notice.agent.agentId.hashCode(), agentNotification(notice))
+                try {
+                    if (!app.inForeground) {
+                        notices.filter { app.settings.notifiesFor(it.event) }.forEach { notice ->
+                            manager.notify(notice.agent.agentId.hashCode(), agentNotification(notice))
+                        }
                     }
+                    manager.notify(WATCHING_ID, watchingNotification(agents.count { it.attention == "needs_input" }))
+                } catch (_: SecurityException) {
+                    // Revoked since canNotify(): skip this round rather than stop the service; the next update checks again.
                 }
-                manager.notify(WATCHING_ID, watchingNotification(agents.count { it.attention == "needs_input" }))
             }
         }
     }

@@ -6,9 +6,12 @@ import { getToken, getPairedToken } from './auth';
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Parsed JSON error body, kept for routes that answer with more than a message. */
+  body: unknown;
+  constructor(message: string, status: number, body?: unknown) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -26,13 +29,15 @@ async function request<T>(
   });
   if (!res.ok) {
     let msg = `Request failed (${res.status})`;
+    let body: unknown;
     try {
-      const j = (await res.json()) as { error?: string };
-      if (j?.error) msg = j.error;
+      body = await res.json();
+      const error = (body as { error?: unknown } | null)?.error;
+      if (typeof error === 'string' && error) msg = error;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, body);
   }
   return res.json() as Promise<T>;
 }
@@ -117,6 +122,8 @@ export interface MergeReadiness {
   canMerge: boolean;
   baseBranch: string;
   branchName: string;
+  /** Whether closing also deletes the branch; absent from older desktops. */
+  deleteBranchOnClose?: boolean;
 }
 
 /** Fetch read-only merge readiness. Works with the base connection token. */
@@ -160,9 +167,18 @@ export async function closeTask(taskId: string, force = false): Promise<{ warnin
     });
     return { warnings: [] };
   } catch (err) {
-    if (err instanceof ApiError && err.status === 409) return { warnings: [err.message] };
+    if (err instanceof ApiError && err.status === 409) return { warnings: closeWarnings(err) };
     throw err;
   }
+}
+
+/** The desktop's own list of what closing would lose; the message alone names none of it. */
+function closeWarnings(err: ApiError): string[] {
+  const warnings = (err.body as { warnings?: unknown } | null | undefined)?.warnings;
+  const listed = Array.isArray(warnings)
+    ? warnings.filter((w): w is string => typeof w === 'string' && w.length > 0)
+    : [];
+  return listed.length > 0 ? listed : [err.message];
 }
 
 /** Save the notes for a task. Requires a paired token (it is a write). */

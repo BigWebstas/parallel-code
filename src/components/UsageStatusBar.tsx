@@ -67,45 +67,46 @@ function CreditMeter(props: { credit: CreditUsage; width?: number }) {
   const limitText = () =>
     props.credit.limit !== null ? formatCurrency(props.credit.limit, props.credit.currency) : null;
   const percent = () => (props.credit.limit !== null ? props.credit.usedPercent : null);
+  // Not a truthy check: 0% used with a limit set still draws an empty meter.
+  const hasPercent = () => percent() !== null;
+  const pct = () => percent() ?? 0;
   const warn = () => (props.credit.usedPercent ?? 0) >= USAGE_WARN_PERCENT;
   const color = () => (warn() ? theme.warning : theme.accent);
 
   return (
     <span style={{ display: 'inline-flex', 'align-items': 'center', gap: '6px' }}>
       <span style={{ color: theme.fgSubtle }}>Credits</span>
-      <Show when={percent()}>
-        {(pct) => (
+      <Show when={hasPercent()}>
+        <span
+          role="progressbar"
+          aria-label="Credit usage"
+          aria-valuenow={Math.round(pct())}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          style={{
+            width: `${props.width ?? 80}px`,
+            height: '5px',
+            'border-radius': 'var(--radius-xs)',
+            background: theme.bgInput,
+            border: `1px solid ${theme.border}`,
+            overflow: 'hidden',
+          }}
+        >
           <span
-            role="progressbar"
-            aria-label="Credit usage"
-            aria-valuenow={Math.round(pct())}
-            aria-valuemin={0}
-            aria-valuemax={100}
             style={{
-              width: `${props.width ?? 80}px`,
-              height: '5px',
-              'border-radius': 'var(--radius-xs)',
-              background: theme.bgInput,
-              border: `1px solid ${theme.border}`,
-              overflow: 'hidden',
+              display: 'block',
+              height: '100%',
+              width: `${Math.min(100, Math.max(0, pct()))}%`,
+              background: color(),
             }}
-          >
-            <span
-              style={{
-                display: 'block',
-                height: '100%',
-                width: `${Math.min(100, Math.max(0, pct()))}%`,
-                background: color(),
-              }}
-            />
-          </span>
-        )}
+          />
+        </span>
       </Show>
       <span style={{ color: warn() ? theme.warning : theme.fg, 'font-weight': '500' }}>
         {limitText() ? `${usedText()} / ${limitText()}` : `${usedText()} used`}
       </span>
-      <Show when={percent()}>
-        {(pct) => <span style={{ color: theme.fgSubtle }}>({Math.round(pct())}%)</span>}
+      <Show when={hasPercent()}>
+        <span style={{ color: theme.fgSubtle }}>({Math.round(pct())}%)</span>
       </Show>
     </span>
   );

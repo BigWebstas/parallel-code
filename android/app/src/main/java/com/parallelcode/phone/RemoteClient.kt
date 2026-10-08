@@ -194,21 +194,27 @@ class RemoteClient(
      * that answers for agents but not usage still counts, with no usage.
      */
     private suspend fun fetchSnapshotFrom(computer: SavedComputer): ComputerSnapshot? {
-        val agents = getFrom(computer, "/api/agents")?.let(::parseAgentList) ?: return null
-        val usage = getFrom(computer, "/api/mobile/usage")
-            ?.let { runCatching { parseUsage(JSONObject(it)) }.getOrNull() }
-            .orEmpty()
-        return ComputerSnapshot(computer.label, agents, usage)
+        val agents = getFrom(computer, "/api/agents")?.takeIf { it.first in 200..299 }
+            ?.let { parseAgentList(it.second) } ?: return null
+        return ComputerSnapshot(computer.label, agents, usageFrom(computer))
     }
 
-    /** The body of a GET to [path] on [computer], or null when it fails. */
-    private suspend fun getFrom(computer: SavedComputer, path: String): String? = withContext(Dispatchers.IO) {
+    private suspend fun usageFrom(computer: SavedComputer): List<ProviderUsage> {
+        if (usageRoute.isMissing(computer.baseUrl)) return emptyList()
+        val (code, body) = getFrom(computer, "/api/mobile/usage") ?: return emptyList()
+        usageRoute.record(computer.baseUrl, code)
+        if (code !in 200..299) return emptyList()
+        return runCatching { parseUsage(JSONObject(body)) }.getOrDefault(emptyList())
+    }
+
+    /** The status and body of a GET to [path] on [computer], or null when it can't be reached. */
+    private suspend fun getFrom(computer: SavedComputer, path: String): Pair<Int, String>? = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(computer.baseUrl + path)
             .header("Authorization", "Bearer ${computer.pairedToken ?: computer.token}")
             .build()
         try {
-            http.newCall(request).execute().use { if (it.isSuccessful) it.body.string() else null }
+            http.newCall(request).execute().use { it.code to it.body.string() }
         } catch (_: IOException) {
             null
         }
@@ -270,6 +276,8 @@ class RemoteClient(
     }
 
     fun reconnect() {
+        // A manual reconnect is the user's way to pick up a desktop that was updated meanwhile.
+        usageRoute.clear()
         closeSocket()
         if (started) connect()
     }
@@ -347,10 +355,24 @@ class RemoteClient(
         return TaskDiff.from(json)
     }
 
-    /** The desktop status bar's subscription usage; readable with the view-only token. */
-    suspend fun fetchUsage(): List<ProviderUsage> =
-        parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
-            .also { _usage.value = it }
+    /**
+     * The desktop status bar's subscription usage; readable with the view-only token. Empty, without
+     * asking again, from a desktop that has no usage route yet (it answered 404).
+     */
+    suspend fun fetchUsage(): List<ProviderUsage> {
+        val baseUrl = credentials.link?.baseUrl
+        if (baseUrl != null && usageRoute.isMissing(baseUrl)) return emptyList<ProviderUsage>().also { _usage.value = it }
+        val usage = try {
+            parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
+        } catch (e: ApiException) {
+            if (baseUrl == null) throw e
+            usageRoute.record(baseUrl, e.status)
+            if (!usageRoute.isMissing(baseUrl)) throw e
+            emptyList()
+        }
+        _usage.value = usage
+        return usage
+    }
 
     /**
      * The desktop's merge-readiness checks for a task, built by the same
@@ -377,24 +399,9 @@ class RemoteClient(
         )
     }
 
-    /** The task's uncommitted files and what is staged; readable with the view-only token. */
-    suspend fun fetchCommitStatus(taskId: String): CommitStatus =
-        parseCommitStatus(api("GET", commitPath(taskId), null, credentials.pairedToken ?: credentials.link?.token))
-
-    /** Stage every change in the task's worktree (`git add -A`); answers the new status. */
-    suspend fun stageAll(taskId: String): CommitStatus = commitAction(taskId, JSONObject().put("action", "stage-all"))
-
-    /** Unstage everything, keeping the file changes (`git reset`); answers the new status. */
-    suspend fun unstageAll(taskId: String): CommitStatus = commitAction(taskId, JSONObject().put("action", "unstage-all"))
-
-    /** Commit what is staged. Runs real git, so like staging it needs the paired token. */
-    suspend fun commitStaged(taskId: String, message: String): CommitStatus =
-        commitAction(taskId, JSONObject().put("action", "commit").put("message", message))
-
-    private suspend fun commitAction(taskId: String, body: JSONObject): CommitStatus =
-        parseCommitStatus(api("POST", commitPath(taskId), body, pairedTokenOrThrow()))
-
     private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
+
+    private val usageRoute = MissingRoutes()
 
     /** The last usage snapshot fetched, for the widget. */
     val usage: StateFlow<List<ProviderUsage>> = _usage.asStateFlow()
@@ -413,8 +420,6 @@ class RemoteClient(
     }
 
     private fun notesPath(taskId: String) = "/api/mobile/notes/" + encodePath(taskId)
-
-    private fun commitPath(taskId: String) = "/api/mobile/tasks/${encodePath(taskId)}/commit"
 
     private fun encodePath(segment: String) = URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
 

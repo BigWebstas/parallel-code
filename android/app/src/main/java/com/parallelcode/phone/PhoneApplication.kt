@@ -21,6 +21,8 @@ class PhoneApplication : Application() {
         private set
     lateinit var promptHistory: PromptHistoryStore
         private set
+    lateinit var updates: AppUpdates
+        private set
 
     /** True while the app is on screen; agent notifications stay quiet then. */
     @Volatile
@@ -39,6 +41,7 @@ class PhoneApplication : Application() {
             homeWifiSsid = { settings.homeWifiSsid },
         )
         promptHistory = PromptHistoryStore(getSharedPreferences(PromptHistoryStore.PREFS_NAME, Context.MODE_PRIVATE))
+        updates = AppUpdates(this)
         // Keep the home-screen widget current whenever the connection is open.
         CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
             combine(client.agents, client.usage, client.state, client.otherComputers, client.computers) {

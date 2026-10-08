@@ -1016,6 +1016,8 @@ export function startRemoteServer(opts: {
   getCollapsedTaskIds?: () => string[];
   /** The desktop's built-in chats; without it phones only see terminals. */
   chats?: RemoteChatSource;
+  /** Ping interval for dropping silent sockets; tests shorten it. */
+  heartbeatMs?: number;
 }): Promise<RemoteServer> {
   // Defensive default for the optional signature: every real caller wires
   // attention via mobileTaskBridge, so 'idle' is only used if a future caller
@@ -1966,8 +1968,26 @@ export function startRemoteServer(opts: {
     }, 100);
   });
 
+  // A phone that leaves Wi-Fi sends no close frame, so without pings its socket
+  // (and any PTY size it owns) would linger until TCP gives up, which for an
+  // idle agent can be never. A socket that misses one ping is terminated, which
+  // runs the close handler and hands view sizes back to the desktop.
+  const awaitingPong = new WeakSet<WebSocket>();
+  const heartbeat = setInterval(() => {
+    for (const client of wss.clients) {
+      if (awaitingPong.has(client)) {
+        client.terminate();
+        continue;
+      }
+      awaitingPong.add(client);
+      client.ping();
+    }
+  }, opts.heartbeatMs ?? 30_000);
+  heartbeat.unref();
+
   wss.on('connection', (ws, req) => {
     clientSubs.set(ws, new Map());
+    ws.on('pong', () => awaitingPong.delete(ws));
     if (opts.chats)
       clientChats.set(
         ws,
@@ -2402,6 +2422,7 @@ export function startRemoteServer(opts: {
         unsubExit();
         unsubListChanged();
         unsubChats();
+        clearInterval(heartbeat);
         for (const client of wss.clients) client.close();
         wss.close();
         const timeout = setTimeout(() => resolve(), 5_000);
@@ -2420,6 +2441,7 @@ export function startRemoteServer(opts: {
       unsubExit();
       unsubListChanged();
       unsubChats();
+      clearInterval(heartbeat);
       wss.close();
       reject(toFriendlyListenError(err, opts.port));
     };
