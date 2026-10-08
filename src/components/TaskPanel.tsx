@@ -1120,6 +1120,10 @@ export function TaskPanel(props: TaskPanelProps) {
             setFinishAction(null);
             setShowDelegationReview(true);
           }}
+          onOpenPullRequest={(url) => {
+            setFinishAction(null);
+            setOpenPrUrl(url);
+          }}
           onPushStart={() => {
             setPushing(true);
             setPushSuccess(false);
