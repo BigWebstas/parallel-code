@@ -1076,6 +1076,27 @@ describe('spawnAgent output batching', () => {
     }
   });
 
+  it('reports the last 8 KiB of output on exit', async () => {
+    const { notify, proc } = await launch('agent-batch-tail');
+    const lines = Array.from({ length: 100 }, (_, i) => `line-${i}-`.padEnd(400, 'x'));
+    for (const line of lines) proc.emitData(`${line}\r\n`);
+    proc.emitExit({ exitCode: 1, signal: undefined });
+
+    const exit = vi
+      .mocked(notify)
+      .mock.calls.map(([, message]) => message as { type: string; data?: unknown })
+      .find((payload) => payload.type === 'Exit');
+    const tail = Buffer.from(lines.map((line) => `${line}\r\n`).join(''))
+      .subarray(-8 * 1024)
+      .toString();
+    const expected = tail
+      .split('\n')
+      .map((line) => line.replace(/\r$/, ''))
+      .filter((line) => line.length > 0);
+    expect(exit?.data).toMatchObject({ last_output: expected });
+    expect(expected[expected.length - 1]).toBe(lines[99]);
+  });
+
   it('sends raw bytes to the window and base64 to subscribers', async () => {
     const { notify, proc } = await launch('agent-batch-subscriber');
     const sub = vi.fn();

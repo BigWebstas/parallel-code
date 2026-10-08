@@ -647,7 +647,9 @@ function attachPtyOutputHandlers(
 
     tailChunks.push(chunk);
     tailSize += chunk.length;
-    if (tailSize > TAIL_CAP) {
+    // Trim only at twice the cap: compacting on every chunk past the cap would
+    // copy the whole tail per chunk. Exit slices it back to TAIL_CAP.
+    if (tailSize > 2 * TAIL_CAP) {
       const combined = Buffer.concat(tailChunks);
       const trimmed = combined.subarray(combined.length - TAIL_CAP);
       tailChunks = [trimmed];
@@ -687,7 +689,7 @@ function attachPtyOutputHandlers(
 
     flush();
 
-    const tailBuf = Buffer.concat(tailChunks);
+    const tailBuf = Buffer.concat(tailChunks).subarray(-TAIL_CAP);
     const tailStr = tailBuf.toString('utf8');
     if (path.basename(command) === 'codex' && exitCode === 0 && !signal) {
       const id = codexResumeId(tailStr);
