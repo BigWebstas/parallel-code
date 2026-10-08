@@ -1011,11 +1011,48 @@ function splitContentLines(content: string): string[] {
   return content.endsWith('\n') ? lines.slice(0, -1) : lines;
 }
 
+interface LineCountEntry {
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  lines: number;
+}
+
+// The changed-files poll recounts every untracked file each tick; an agent's
+// new directory would otherwise be re-read in full every few seconds.
+// shortcut: cleared wholesale at the cap — LRU if large worktrees thrash it.
+const lineCountCache = new Map<string, LineCountEntry>();
+const LINE_COUNT_CACHE_MAX = 5_000;
+
+const NEWLINE = 0x0a;
+
 export async function countReadableTextLines(filePath: string): Promise<number> {
   try {
     const stat = await fs.promises.stat(filePath);
     if (!stat.isFile() || stat.size >= MAX_BUFFER) return 0;
-    return splitContentLines(await fs.promises.readFile(filePath, 'utf8')).length;
+    const cached = lineCountCache.get(filePath);
+    if (
+      cached &&
+      cached.size === stat.size &&
+      cached.mtimeMs === stat.mtimeMs &&
+      cached.ctimeMs === stat.ctimeMs
+    ) {
+      return cached.lines;
+    }
+    // Same count as splitting the decoded text: UTF-8 never encodes another
+    // character with a 0x0a byte, so counting raw newlines skips the decode.
+    const buf = await fs.promises.readFile(filePath);
+    let lines = 0;
+    for (let i = buf.indexOf(NEWLINE); i !== -1; i = buf.indexOf(NEWLINE, i + 1)) lines++;
+    if (buf.length > 0 && buf[buf.length - 1] !== NEWLINE) lines++;
+    if (lineCountCache.size >= LINE_COUNT_CACHE_MAX) lineCountCache.clear();
+    lineCountCache.set(filePath, {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
+      lines,
+    });
+    return lines;
   } catch {
     return 0;
   }
