@@ -2043,7 +2043,7 @@ const UNREADABLE_WORKTREE_STATUS: WorktreeStatus = {
 };
 
 /** Parse `git status --porcelain=v2 --branch` output. */
-function parseStatusV2(out: string): {
+export function parseStatusV2(out: string): {
   currentBranch: string | null;
   headSha: string | null;
   hasUncommittedChanges: boolean;
