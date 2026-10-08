@@ -109,6 +109,7 @@ import {
   projectImageTag,
   resizeAgent,
   setAgentRemoteSize,
+  setRemoteHistory,
   resolveProjectDockerfile,
   spawnAgent,
   setAgentHookRuntime,
@@ -2224,5 +2225,32 @@ describe('subscribeToAgentRendered', () => {
 
   it('returns null for an unknown agent', () => {
     expect(subscribeToAgentRendered('missing', vi.fn(), vi.fn())).toBeNull();
+  });
+
+  it('keeps long history in running mirrors only while phones can connect', async () => {
+    const snapshotOf = async (agentId: string) => {
+      let data: string | null = null;
+      subscribeToAgentRendered(
+        agentId,
+        (snapshot) => (data = decode(snapshot?.data ?? '')),
+        vi.fn(),
+      );
+      await vi.waitFor(() => expect(data).not.toBeNull());
+      return data ?? '';
+    };
+    const proc = await launch('agent-history');
+    try {
+      // Raised after launch, so this checks the running session follows, not just new ones.
+      setRemoteHistory(true);
+      for (let i = 0; i < 500; i++) proc.emitData(`line-${String(i).padStart(3, '0')}\r\n`);
+      expect(await snapshotOf('agent-history')).toContain('line-000');
+
+      setRemoteHistory(false);
+      const trimmed = await snapshotOf('agent-history');
+      expect(trimmed).not.toContain('line-000');
+      expect(trimmed).toContain('line-499');
+    } finally {
+      setRemoteHistory(false);
+    }
   });
 });
