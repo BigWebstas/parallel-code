@@ -1205,6 +1205,9 @@ export function TerminalView(props: TerminalViewProps) {
       if (!term || spawnStarted) return;
       const landingState = store.tasks[taskId]?.landingState;
       if (isLandedTaskState(landingState)) return;
+      // A task that is closing, or whose close failed (even before a restart),
+      // must not get a fresh agent: it would keep the worktree it is losing open.
+      if (store.tasks[taskId]?.closingStatus) return;
       spawnStarted = true;
       invoke<{
         canvasTools: boolean;

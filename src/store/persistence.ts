@@ -180,6 +180,13 @@ function validPromptedAgentIndexes(value: unknown): number[] | undefined {
   return valid.length > 0 ? valid : undefined;
 }
 
+/** A close that failed before the last exit stays failed, with its Retry button. */
+function restoredCloseFailure(pt: PersistedTask): Pick<Task, 'closingStatus' | 'closingError'> {
+  return typeof pt.closeError === 'string' && pt.closeError
+    ? { closingStatus: 'error', closingError: pt.closeError }
+    : {};
+}
+
 function restoredPromptHistory(value: unknown): Task['promptHistory'] {
   if (!Array.isArray(value)) return undefined;
   // Drop the malformed entries before capping, so junk at the tail of an old save cannot
@@ -263,6 +270,7 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     projectId: task.projectId,
     branchName: task.branchName,
     worktreePath: task.worktreePath,
+    closeError: task.closingStatus === 'error' ? (task.closingError ?? 'Close failed') : undefined,
     notes: task.notes,
     promptDraft: task.promptDraft,
     lastPrompt: task.lastPrompt,
@@ -987,6 +995,7 @@ export async function loadState(): Promise<void> {
           worktreePath: documentTaskIds.includes(taskId)
             ? (projects.find((project) => project.id === pt.projectId)?.path ?? pt.worktreePath)
             : pt.worktreePath,
+          ...restoredCloseFailure(pt),
           agentIds,
           agentSessionIds: restoredAgentSessionIds(pt, agentIds),
           selectedAgentId: validAgentId(pt.selectedAgentId, agentIds) ?? agentIds[0],

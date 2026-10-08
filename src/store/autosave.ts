@@ -68,6 +68,7 @@ function structuralSnapshot(): string {
           id,
           {
             browserUrl: t.browserUrl,
+            closeError: t.closingStatus === 'error' ? t.closingError : undefined,
             mindMap: t.mindMap,
             reasoningWorkspaces: t.reasoningWorkspaces,
             lastPrompt: t.lastPrompt,

@@ -1,4 +1,5 @@
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
+import { once } from 'events';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -598,6 +599,34 @@ describe('sandbox setup lifecycle', () => {
       'export const a = 1;\n',
     );
   });
+
+  // An orphan whose parent died is outside any process tree `taskkill /T` walks,
+  // yet its working directory keeps the folder from being deleted.
+  it.runIf(process.platform === 'win32')(
+    'ends a stray process whose working directory is the worktree',
+    async () => {
+      const root = initRepository();
+      const branch = 'task-remove-with-stray-process';
+      const worktree = (await createWorktree(root, branch, [])).path;
+      const stray = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        cwd: worktree,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      try {
+        await once(stray, 'spawn');
+
+        await removeWorktree(root, branch, true);
+
+        expect(fs.existsSync(worktree)).toBe(false);
+        expect(git(root, ['branch', '--list', branch])).toBe('');
+      } finally {
+        stray.kill();
+        if (stray.exitCode === null && stray.signalCode === null) await once(stray, 'exit');
+      }
+    },
+    90_000,
+  );
 
   it('does not throw and skips branch deletion when deleteBranch is true for repo root active branch', async () => {
     const root = initRepository();

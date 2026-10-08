@@ -17,6 +17,12 @@ import {
   realpathOrNull,
 } from './worktree-node-modules.js';
 import { symlinkCrossPlatform, unlinkSymlinkCrossPlatform } from './symlink.js';
+import {
+  findWorktreeLockers,
+  killWorktreeLockers,
+  lockedRemovalError,
+  partitionLockers,
+} from './worktree-lockers.js';
 import type {
   ChangedFile,
   CommitInfo,
@@ -975,7 +981,10 @@ async function removeWorktreeDir(repoRoot: string, worktreePath: string): Promis
     return;
   }
 
-  if (process.platform === 'win32') throw lockedRemovalError(worktreePath, rmError);
+  if (process.platform === 'win32') {
+    await removeLockedWorktreeDir(worktreePath, rmError);
+    return;
+  }
 
   const uid = process.getuid?.() ?? -1;
   const gid = process.getgid?.() ?? -1;
@@ -1051,16 +1060,24 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
 }
 
 /**
- * Explain a Windows worktree removal failure in actionable terms: the raw
- * EPERM/EBUSY/ENOTEMPTY error alone gives the user nothing to act on.
+ * Last resort on Windows when the worktree cannot be deleted: processes left
+ * with their working directory inside it (an orphaned helper whose parent died,
+ * which `taskkill /T` cannot reach) block the delete although no agent runs.
+ * The task is being deleted, so end them and retry; anything protected, or
+ * still holding on afterwards, goes into the error so the user can act on it.
  */
-function lockedRemovalError(worktreePath: string, cause: unknown): Error {
-  const detail = cause instanceof Error ? cause.message : String(cause);
-  return new Error(
-    `Cannot remove worktree "${worktreePath}": ${detail}. ` +
-      'A process (agent, editor, or terminal) may still hold files open inside it. ' +
-      'Close anything using that folder, then close the task again to retry.',
-  );
+async function removeLockedWorktreeDir(worktreePath: string, rmError: unknown): Promise<void> {
+  const { killable, kept } = partitionLockers(await findWorktreeLockers(worktreePath));
+  if (killable.length === 0) throw lockedRemovalError(worktreePath, rmError, kept);
+
+  await killWorktreeLockers(killable);
+  const retryError = await removeDirWithRetries(worktreePath);
+  if (!retryError) {
+    logDebug('git', `removeWorktreeDir: removal succeeded after ending holders of ${worktreePath}`);
+    return;
+  }
+  const remaining = await findWorktreeLockers(worktreePath);
+  throw lockedRemovalError(worktreePath, retryError, remaining.length > 0 ? remaining : kept);
 }
 
 // --- Public functions (used by tasks.ts and register.ts) ---

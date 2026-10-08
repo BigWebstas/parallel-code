@@ -331,6 +331,8 @@ export interface Terminal {
 }
 
 export interface PersistedTask {
+  /** Set while a failed close is pending, so a restart does not bring the task's agents back. */
+  closeError?: string;
   mainAgentView?: 'terminal' | 'chat';
   codexChatThreadId?: string;
   codexChatHandoff?: {

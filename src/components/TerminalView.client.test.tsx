@@ -4,6 +4,8 @@ import type { Terminal } from '@xterm/xterm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IPC } from '../../electron/ipc/channels';
 import { TerminalView } from './TerminalView';
+import { setStore } from '../store/core';
+import type { Task } from '../store/types';
 
 const { terminals } = vi.hoisted(() => ({ terminals: [] as Terminal[] }));
 
@@ -162,6 +164,17 @@ describe('TerminalView', () => {
     expect(scrollToLine).toHaveBeenCalledTimes(2);
     disposers.pop()?.();
     expect(onStepNavReady).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('does not start an agent for a task whose close failed', async () => {
+    setStore('tasks', 'task-1', { id: 'task-1', closingStatus: 'error' } as Task);
+    try {
+      mountTerminal();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(invoke.mock.calls.filter(([cmd]) => cmd === IPC.SpawnAgent)).toEqual([]);
+    } finally {
+      setStore('tasks', 'task-1', undefined as unknown as Task);
+    }
   });
 
   it('holds input until the agent has spawned', async () => {

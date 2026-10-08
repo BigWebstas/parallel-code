@@ -291,6 +291,40 @@ describe('landing state persistence', () => {
   });
 });
 
+describe('failed close persistence', () => {
+  it('keeps a task in its failed-close state across a restart', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'hsl(0, 70%, 75%)' }],
+        lastProjectId: 'project-1',
+        lastAgentId: null,
+        taskOrder: ['task-1', 'task-2'],
+        collapsedTaskOrder: [],
+        tasks: {
+          'task-1': { ...persistedTask(agentDef()), closeError: 'EBUSY: folder in use' },
+          'task-2': { ...persistedTask(agentDef()), id: 'task-2' },
+        },
+        activeTaskId: 'task-1',
+        sidebarVisible: true,
+      }),
+    );
+
+    await loadState();
+
+    expect(store.tasks['task-1'].closingStatus).toBe('error');
+    expect(store.tasks['task-1'].closingError).toBe('EBUSY: folder in use');
+    expect(store.tasks['task-2'].closingStatus).toBeUndefined();
+
+    await saveState();
+    const saved = JSON.parse(
+      [...mockInvoke.mock.calls].reverse().find(([channel]) => channel === IPC.SaveAppState)?.[1]
+        .json,
+    );
+    expect(saved.tasks['task-1'].closeError).toBe('EBUSY: folder in use');
+    expect(saved.tasks['task-2'].closeError).toBeUndefined();
+  });
+});
+
 describe('completion report persistence', () => {
   const completion = {
     id: '11111111-1111-4111-8111-111111111111',
