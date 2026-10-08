@@ -507,7 +507,8 @@ fun AgentsScreen(
                 refreshing = true
                 scope.launch {
                     client.reconnect()
-                    try { client.fetchUsage() } catch (_: Exception) {}
+                    // The connection status already reports an outage; the strip keeps its last reading.
+                    runCatching { client.fetchUsage() }
                     delay(600)
                     refreshing = false
                 }

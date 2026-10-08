@@ -186,21 +186,27 @@ class RemoteClient(
      * that answers for agents but not usage still counts, with no usage.
      */
     private suspend fun fetchSnapshotFrom(computer: SavedComputer): ComputerSnapshot? {
-        val agents = getFrom(computer, "/api/agents")?.let(::parseAgentList) ?: return null
-        val usage = getFrom(computer, "/api/mobile/usage")
-            ?.let { runCatching { parseUsage(JSONObject(it)) }.getOrNull() }
-            .orEmpty()
-        return ComputerSnapshot(computer.label, agents, usage)
+        val agents = getFrom(computer, "/api/agents")?.takeIf { it.first in 200..299 }
+            ?.let { parseAgentList(it.second) } ?: return null
+        return ComputerSnapshot(computer.label, agents, usageFrom(computer))
     }
 
-    /** The body of a GET to [path] on [computer], or null when it fails. */
-    private suspend fun getFrom(computer: SavedComputer, path: String): String? = withContext(Dispatchers.IO) {
+    private suspend fun usageFrom(computer: SavedComputer): List<ProviderUsage> {
+        if (computer.baseUrl in usageUnsupported) return emptyList()
+        val (code, body) = getFrom(computer, "/api/mobile/usage") ?: return emptyList()
+        if (code == 404) usageUnsupported += computer.baseUrl
+        if (code !in 200..299) return emptyList()
+        return runCatching { parseUsage(JSONObject(body)) }.getOrDefault(emptyList())
+    }
+
+    /** The status and body of a GET to [path] on [computer], or null when it can't be reached. */
+    private suspend fun getFrom(computer: SavedComputer, path: String): Pair<Int, String>? = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(computer.baseUrl + path)
             .header("Authorization", "Bearer ${computer.pairedToken ?: computer.token}")
             .build()
         try {
-            http.newCall(request).execute().use { if (it.isSuccessful) it.body.string() else null }
+            http.newCall(request).execute().use { it.code to it.body.string() }
         } catch (_: IOException) {
             null
         }
@@ -262,6 +268,8 @@ class RemoteClient(
     }
 
     fun reconnect() {
+        // A manual reconnect is the user's way to pick up a desktop that was updated meanwhile.
+        usageUnsupported.clear()
         closeSocket()
         if (started) connect()
     }
@@ -324,10 +332,23 @@ class RemoteClient(
         return TaskDiff.from(json)
     }
 
-    /** The desktop status bar's subscription usage; readable with the view-only token. */
-    suspend fun fetchUsage(): List<ProviderUsage> =
-        parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
-            .also { _usage.value = it }
+    /**
+     * The desktop status bar's subscription usage; readable with the view-only token. Empty, without
+     * asking again, from a desktop that has no usage route yet (it answered 404).
+     */
+    suspend fun fetchUsage(): List<ProviderUsage> {
+        val baseUrl = credentials.link?.baseUrl
+        if (baseUrl != null && baseUrl in usageUnsupported) return emptyList<ProviderUsage>().also { _usage.value = it }
+        val usage = try {
+            parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
+        } catch (e: ApiException) {
+            if (e.status != 404 || baseUrl == null) throw e
+            usageUnsupported += baseUrl
+            emptyList()
+        }
+        _usage.value = usage
+        return usage
+    }
 
     /**
      * The desktop's merge-readiness checks for a task, built by the same
@@ -355,6 +376,9 @@ class RemoteClient(
     }
 
     private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
+
+    // Desktops (by base URL) without the usage route, so polling stops asking them every minute.
+    private val usageUnsupported: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /** The last usage snapshot fetched, for the widget. */
     val usage: StateFlow<List<ProviderUsage>> = _usage.asStateFlow()
