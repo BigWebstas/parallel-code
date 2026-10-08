@@ -22,6 +22,7 @@ class LookPalettesTest {
         val ids = LookPresets.all.map { it.id }
         assertEquals(
             listOf(
+                "parallel-code",
                 "noir",
                 "obsidian",
                 "obsidian-light",
@@ -365,6 +366,7 @@ private fun paletteArgb(color: Color): Int =
     @Test
     fun terminalThemesMatchTheDesktopPairing() {
         val expected = mapOf(
+            "parallel-code" to "noir",
             "noir" to "noir",
             "obsidian" to "obsidian",
             "islands-dark" to "islands-dark",

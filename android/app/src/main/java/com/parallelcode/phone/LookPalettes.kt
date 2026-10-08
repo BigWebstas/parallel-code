@@ -196,6 +196,46 @@ val ALL_TERMINAL_THEMES: Map<String, TerminalTheme> =
         TerminalIslandsDark,
     ).associateBy { it.id }
 
+private val ParallelCode =
+    LookPalette(
+        id = "parallel-code",
+        label = "Parallel Code",
+        description = "Website-inspired blue-black surfaces, soft cyan accents, and pale text",
+        dark = true,
+        bg = Color(0xFF080C10),
+        bgElevated = Color(0xFF10161C),
+        bgInput = Color(0xFF0C1218),
+        bgHover = Color(0xFF151E26),
+        bgSelected = Color(0xFF18343E),
+        border = Color(0xFF29343D),
+        borderSubtle = Color(0xFF1E272F),
+        borderFocus = Color(0xFF67D9ED),
+        fg = Color(0xFFF0F4F7),
+        fgMuted = Color(0xFF9AA9B6),
+        fgSubtle = Color(0xFF8193A2),
+        accent = Color(0xFF67D9ED),
+        accentHover = Color(0xFF91E5F3),
+        accentText = Color(0xFF080C10),
+        link = Color(0xFF67D9ED),
+        success = Color(0xFF98C9AE),
+        error = Color(0xFFF08F8A),
+        warning = Color(0xFFDFBA83),
+        review = Color(0xFFC1B0E8),
+        info = Color(0xFF8FBDDD),
+        islandBg = Color(0xFF10161C),
+        islandBorder = Color(0xFF29343D),
+        containerBg = Color(0xFF0C1218),
+        panelBg = Color(0xFF10161C),
+        diffAddBg = Color(0x1F98C9AE),
+        diffRemoveBg = Color(0x1FF08F8A),
+        radiusXs = 4.dp,
+        radiusSm = 6.dp,
+        radiusMd = 8.dp,
+        radiusLg = 12.dp,
+        radiusIsland = 12.dp,
+        terminalThemeId = "noir",
+    )
+
 private val Noir =
     LookPalette(
         id = "noir",
@@ -799,6 +839,7 @@ private val Workbench =
 /** Every preset, in the order the desktop lists them. */
 val ALL_LOOK_PALETTES: List<LookPalette> =
     listOf(
+        ParallelCode,
         Noir,
         Obsidian,
         ObsidianLight,
