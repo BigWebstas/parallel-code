@@ -69,7 +69,12 @@ import {
 import { readCoverageSummary } from './coverage.js';
 import { loadEslintQualityFindings } from './eslint-quality-findings.js';
 import { buildVerifyEnv, validateVerifyCommand, verificationRunner } from './verify.js';
-import { startRemoteServer, getMCPLogs, type RemoteProject } from '../remote/server.js';
+import {
+  startRemoteServer,
+  getMCPLogs,
+  type RemoteProject,
+  type RemoteAgentDef,
+} from '../remote/server.js';
 import type {
   RemoteAttentionState,
   RemoteCloseResult,
@@ -1684,8 +1689,13 @@ export function registerAllHandlers(win: BrowserWindow): void {
     publishTour: (taskId: string, payload: AgentTourPayload) =>
       callRenderer<{ ok: boolean }>(IPC.MCP_PublishTourRequest, { taskId, payload }),
     getProjects: () => callRenderer<RemoteProject[]>(IPC.Remote_GetProjectsRequest, {}),
-    createTaskFromMobile: (req: { projectId: string; name: string; prompt: string }) =>
-      callRenderer<{ taskId: string }>(IPC.Remote_CreateTaskRequest, req),
+    getAgents: () => callRenderer<RemoteAgentDef[]>(IPC.Remote_GetAgentsRequest, {}),
+    createTaskFromMobile: (req: {
+      projectId: string;
+      name: string;
+      prompt: string;
+      agentId?: string;
+    }) => callRenderer<{ taskId: string }>(IPC.Remote_CreateTaskRequest, req),
     getTaskNotes: (taskId: string) =>
       callRenderer<{ notes: string }>(IPC.Remote_GetNotesRequest, { taskId }).then((r) => r.notes),
     setTaskNotes: (taskId: string, notes: string) =>

@@ -96,6 +96,7 @@ const ALLOWED_CHANNELS = new Set([
   'get_remote_status',
   'generate_pairing_pin',
   'remote_get_projects_request',
+  'remote_get_agents_request',
   'remote_create_task_request',
   'mcp_read_mindmap_request',
   'mcp_read_reasoning_request',

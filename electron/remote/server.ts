@@ -303,6 +303,15 @@ export interface RemoteProject {
   name: string;
 }
 
+/** An agent definition the mobile "New Task" screen can select. */
+export interface RemoteAgentDef {
+  id: string;
+  name: string;
+  description?: string;
+  available?: boolean;
+  isDefault?: boolean;
+}
+
 /** Detect available network IPs (WiFi and Tailscale). */
 function getNetworkIps(): { wifi: string | null; tailscale: string | null } {
   const nets = networkInterfaces();
@@ -951,11 +960,14 @@ export function startRemoteServer(opts: {
   ) => Promise<unknown>;
   /** List projects the mobile "New Task" screen can target (renderer-backed). */
   getProjects?: () => Promise<RemoteProject[]>;
+  /** List agents the mobile "New Task" screen can target (renderer-backed). */
+  getAgents?: () => Promise<RemoteAgentDef[]>;
   /** Create a top-level task on behalf of a paired phone (renderer-backed). */
   createTaskFromMobile?: (req: {
     projectId: string;
     name: string;
     prompt: string;
+    agentId?: string;
   }) => Promise<{ taskId: string }>;
   readMindMap?: (taskId: string) => Promise<MindMapDocument>;
   readReasoning?: (taskId: string) => Promise<ReasoningDocument>;
@@ -1416,9 +1428,13 @@ export function startRemoteServer(opts: {
       }
 
       // --- Paired-mobile task creation ---
-      // GET projects for the picker + POST a new top-level task. Both require the
+      // GET projects / agents for the picker + POST a new top-level task. Both require the
       // elevated "paired" token; the read-only mobile token is rejected here.
-      if (url.pathname === '/api/mobile/projects' || url.pathname === '/api/mobile/tasks') {
+      if (
+        url.pathname === '/api/mobile/projects' ||
+        url.pathname === '/api/mobile/agents' ||
+        url.pathname === '/api/mobile/tasks'
+      ) {
         if (tokenClass !== 'paired') return jsonEnd(403, { error: 'forbidden' });
 
         if (url.pathname === '/api/mobile/projects' && req.method === 'GET') {
@@ -1426,6 +1442,15 @@ export function startRemoteServer(opts: {
           opts
             .getProjects()
             .then((projects) => jsonEnd(200, projects))
+            .catch((err) => jsonEnd(500, { error: String(err) }));
+          return;
+        }
+
+        if (url.pathname === '/api/mobile/agents' && req.method === 'GET') {
+          if (!opts.getAgents) return jsonEnd(503, { error: 'task creation unavailable' });
+          opts
+            .getAgents()
+            .then((agents) => jsonEnd(200, agents))
             .catch((err) => jsonEnd(500, { error: String(err) }));
           return;
         }
@@ -1447,7 +1472,13 @@ export function startRemoteServer(opts: {
               const projectId = typeof body.projectId === 'string' ? body.projectId : '';
               if (!projectId)
                 return jsonEnd(400, { error: 'projectId must be a non-empty string' });
-              createTask({ projectId, name, prompt })
+              const agentId =
+                typeof body.agentId === 'string' && body.agentId.trim()
+                  ? body.agentId.trim()
+                  : undefined;
+              if (agentId !== undefined && agentId.length > 100)
+                return jsonEnd(400, { error: 'agentId must be 100 characters or fewer' });
+              createTask({ projectId, name, prompt, ...(agentId ? { agentId } : {}) })
                 .then((r) => jsonEnd(201, { taskId: r.taskId }))
                 .catch((err) => jsonEnd(500, { error: String(err) }));
             })
