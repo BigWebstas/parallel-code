@@ -17,7 +17,7 @@ import { createFocusRestore } from '../lib/focus-restore';
 import { topDialog } from '../lib/dialog-stack';
 import { registerFocusFn, unregisterFocusFn } from '../store/focused-panel';
 import { setStore } from '../store/core';
-import { FolderIcon, GitBranchIcon } from './icons';
+import { ContainerIcon, FolderIcon, GitBranchIcon, GitHubIcon, PlusIcon, SyncIcon } from './icons';
 import { ConfirmDialog } from './ConfirmDialog';
 import { errMessage } from '../lib/log';
 import { invoke } from '../lib/ipc';
@@ -238,6 +238,7 @@ function DockerTaskOptions(props: {
               >
                 <button
                   type="button"
+                  class="btn-with-icon"
                   onClick={() => props.onBuildImage()}
                   style={{
                     background: theme.accent,
@@ -249,6 +250,7 @@ function DockerTaskOptions(props: {
                     cursor: 'pointer',
                   }}
                 >
+                  <ContainerIcon size={12} />
                   Build Image
                 </button>
               </Show>
@@ -1235,7 +1237,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
               <Show when={canPickFromGitHub()}>
                 <button
                   type="button"
-                  class="btn-secondary"
+                  class="btn-secondary btn-with-icon"
                   aria-expanded={githubPickerOpen()}
                   onClick={() => setGithubPickerOpen((v) => !v)}
                   title="Start from an open GitHub issue or pull request (uses the gh CLI)"
@@ -1250,6 +1252,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
                     cursor: 'pointer',
                   }}
                 >
+                  <GitHubIcon size={12} />
                   From GitHub…
                 </button>
               </Show>
@@ -1535,6 +1538,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
                         <span>Couldn't load branches.</span>
                         <button
                           type="button"
+                          class="btn-with-icon"
                           onClick={() => setBranchRetryToken((n) => n + 1)}
                           style={{
                             background: 'transparent',
@@ -1546,6 +1550,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
                             cursor: 'pointer',
                           }}
                         >
+                          <SyncIcon size={12} />
                           Retry
                         </button>
                       </div>
@@ -1702,6 +1707,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
               gap: '8px',
             }}
           >
+            <PlusIcon size={14} />
             Create Task
           </button>
         </div>

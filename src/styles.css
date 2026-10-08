@@ -2546,6 +2546,14 @@ html:is(
   overflow: hidden;
 }
 
+/* Leading-icon buttons: centres the glyph against the label whatever the button's width. */
+.btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-hover-bg, var(--accent-hover)) !important;
   box-shadow: var(--shadow-pop);

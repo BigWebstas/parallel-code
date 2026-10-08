@@ -14,6 +14,7 @@ import { theme } from '../lib/theme';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { RemoteAccess } from '../store/types';
+import { PlugIcon, SyncIcon } from './icons';
 
 type NetworkMode = 'wifi' | 'tailscale';
 
@@ -530,6 +531,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
             fallback={
               <>
                 <button
+                  class="btn-with-icon"
                   onClick={handleGeneratePin}
                   style={{
                     padding: '7px 16px',
@@ -542,6 +544,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
                     'font-weight': '500',
                   }}
                 >
+                  <SyncIcon size={14} />
                   Get a new pairing code
                 </button>
                 <Show when={pairingError()}>
@@ -567,6 +570,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
                   {pin()}
                 </span>
                 <button
+                  class="btn-with-icon"
                   onClick={handleGeneratePin}
                   style={{
                     padding: '4px 10px',
@@ -577,6 +581,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
                     'font-size': '12px',
                   }}
                 >
+                  <SyncIcon size={12} />
                   Generate a new code
                 </button>
               </>
@@ -647,6 +652,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
 
         {/* Disconnect — always available when server is running */}
         <button
+          class="btn-with-icon"
           onClick={handleDisconnect}
           disabled={disconnecting()}
           style={{
@@ -660,6 +666,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
             'font-weight': '400',
           }}
         >
+          <PlugIcon size={14} />
           Disconnect
         </button>
       </Show>

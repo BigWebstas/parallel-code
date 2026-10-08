@@ -14,6 +14,7 @@ import { createPushRun } from './push-run';
 import { parseGitHubUrl } from '../lib/github-url';
 import { getPrChecks, getProject } from '../store/store';
 import { theme } from '../lib/theme';
+import { SyncIcon, UploadIcon } from './icons';
 
 export type FinishAction = 'merge' | 'push';
 
@@ -151,6 +152,7 @@ export function FinishDialog(props: FinishDialogProps) {
                     onClick={() => props.onRegenerateTour()}
                     title="Discard this tour and generate a new one"
                   >
+                    <SyncIcon size={12} />
                     Regenerate
                   </button>
                 </Show>
@@ -248,7 +250,7 @@ export function FinishDialog(props: FinishDialogProps) {
         extraActions={
           <button
             type="button"
-            class="btn-secondary"
+            class="btn-secondary btn-with-icon"
             disabled={push.pushing() || merge.merging()}
             onClick={() => void push.start()}
             title={`Push ${props.task.branchName} to origin; the task stays open`}
@@ -258,6 +260,7 @@ export function FinishDialog(props: FinishDialogProps) {
               opacity: merge.merging() ? '0.5' : '1',
             }}
           >
+            <UploadIcon size={14} />
             {push.pushing() ? 'Pushing…' : 'Push branch'}
           </button>
         }

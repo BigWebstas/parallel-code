@@ -54,6 +54,7 @@ import {
 import { CustomAgentEditor } from './CustomAgentEditor';
 import { AgentEnvFileEditor } from './AgentEnvFileEditor';
 import { SuperProductivitySettings } from './SuperProductivitySettings';
+import { CopyIcon, PencilIcon, PlusIcon, SyncIcon } from './icons';
 import { mod } from '../lib/platform';
 import { DEFAULT_COORDINATOR_CONCURRENT_TASKS } from '../lib/coordinator-limits';
 import { DEFAULT_DOCKER_IMAGE, PROJECT_DOCKERFILE_RELATIVE_PATH } from '../lib/docker';
@@ -166,8 +167,9 @@ export function PresetThemeCard(props: {
           opacity: '0',
           transition: 'opacity 0.15s',
         }}
-        class="preset-clone-btn"
+        class="preset-clone-btn btn-with-icon"
       >
+        <CopyIcon size={12} />
         Clone
       </button>
     </div>
@@ -211,8 +213,9 @@ function CustomThemeCard(props: {
           opacity: '0',
           transition: 'opacity 0.15s',
         }}
-        class="preset-clone-btn"
+        class="preset-clone-btn btn-with-icon"
       >
+        <PencilIcon size={12} />
         Edit
       </button>
     </div>
@@ -976,10 +979,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 <Show when={canCheckForUpdates()}>
                   <button
                     type="button"
+                    class="btn-with-icon"
                     disabled={updateStatus().phase === 'checking'}
                     onClick={() => void checkForUpdates()}
                     style={updateSecondaryButtonStyle(updateStatus().phase === 'checking')}
                   >
+                    <SyncIcon size={14} />
                     {updateStatus().phase === 'checking' ? 'Checking…' : 'Check for updates'}
                   </button>
                 </Show>
@@ -1105,6 +1110,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
             <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Themes</div>
             <button
               type="button"
+              class="btn-with-icon"
               onClick={() => {
                 setCloneCss(undefined);
                 setEditingThemeId(null);
@@ -1121,7 +1127,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 'border-radius': 'var(--radius-sm)',
               }}
             >
-              + Create New
+              <PlusIcon size={12} />
+              Create New
             </button>
           </div>
 

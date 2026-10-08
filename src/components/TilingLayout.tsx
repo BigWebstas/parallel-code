@@ -39,6 +39,7 @@ import { mod } from '../lib/platform';
 import { createCtrlShiftWheelResizeHandler } from '../lib/wheelZoom';
 import { shouldAnimateTaskAppearance } from '../lib/reducedMotion';
 import { TASK_TILE_DEFAULT_WIDTH, TASK_TILE_MIN_WIDTH } from '../lib/layout-sizes';
+import { SyncIcon } from './icons';
 
 // Lazy: the document workspace (CodeMirror, parse5) loads when its panel opens.
 const DocumentWorkspacePanel = lazy(() =>
@@ -351,6 +352,7 @@ export function TilingLayout() {
                       </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button
+                          class="btn-with-icon"
                           onClick={reset}
                           style={{
                             background: theme.bgElevated,
@@ -361,6 +363,7 @@ export function TilingLayout() {
                             cursor: 'pointer',
                           }}
                         >
+                          <SyncIcon size={12} />
                           Retry
                         </button>
                         <button

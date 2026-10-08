@@ -44,6 +44,7 @@ import { DocumentViewer } from './DocumentViewer';
 import { SourceDiff } from './SourceDiff';
 import { createRenderedBlocks } from './use-blocks';
 import { renderDocument } from './render-document';
+import { CheckIcon, SparkleIcon } from '../components/icons';
 
 function projectRoot(): string {
   const project = documentStore.projectId ? getProject(documentStore.projectId) : undefined;
@@ -589,6 +590,7 @@ function CandidateColumn(props: {
             }
             onClick={() => void accept()}
           >
+            <CheckIcon size={12} />
             {accepting()
               ? 'Applying…'
               : declined().size === 0
@@ -773,6 +775,7 @@ export function CompareView(props: { run: DocumentRunRecord; candidateId?: strin
             title="Let an agent read the proposals and draft one merged version"
             onClick={() => setMerging((value) => !value)}
           >
+            <SparkleIcon size={12} />
             Merge with agent
           </button>
         </Show>

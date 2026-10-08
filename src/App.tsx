@@ -118,6 +118,7 @@ import { startAgentHookStatusListener } from './store/agentHookStatus';
 import { applyPlanContent, startCanvasAutoOpen } from './store/canvas';
 import { startEvidenceAutoBuild } from './store/evidence-auto';
 import type { PlanContentMessage } from './store/canvas';
+import { SyncIcon } from './components/icons';
 
 const ArenaOverlay = lazy(() =>
   import('./arena/ArenaOverlay').then((m) => ({ default: m.ArenaOverlay })),
@@ -844,6 +845,7 @@ function App() {
             {String(err)}
           </div>
           <button
+            class="btn-with-icon"
             onClick={reset}
             style={{
               background: theme.bgElevated,
@@ -855,6 +857,7 @@ function App() {
               'font-size': '15px',
             }}
           >
+            <SyncIcon size={14} />
             Reload
           </button>
         </div>
