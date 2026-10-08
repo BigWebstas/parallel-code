@@ -189,6 +189,107 @@ it('adds a task created from a phone without taking focus from the active task',
   expect(store.activeAgentId).toBe('agent');
 });
 
+it('replies to Remote_GetAgentsRequest with available agents and default flag', async () => {
+  const agent1 = {
+    id: 'claude',
+    name: 'Claude',
+    command: 'claude',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: 'Claude agent',
+  };
+  const agent2 = {
+    id: 'codex',
+    name: 'Codex',
+    command: 'codex',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: 'Codex agent',
+  };
+  setStore('availableAgents', [agent1, agent2]);
+  setStore('lastAgentId', 'codex');
+
+  listeners.get(IPC.Remote_GetAgentsRequest)?.({ reqId: 'req-agents' });
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      IPC.Remote_RendererReply,
+      expect.objectContaining({
+        reqId: 'req-agents',
+        ok: true,
+        data: [
+          {
+            id: 'claude',
+            name: 'Claude',
+            description: 'Claude agent',
+            available: true,
+            isDefault: false,
+          },
+          {
+            id: 'codex',
+            name: 'Codex',
+            description: 'Codex agent',
+            available: true,
+            isDefault: true,
+          },
+        ],
+      }),
+    ),
+  );
+});
+
+it('creates a task using the explicitly requested agent', async () => {
+  const agent1 = {
+    id: 'claude',
+    name: 'Claude',
+    command: 'claude',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: '',
+  };
+  const agent2 = {
+    id: 'codex',
+    name: 'Codex',
+    command: 'codex',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: '',
+  };
+  setStore('projects', [
+    { id: 'project', name: 'Project', path: '/tmp/project', color: '', defaultBaseBranch: 'main' },
+  ]);
+  setStore('availableAgents', [agent1, agent2]);
+  setStore('lastAgentId', 'claude');
+  setStore('taskOrder', ['task']);
+  setStore('activeTaskId', 'task');
+  setStore('activeAgentId', 'agent');
+  vi.mocked(invoke).mockImplementation(async (channel: string) => {
+    if (channel === IPC.GetGitignoredDirs) return [];
+    if (channel === IPC.CreateTask)
+      return { id: 'phone-codex-task', branch_name: 'task/codex', worktree_path: '/tmp/codex' };
+    return undefined;
+  });
+
+  listeners.get(IPC.Remote_CreateTaskRequest)?.({
+    reqId: 'req-codex',
+    projectId: 'project',
+    name: 'With Codex',
+    prompt: 'Run codex',
+    agentId: 'codex',
+  });
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      IPC.Remote_RendererReply,
+      expect.objectContaining({ ok: true, data: { taskId: 'phone-codex-task' } }),
+    ),
+  );
+
+  expect(store.lastAgentId).toBe('codex');
+});
+
 /** Replies to the close request once the handler has finished. */
 async function closeRequest(force: boolean) {
   listeners.get(IPC.Remote_CloseTaskRequest)?.({ reqId: 'req', taskId: 'task', force });

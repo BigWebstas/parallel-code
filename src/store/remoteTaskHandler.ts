@@ -5,6 +5,7 @@
 // main-side bridge.
 
 import { publishAgentTour } from './agent-tour';
+import { loadAgents } from './agents';
 import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } from './canvas';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { unwrap } from 'solid-js/store';
@@ -45,6 +46,7 @@ interface CreateTaskRequest extends RendererRequest {
   projectId: string;
   name: string;
   prompt: string;
+  agentId?: string;
 }
 
 interface GetNotesRequest extends RendererRequest {
@@ -83,6 +85,28 @@ function handleGetProjects(req: RendererRequest): void {
   );
 }
 
+async function handleGetAgents(req: RendererRequest): Promise<void> {
+  if (store.availableAgents.length === 0) {
+    try {
+      await loadAgents();
+    } catch {
+      // Ignore; fall back to whatever is loaded
+    }
+  }
+  const defaultId = store.lastAgentId ?? store.availableAgents[0]?.id;
+  reply(
+    req.reqId,
+    true,
+    store.availableAgents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      description: a.description ?? '',
+      available: a.available !== false,
+      isDefault: a.id === defaultId,
+    })),
+  );
+}
+
 /**
  * Whether a task created from a paired phone should launch with the agent's
  * skip-permissions flag.
@@ -104,11 +128,20 @@ async function handleCreateTask(req: CreateTaskRequest): Promise<void> {
     const project = store.projects.find((p) => p.id === req.projectId);
     if (!project) throw new Error('Project not found');
 
-    // Default agent: the last one used, else the first available (mirrors the
-    // New Task dialog's initial selection).
-    const agentDef =
-      store.availableAgents.find((a) => a.id === store.lastAgentId) ?? store.availableAgents[0];
-    if (!agentDef) throw new Error('No agent configured');
+    if (store.availableAgents.length === 0) {
+      try {
+        await loadAgents();
+      } catch {
+        // Ignore; fall back to whatever is loaded
+      }
+    }
+
+    const agentDef = req.agentId
+      ? store.availableAgents.find((a) => a.id === req.agentId)
+      : (store.availableAgents.find((a) => a.id === store.lastAgentId) ?? store.availableAgents[0]);
+    if (!agentDef) {
+      throw new Error(req.agentId ? `Agent "${req.agentId}" not found` : 'No agent configured');
+    }
 
     // Non-git projects can't use worktree isolation; fall back to working
     // directly in the project folder.
@@ -422,6 +455,9 @@ export function startRemoteTaskHandlers(): () => void {
       if (data && typeof data === 'object') handleGetProjects(data as RendererRequest);
     },
   );
+  const offAgents = window.electron.ipcRenderer.on(IPC.Remote_GetAgentsRequest, (data: unknown) => {
+    if (data && typeof data === 'object') void handleGetAgents(data as RendererRequest);
+  });
   const offCreate = window.electron.ipcRenderer.on(
     IPC.Remote_CreateTaskRequest,
     (data: unknown) => {
@@ -529,6 +565,7 @@ export function startRemoteTaskHandlers(): () => void {
     offOpenCanvas();
     offPublishTour();
     offProjects();
+    offAgents();
     offCreate();
     offGetNotes();
     offSetNotes();

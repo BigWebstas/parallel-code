@@ -56,6 +56,14 @@ export interface MobileProject {
   agentName?: string;
 }
 
+export interface MobileAgent {
+  id: string;
+  name: string;
+  description?: string;
+  available?: boolean;
+  isDefault?: boolean;
+}
+
 /** List projects the New Task screen can target. Requires a paired token. */
 export function fetchProjects(): Promise<MobileProject[]> {
   const token = getPairedToken();
@@ -63,11 +71,19 @@ export function fetchProjects(): Promise<MobileProject[]> {
   return request<MobileProject[]>('/api/mobile/projects', { token });
 }
 
+/** List agents the New Task screen can target. Requires a paired token. */
+export function fetchAgents(): Promise<MobileAgent[]> {
+  const token = getPairedToken();
+  if (!token) throw new ApiError('Not paired', 401);
+  return request<MobileAgent[]>('/api/mobile/agents', { token });
+}
+
 /** Create a top-level task. Requires a paired token. Returns the new task id. */
 export async function createTask(input: {
   projectId: string;
   name: string;
   prompt: string;
+  agentId?: string;
 }): Promise<string> {
   const token = getPairedToken();
   if (!token) throw new ApiError('Not paired', 401);
