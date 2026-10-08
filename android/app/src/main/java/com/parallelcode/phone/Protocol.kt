@@ -80,6 +80,23 @@ fun parseAgentList(raw: String): List<RemoteAgent>? = try {
     null
 }
 
+/** Parses available agents from `GET /api/mobile/agents`. */
+fun parseMobileAgents(raw: String): List<MobileAgent> = try {
+    val list = JSONArray(raw)
+    List(list.length()) { i ->
+        val a = list.getJSONObject(i)
+        MobileAgent(
+            id = a.getString("id"),
+            name = a.getString("name"),
+            description = a.optString("description").ifEmpty { null },
+            available = a.optBoolean("available", true),
+            isDefault = a.optBoolean("isDefault", false),
+        )
+    }
+} catch (_: Exception) {
+    emptyList()
+}
+
 private fun parseAgent(a: JSONObject) = RemoteAgent(
     agentId = a.getString("agentId"),
     taskId = a.getString("taskId"),

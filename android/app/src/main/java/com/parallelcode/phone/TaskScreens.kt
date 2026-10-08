@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
@@ -28,6 +29,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -66,8 +69,10 @@ private const val MAX_NOTES_BYTES = 100 * 1024
 fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -> Unit) {
     val scope = rememberCoroutineScope()
     var projects by remember { mutableStateOf<List<MobileProject>?>(null) }
+    var agents by remember { mutableStateOf<List<MobileAgent>?>(null) }
     var loadAttempt by remember { mutableIntStateOf(0) }
     var projectId by rememberSaveable { mutableStateOf("") }
+    var selectedAgentId by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
     var prompt by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -89,6 +94,17 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
         } catch (e: ApiException) {
             projects = emptyList()
             failed(e)
+        }
+        try {
+            val agentList = client.fetchAgents()
+            agents = agentList
+            if (agentList.none { it.id == selectedAgentId }) {
+                val defaultAgent = agentList.firstOrNull { it.isDefault } ?: agentList.firstOrNull()
+                selectedAgentId = defaultAgent?.id.orEmpty()
+            }
+        } catch (e: ApiException) {
+            agents = emptyList()
+            if (e.status != 404 && error == null) failed(e)
         }
     }
 
@@ -175,15 +191,74 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
                                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                     color = AppTheme.extra.textPrimary,
                                 )
-                                Text(
-                                    project.agentName?.let { "Runs with $it" } ?: "Runs with your default agent",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = AppTheme.extra.textMuted,
-                                )
+                                if (agents.isNullOrEmpty()) {
+                                    Text(
+                                        project.agentName?.let { "Runs with $it" } ?: "Runs with your default agent",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = AppTheme.extra.textMuted,
+                                    )
+                                }
                             }
                         }
                     }
                 }
+            }
+            val loadedAgents = agents
+            if (loadedAgents != null && loadedAgents.isNotEmpty()) {
+                Text(
+                    "AGENT",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = AppTheme.extra.textMuted,
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    loadedAgents.forEach { agent ->
+                        val isSelected = agent.id == selectedAgentId
+                        FilterChip(
+                            selected = isSelected,
+                            enabled = !busy,
+                            onClick = { selectedAgentId = agent.id },
+                            label = {
+                                Text(
+                                    if (agent.available) agent.name else "${agent.name} (not installed)",
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                selectedLabelColor = MaterialTheme.colorScheme.primary,
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                enabled = !busy,
+                                selected = isSelected,
+                                borderColor = AppTheme.extra.border,
+                                selectedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    }
+                }
+                loadedAgents.firstOrNull { it.id == selectedAgentId }?.description?.let { desc ->
+                    if (desc.isNotBlank()) {
+                        Text(
+                            desc,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AppTheme.extra.textMuted,
+                        )
+                    }
+                }
+            } else if (loadedAgents == null && loaded != null && loaded.isNotEmpty()) {
+                Text(
+                    "AGENT",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = AppTheme.extra.textMuted,
+                )
+                Text("Loading agents…", color = AppTheme.extra.textMuted)
             }
             OutlinedTextField(
                 value = prompt,
@@ -250,7 +325,7 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
                     error = null
                     scope.launch {
                         try {
-                            client.createTask(projectId, title, prompt.trim())
+                            client.createTask(projectId, title, prompt.trim(), selectedAgentId.ifEmpty { null })
                             onDone()
                         } catch (e: ApiException) {
                             failed(

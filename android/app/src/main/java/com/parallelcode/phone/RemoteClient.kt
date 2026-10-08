@@ -58,6 +58,14 @@ class ApiException(message: String, val status: Int = 0, val json: JSONObject? =
 
 data class MobileProject(val id: String, val name: String, val agentName: String?)
 
+data class MobileAgent(
+    val id: String,
+    val name: String,
+    val description: String?,
+    val available: Boolean,
+    val isDefault: Boolean,
+)
+
 /** What another saved computer reported in the last poll, under the name the phone shows for it. */
 data class ComputerSnapshot(val label: String, val agents: List<RemoteAgent>, val usage: List<ProviderUsage>)
 
@@ -303,9 +311,24 @@ class RemoteClient(
         }
     }
 
+    /** Agents a paired phone may choose from when starting tasks. */
+    suspend fun fetchAgents(): List<MobileAgent> =
+        parseMobileAgents(apiRaw("GET", "/api/mobile/agents", null, pairedTokenOrThrow()))
+
     /** Start a top-level task on the desktop; returns its task id. */
-    suspend fun createTask(projectId: String, name: String, prompt: String): String {
-        val body = JSONObject().put("projectId", projectId).put("name", name).put("prompt", prompt)
+    suspend fun createTask(
+        projectId: String,
+        name: String,
+        prompt: String,
+        agentId: String? = null,
+    ): String {
+        val body = JSONObject()
+            .put("projectId", projectId)
+            .put("name", name)
+            .put("prompt", prompt)
+        if (!agentId.isNullOrEmpty()) {
+            body.put("agentId", agentId)
+        }
         return api("POST", "/api/mobile/tasks", body, pairedTokenOrThrow()).getString("taskId")
     }
 
