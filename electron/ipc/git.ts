@@ -2042,6 +2042,30 @@ const UNREADABLE_WORKTREE_STATUS: WorktreeStatus = {
   base_branch: null,
 };
 
+/** Parse `git status --porcelain=v2 --branch` output. */
+function parseStatusV2(out: string): {
+  currentBranch: string | null;
+  headSha: string | null;
+  hasUncommittedChanges: boolean;
+} {
+  let currentBranch: string | null = null;
+  let headSha: string | null = null;
+  let hasUncommittedChanges = false;
+  for (const line of out.split('\n')) {
+    if (line.startsWith('# branch.head ')) {
+      const head = line.slice('# branch.head '.length);
+      currentBranch = head === '(detached)' ? null : head;
+    } else if (line.startsWith('# branch.oid ')) {
+      const oid = line.slice('# branch.oid '.length);
+      // An unborn branch has no commit yet.
+      headSha = oid === '(initial)' ? null : oid;
+    } else if (line.length > 0 && !line.startsWith('#')) {
+      hasUncommittedChanges = true;
+    }
+  }
+  return { currentBranch, headSha, hasUncommittedChanges };
+}
+
 export async function getWorktreeStatus(
   worktreePath: string,
   baseBranch?: string,
@@ -2054,32 +2078,34 @@ export async function getWorktreeStatus(
     // Polled every few seconds while agents run git in the same worktree:
     // skip status's opportunistic index refresh so it never takes index.lock
     // (agents would see "index.lock: File exists") or rewrites the index.
-    ({ stdout: statusOut } = await exec('git', ['--no-optional-locks', 'status', '--porcelain'], {
-      cwd: worktreePath,
-      maxBuffer: MAX_BUFFER,
-    }));
+    // `--branch` also reports HEAD's branch and sha, saving two git spawns per
+    // poll; `--no-ahead-behind` skips the upstream count this doesn't use.
+    ({ stdout: statusOut } = await exec(
+      'git',
+      ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--no-ahead-behind'],
+      { cwd: worktreePath, maxBuffer: MAX_BUFFER },
+    ));
   } catch {
     // Worktree removed between existsSync and exec (race condition)
     return UNREADABLE_WORKTREE_STATUS;
   }
-  const hasUncommittedChanges = statusOut.trim().length > 0;
+  const { currentBranch, headSha, hasUncommittedChanges } = parseStatusV2(statusOut);
 
   // Resolved base branch name, so the frontend can tell "agent switched to a
   // feature branch" (adoptable) apart from "agent is sitting on main" (not).
-  const [currentBranch, resolvedBaseBranch, headSha] = await Promise.all([
-    getCurrentBranchName(worktreePath).catch(() => null),
-    baseBranch ?? detectMainBranch(worktreePath).catch(() => null),
-    exec('git', ['rev-parse', 'HEAD'], { cwd: worktreePath })
-      .then(({ stdout }) => stdout.trim() || null)
-      .catch(() => null),
-  ]);
+  const resolvedBaseBranch = baseBranch ?? (await detectMainBranch(worktreePath).catch(() => null));
 
   const mergeBase = await detectMergeBase(worktreePath, 'HEAD', resolvedBaseBranch ?? undefined);
   let hasCommittedChanges = false;
   try {
-    const { stdout: logOut } = await exec('git', ['log', `${mergeBase}..HEAD`, '--oneline'], {
-      cwd: worktreePath,
-    });
+    // One commit is enough to answer "any?"; don't list the whole branch.
+    const { stdout: logOut } = await exec(
+      'git',
+      ['log', '-1', '--format=%H', `${mergeBase}..HEAD`],
+      {
+        cwd: worktreePath,
+      },
+    );
     hasCommittedChanges = logOut.trim().length > 0;
   } catch {
     /* ignore */
