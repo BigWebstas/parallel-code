@@ -692,25 +692,6 @@ html[data-look='noir'] .task-action-group + .task-action-group {
   border-left-color: var(--border-subtle);
 }
 
-/* Only lifecycle controls recede. Navigation, Git progress, and attention
-   remain visible. Opacity preserves tab order; focus-within reveals the group
-   before a keyboard user can activate it. Touch keeps every control visible. */
-@media (hover: hover) and (pointer: fine) {
-  html[data-look='noir']
-    .task-title-bar[data-active='false']:not(:hover):not(:focus-within)
-    .task-lifecycle-actions {
-    opacity: 0;
-    pointer-events: none;
-  }
-}
-
-/* Fade instead of popping in when the pointer crosses a title bar. */
-@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
-  html[data-look='noir'] .task-lifecycle-actions {
-    transition: opacity 0.12s ease;
-  }
-}
-
 html[data-look='noir'] .task-branch-info-bar {
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -1958,6 +1939,13 @@ button {
   background: var(--task-panel-bg);
 }
 
+/* Secondary segments size to their label; only the tour action stretches. */
+.change-tour-row .change-tour-segment {
+  flex: 0 0 auto;
+  width: auto;
+  color: var(--fg-muted);
+}
+
 .change-tour-model {
   display: inline-flex;
   align-items: center;
@@ -2433,6 +2421,11 @@ html:is(
 
 .btn-danger:active {
   transform: scale(0.98);
+}
+
+.github-item-option:hover,
+.github-item-option:focus-visible {
+  background: var(--bg-hover) !important;
 }
 
 .btn-secondary:hover {

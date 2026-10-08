@@ -1480,7 +1480,7 @@ describe('refineDiffBaseWithCherryPick (via getChangedFilesFromBranch)', () => {
     const diffCall = calls.find((a) => a[0] === 'diff');
     expect(diffCall).toBeDefined();
     // Range uses the refined parent SHA against the branch ref (not HEAD).
-    expect(diffCall).toContain(`${PARENT}...feature`);
+    expect(diffCall).toContain(`${PARENT}..feature`);
   });
 });
 

@@ -97,6 +97,10 @@ export interface VerificationRun {
   headSha: string | null;
   /** True when the worktree had uncommitted changes when the run started. */
   dirty: boolean;
+  /** HEAD and dirty state once the command ended. A difference from the start
+   *  means the code changed during the run, so the result covers neither. */
+  headShaAfter?: string | null;
+  dirtyAfter?: boolean;
   startedAt: string;
   finishedAt: string | null;
   /** Bounded tail of combined stdout and stderr, ANSI stripped. */
@@ -151,6 +155,7 @@ export interface PrChecksUpdatePayload {
    *  when GitHub has no supported review decision. */
   isDraft?: boolean;
   reviewDecision?: PrReviewDecision | null;
+  mergeable?: PrMergeable;
   passing: number;
   pending: number;
   failing: number;
@@ -160,11 +165,84 @@ export interface PrChecksUpdatePayload {
    *  closed). The renderer should drop its bookkeeping so a later restart of
    *  the watcher (e.g. PR reopened) goes through cleanly. */
   cleared: boolean;
+  /** Set with `cleared` when the PR was merged rather than closed. Absent for
+   *  older senders. */
+  merged?: boolean;
 }
 
 export interface BranchPrDetectionResult {
   url: string | null;
   unavailable?: 'missing' | 'auth';
+}
+
+/** An open issue or pull request offered as a starting point for a task. */
+export interface GitHubWorkItem {
+  kind: 'issue' | 'pr';
+  number: number;
+  title: string;
+  url: string;
+  author: string;
+  updatedAt: string;
+  labels: string[];
+  /** PR-only fields. */
+  isDraft?: boolean;
+  baseRefName?: string;
+  isCrossRepository?: boolean;
+}
+
+export interface GitHubIssueDetails {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+}
+
+export interface CreatePrTaskResult extends CreateTaskResult {
+  pr_url: string;
+  base_branch: string;
+}
+
+export type PrMergeMethod = 'squash' | 'merge' | 'rebase';
+export type PrMergeable = 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN';
+
+export interface PullRequestDetails {
+  number: number;
+  title: string;
+  url: string;
+  state: 'OPEN' | 'CLOSED' | 'MERGED';
+  isDraft: boolean;
+  mergeable: PrMergeable;
+  /** GitHub's mergeStateStatus, e.g. CLEAN, BLOCKED, BEHIND, DIRTY, UNSTABLE. */
+  mergeStateStatus: string;
+  baseRefName: string;
+  headRefName: string;
+  /** Head commit; merging is pinned to it so later pushes are not merged unseen. */
+  headRefOid: string;
+  /** Repo-allowed merge methods, the viewer's default first. */
+  mergeMethods: PrMergeMethod[];
+}
+
+export interface PrFailedCheck {
+  name: string;
+  url: string | null;
+  /** Cleaned tail of the GitHub Actions job log, when one was available. */
+  logTail: string | null;
+}
+
+export interface PrReviewThread {
+  path: string;
+  line: number | null;
+  isOutdated: boolean;
+  comments: { author: string; body: string }[];
+}
+
+export interface PrReviewFeedback {
+  /** Non-empty summary bodies of submitted reviews. */
+  reviews: { author: string; state: string; body: string }[];
+  /** Unresolved inline review threads. */
+  threads: PrReviewThread[];
+  /** GitHub has more threads than were fetched. */
+  truncated: boolean;
 }
 
 export interface EslintQualityFinding {
