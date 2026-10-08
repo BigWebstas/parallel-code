@@ -29,6 +29,7 @@ export type {
   PullRequestDetails,
   PtyOutput,
   StepEntry,
+  CreditUsage,
   UsageProvider,
   UsageResult,
   UsageWindow,

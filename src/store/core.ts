@@ -7,6 +7,7 @@ import type { AppStore, UsageState } from './types';
 const EMPTY_USAGE: UsageState = {
   fiveHour: null,
   sevenDay: null,
+  creditUsage: null,
   fetchedAt: null,
   status: 'idle',
   error: null,
