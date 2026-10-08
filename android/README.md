@@ -61,6 +61,8 @@ cd android
 
 `.github/workflows/android.yml` tests and builds the app whenever `android/` changes. Pushing a tag such as `android-v0.2.0` also publishes a signed APK as a GitHub release, kept separate from the desktop's `v*` releases. Signing reads `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` from the environment; CI fills them from repository secrets of the same names, with the keystore stored base64-encoded as `ANDROID_KEYSTORE_BASE64`. Every update must be signed with the same key, so keep a backup of it.
 
+The release title starts with `Android`, which Obtainium filters on, and the APK name must keep ending in `.apk`: the app's update check (`AppReleases.kt`) looks for `android-v*` releases that are not drafts or prereleases and have an APK attached, and compares their dot-separated version numbers with its own `versionName`. Installs from an app store skip the check. User install steps are in the main [README](../README.md#android-app).
+
 QR scanning uses the Google Play services code scanner, so the app needs no camera permission. On phones without Play services, paste the link instead.
 
 ## How it maps to the server
