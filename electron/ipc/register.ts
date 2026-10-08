@@ -88,6 +88,7 @@ import {
 import type { MindMapDocument, MindMapUpdate } from '../shared/mindmap.js';
 import type { CanvasView } from '../shared/canvas-view.js';
 import type { AgentTourPayload } from '../shared/agent-tour.js';
+import type { GitHubCustomList } from '../shared/github-list.js';
 import type { EvidenceSubmission } from '../shared/evidence.js';
 import {
   buildMcpLaunchArgs,
@@ -1763,6 +1764,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<{ ok: boolean }>(IPC.MCP_OpenCanvasRequest, { taskId, view }).then(() => {}),
     publishTour: (taskId: string, payload: AgentTourPayload) =>
       callRenderer<{ ok: boolean }>(IPC.MCP_PublishTourRequest, { taskId, payload }),
+    publishGitHubList: (taskId: string, list: GitHubCustomList) =>
+      callRenderer<{ ok: boolean }>(IPC.MCP_PublishGitHubListRequest, { taskId, list }),
     submitEvidence: (taskId: string, payload: EvidenceSubmission) =>
       callRenderer<unknown>(IPC.MCP_SubmitEvidenceRequest, { taskId, payload }),
     getEvidence: (taskId: string) => callRenderer<unknown>(IPC.MCP_GetEvidenceRequest, { taskId }),

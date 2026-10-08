@@ -16,6 +16,7 @@ import { CandidateRefinement } from './CandidateRefinement';
 import { MergeWithAgent } from './MergeWithAgent';
 import { IPC } from '../../electron/ipc/channels';
 import { invoke } from '../lib/ipc';
+import { countLabel } from '../lib/plural';
 import {
   diffBlocks,
   type BlockChange,
@@ -85,10 +86,6 @@ function revealFirst(body: HTMLElement | undefined, selector: string): boolean {
   return true;
 }
 
-function plural(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? '' : 's'}`;
-}
-
 function reviewBlocks(
   hunks: readonly BlockHunk[],
   side: 'base' | 'cand',
@@ -142,7 +139,7 @@ function ChangeNav(props: {
       </button>
       <span>
         {cursor() < 0 ? '' : `${cursor() + 1} of `}
-        {plural(props.hunks.length, 'change')}
+        {countLabel(props.hunks.length, 'change')}
       </span>
       <button
         type="button"

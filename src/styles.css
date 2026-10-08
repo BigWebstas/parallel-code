@@ -3225,6 +3225,11 @@ html:is(
   background: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
+.resize-handle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
 .resize-handle-h {
   width: 6px;
   cursor: col-resize;

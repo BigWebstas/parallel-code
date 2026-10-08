@@ -724,6 +724,7 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const stepsSectionChild: PanelChild = {
     id: 'steps-section',
+    resizeLabel: 'Resize steps panel',
     minSize: 28,
     maxAutoSize: STEPS_PANEL_AUTO_MAX,
     content: () => stepsSectionEl,
@@ -734,6 +735,7 @@ export function TaskPanel(props: TaskPanelProps) {
   // size and leave a visible band of empty space above the AI terminal.
   const shellSectionChild: PanelChild = {
     id: 'shell-section',
+    resizeLabel: 'Resize shell panel',
     minSize: 35,
     noPin: () => props.task.shellAgentIds.length === 0,
     content: () => shellSectionEl,
@@ -747,6 +749,7 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const promptInputChild: PanelChild = {
     id: 'prompt',
+    resizeLabel: 'Resize prompt input',
     minSize: 54,
     content: () => promptInputEl,
   };
@@ -756,6 +759,7 @@ export function TaskPanel(props: TaskPanelProps) {
   // In the split-right vertical tree, both are content-sized and shell absorbs.
   const notesChild: PanelChild = {
     id: 'notes',
+    resizeLabel: 'Resize notes panel',
     minSize: 100,
     maxAutoSize: NOTES_PANEL_AUTO_MAX,
     content: () => notesBodyEl,
@@ -763,6 +767,7 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const changedFilesChild: PanelChild = {
     id: 'changed-files',
+    resizeLabel: 'Resize changed files panel',
     minSize: 100,
     maxAutoSize: CHANGED_FILES_PANEL_AUTO_MAX,
     content: () => changedFilesEl,
@@ -876,6 +881,7 @@ export function TaskPanel(props: TaskPanelProps) {
               },
               {
                 id: 'right-col',
+                resizeLabel: 'Resize side panel',
                 minSize: 360,
                 defaultSize: 420,
                 content: () => (
@@ -908,6 +914,7 @@ export function TaskPanel(props: TaskPanelProps) {
   };
   const canvasChild: PanelChild = {
     id: 'canvas',
+    resizeLabel: 'Resize canvas panel',
     minSize: CANVAS_MIN_WIDTH,
     defaultSize: CANVAS_DEFAULT_WIDTH,
     absorberWeight: 2,

@@ -65,7 +65,7 @@ import { syncTerminalCounter } from './terminals';
 import { showNotification, NOTIFICATION_ERROR_MS } from './notification';
 import { errMessage, warn as logWarn } from '../lib/log';
 import { canvasTabKey } from '../lib/canvas-tabs';
-import { documentAgentTaskIds } from '../documents/task-id';
+import { hiddenAgentTaskIds, isHiddenAgentTaskId } from '../documents/task-id';
 
 function restoredCodexHandoff(value: unknown): Task['codexChatHandoff'] {
   if (!value || typeof value !== 'object') return;
@@ -418,8 +418,8 @@ export async function saveState(): Promise<void> {
     autoStartRemoteAccess: store.autoStartRemoteAccess || undefined,
   };
 
-  const documentTaskIds = documentAgentTaskIds(store.projects);
-  for (const taskId of new Set([...store.taskOrder, ...documentTaskIds])) {
+  const hiddenTaskIds = hiddenAgentTaskIds(store.projects);
+  for (const taskId of new Set([...store.taskOrder, ...hiddenTaskIds])) {
     const task = store.tasks[taskId];
     if (!task) continue;
 
@@ -733,7 +733,7 @@ export async function loadState(): Promise<void> {
   );
   for (const task of authorityTasks) {
     const project = projects.find((p) => p.id === task.projectId);
-    if (!project || project.kind === 'document') continue;
+    if (!project || project.kind === 'document' || isHiddenAgentTaskId(task.id)) continue;
     const agent = task.agentDefs?.[0] ?? task.agentDef ?? undefined;
     try {
       await delegationRequest({
@@ -960,8 +960,8 @@ export async function loadState(): Promise<void> {
         }
       }
 
-      const documentTaskIds = documentAgentTaskIds(projects);
-      for (const taskId of new Set([...raw.taskOrder, ...documentTaskIds])) {
+      const hiddenTaskIds = hiddenAgentTaskIds(projects);
+      for (const taskId of new Set([...raw.taskOrder, ...hiddenTaskIds])) {
         const pt = raw.tasks[taskId];
         if (!pt) continue;
 
@@ -985,7 +985,7 @@ export async function loadState(): Promise<void> {
                 : undefined,
           projectId: pt.projectId ?? '',
           branchName: pt.branchName,
-          worktreePath: documentTaskIds.includes(taskId)
+          worktreePath: hiddenTaskIds.includes(taskId)
             ? (projects.find((project) => project.id === pt.projectId)?.path ?? pt.worktreePath)
             : pt.worktreePath,
           agentIds,

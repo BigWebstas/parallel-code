@@ -5,6 +5,7 @@
 // main-side bridge.
 
 import { publishAgentTour } from './agent-tour';
+import { publishGitHubList } from './github-lists';
 import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } from './canvas';
 import { getEvidenceForAgent, submitEvidence } from './evidence';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
@@ -464,6 +465,18 @@ export function startRemoteTaskHandlers(): () => void {
       }
     },
   );
+  const offPublishGitHubList = window.electron.ipcRenderer.on(
+    IPC.MCP_PublishGitHubListRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest & { list: unknown };
+      // Validated again here: the renderer is the boundary that stores it.
+      publishGitHubList(req.taskId, req.list).then(
+        () => reply(req.reqId, true, { ok: true }),
+        (error: unknown) => reply(req.reqId, false, undefined, errMessage(error)),
+      );
+    },
+  );
   const offSubmitEvidence = window.electron.ipcRenderer.on(
     IPC.MCP_SubmitEvidenceRequest,
     (data: unknown) => {
@@ -498,6 +511,7 @@ export function startRemoteTaskHandlers(): () => void {
     offUpdateMap();
     offOpenCanvas();
     offPublishTour();
+    offPublishGitHubList();
     offProjects();
     offCreate();
     offGetNotes();

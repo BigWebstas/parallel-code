@@ -1,3 +1,4 @@
+import { GitHubIssuesPage } from './components/GitHubIssuesPage';
 import '@xterm/xterm/css/xterm.css';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -98,6 +99,7 @@ import { isMac } from './lib/platform';
 import { createCtrlWheelZoomHandler } from './lib/wheelZoom';
 import { redrawAllTerminals } from './lib/terminalFitManager';
 import { isDocumentAgentTaskId } from './documents/agent-task';
+import { isHiddenAgentTaskId } from './documents/task-id';
 import {
   closeDocumentWorkspace,
   documentStore,
@@ -681,7 +683,8 @@ function App() {
 
     // A document workspace's hidden agent task can be the active one; it has
     // no worktree to close, merge or push and no panel a shell could show in.
-    const listedTask = (id: string) => store.tasks[id] !== undefined && !isDocumentAgentTaskId(id);
+    const listedTask = (id: string) =>
+      !store.githubIssuesProjectId && store.tasks[id] !== undefined && !isHiddenAgentTaskId(id);
 
     const actionHandlers: Record<string, (e: KeyboardEvent) => void> = {
       'navigateRow:up': () => navigateRow('up'),
@@ -696,6 +699,7 @@ function App() {
         Array.from({ length: 9 }, (_, i) => [`jumpToTask:${i + 1}`, () => jumpToTask(i)]),
       ),
       closeShell: (e) => {
+        if (store.githubIssuesProjectId) return;
         // Auto-repeat would walk through adjacent terminals or canvas tabs.
         if (e.repeat) return;
         const target = resolvePanelCloseTarget(store);
@@ -705,6 +709,7 @@ function App() {
         else triggerAction(`${target.taskId}:close-canvas-active-tab`);
       },
       closeTask: () => {
+        if (store.githubIssuesProjectId) return;
         const id = store.activeTaskId;
         if (!id) return;
         if (store.terminals[id]) {
@@ -729,7 +734,9 @@ function App() {
         const id = store.activeTaskId;
         if (id && listedTask(id)) spawnShellForTask(id);
       },
-      sendPrompt: () => sendActivePrompt(),
+      sendPrompt: () => {
+        if (!store.githubIssuesProjectId) sendActivePrompt();
+      },
       createTerminal: (e) => {
         if (!e.repeat) createTerminal();
       },
@@ -939,9 +946,18 @@ function App() {
           <Show when={store.sidebarVisible}>
             <Sidebar />
           </Show>
-          <div class="task-workspace">
+          {/* Keep terminals mounted while the issue page occupies the workspace. */}
+          <div
+            class="task-workspace"
+            style={{
+              display: store.projects.some((p) => p.id === store.githubIssuesProjectId)
+                ? 'none'
+                : undefined,
+            }}
+          >
             <TilingLayout />
           </div>
+          <GitHubIssuesPage />
         </main>
         <UsageStatusBar />
         <HelpDialog open={store.showHelpDialog} onClose={() => toggleHelpDialog(false)} />

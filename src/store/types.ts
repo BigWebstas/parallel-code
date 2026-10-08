@@ -614,6 +614,9 @@ export interface AppStore {
     name?: string;
     baseBranch?: string;
     canvasSource?: CanvasTaskSource;
+    /** null marks a batch without a single issue association. */
+    githubUrl?: string | null;
+    githubPr?: import('../ipc/types').GitHubWorkItem;
     /** Set when the form was opened from a Super Productivity task. */
     superProductivity?: SpNewTaskSource;
   } | null;
@@ -621,6 +624,7 @@ export interface AppStore {
   remoteAccess: RemoteAccess;
   /** Persisted: start the remote (Connect Phone) server automatically on launch. */
   autoStartRemoteAccess: boolean;
+  githubIssuesProjectId: string | null;
   showArena: boolean;
   keybindingPreset: string;
   /** Per-preset user overrides. Outer key = preset ID, inner = binding ID → override. */

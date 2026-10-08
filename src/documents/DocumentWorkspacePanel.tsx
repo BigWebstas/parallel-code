@@ -817,6 +817,7 @@ export function DocumentWorkspacePanel() {
     },
     {
       id: 'rail',
+      resizeLabel: 'Resize side rail',
       get minSize() {
         return wide() ? 320 : 120;
       },

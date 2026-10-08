@@ -1,3 +1,4 @@
+import type { TriageKind, TriageSort } from '../shared/github-triage.js';
 export type PtyOutput =
   | { type: 'Data'; data: Uint8Array } // raw terminal bytes
   | {
@@ -196,6 +197,60 @@ export interface GitHubIssueDetails {
   body: string;
   url: string;
 }
+
+/** Repository issue browser data; full bodies are kept out of task prompts. */
+export interface GitHubIssueSummary extends GitHubIssueDetails {
+  kind: 'issue' | 'pr';
+  baseRefName?: string;
+  isCrossRepository?: boolean;
+  issueType?: string;
+  isDraft: boolean;
+  commentCount: number;
+  reactionCount: number;
+  createdAt: string;
+  state: 'open' | 'closed' | 'merged';
+  author: string;
+  updatedAt: string;
+  labels: string[];
+  assignees: string[];
+}
+
+export interface GitHubIssueQuery {
+  kind: TriageKind;
+  sort: TriageSort;
+  author: string;
+  search: string;
+  state: 'open' | 'closed' | 'all';
+  label: string;
+  assignee: string;
+  page: number;
+}
+
+export interface GitHubIssuePage {
+  labels: string[];
+  repository: string;
+  items: GitHubIssueSummary[];
+  total: number;
+  hasMore: boolean;
+  limited: boolean;
+}
+
+export interface GitHubIssueActivity {
+  id: string;
+  author: string;
+  createdAt: string;
+  event: string;
+  body: string;
+}
+
+export interface GitHubIssueActivityPage {
+  items: GitHubIssueActivity[];
+  hasMore: boolean;
+}
+
+export type GitHubIssueChange =
+  | { field: 'labels' | 'assignees'; values: string[] }
+  | { field: 'state'; value: 'open' | 'closed'; reason?: 'completed' | 'not_planned' };
 
 export interface CreatePrTaskResult extends CreateTaskResult {
   pr_url: string;
