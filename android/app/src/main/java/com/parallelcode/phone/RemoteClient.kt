@@ -192,9 +192,9 @@ class RemoteClient(
     }
 
     private suspend fun usageFrom(computer: SavedComputer): List<ProviderUsage> {
-        if (computer.baseUrl in usageUnsupported) return emptyList()
+        if (usageRoute.isMissing(computer.baseUrl)) return emptyList()
         val (code, body) = getFrom(computer, "/api/mobile/usage") ?: return emptyList()
-        if (code == 404) usageUnsupported += computer.baseUrl
+        usageRoute.record(computer.baseUrl, code)
         if (code !in 200..299) return emptyList()
         return runCatching { parseUsage(JSONObject(body)) }.getOrDefault(emptyList())
     }
@@ -269,7 +269,7 @@ class RemoteClient(
 
     fun reconnect() {
         // A manual reconnect is the user's way to pick up a desktop that was updated meanwhile.
-        usageUnsupported.clear()
+        usageRoute.clear()
         closeSocket()
         if (started) connect()
     }
@@ -338,12 +338,13 @@ class RemoteClient(
      */
     suspend fun fetchUsage(): List<ProviderUsage> {
         val baseUrl = credentials.link?.baseUrl
-        if (baseUrl != null && baseUrl in usageUnsupported) return emptyList<ProviderUsage>().also { _usage.value = it }
+        if (baseUrl != null && usageRoute.isMissing(baseUrl)) return emptyList<ProviderUsage>().also { _usage.value = it }
         val usage = try {
             parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
         } catch (e: ApiException) {
-            if (e.status != 404 || baseUrl == null) throw e
-            usageUnsupported += baseUrl
+            if (baseUrl == null) throw e
+            usageRoute.record(baseUrl, e.status)
+            if (!usageRoute.isMissing(baseUrl)) throw e
             emptyList()
         }
         _usage.value = usage
@@ -377,8 +378,7 @@ class RemoteClient(
 
     private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
 
-    // Desktops (by base URL) without the usage route, so polling stops asking them every minute.
-    private val usageUnsupported: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val usageRoute = MissingRoutes()
 
     /** The last usage snapshot fetched, for the widget. */
     val usage: StateFlow<List<ProviderUsage>> = _usage.asStateFlow()
