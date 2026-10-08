@@ -1,7 +1,8 @@
 import type { SessionCapabilities } from '../shared/delegation-types.js';
 import { graphOperationsSchema } from '../shared/graph-schema.js';
-import { canvasViews } from '../shared/canvas-view.js';
+import { CANVAS_INSTRUCTIONS, canvasViews } from '../shared/canvas-view.js';
 import { AGENT_TOUR_LIMITS } from '../shared/agent-tour.js';
+import { EVIDENCE_LIMITS } from '../shared/evidence.js';
 import { TOUR_CARD_LIMITS, TOUR_FORMS, TOUR_TONES } from '../shared/understanding-limits.js';
 import { semanticNodeKinds, reasoningStatuses } from '../shared/graph.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
@@ -180,6 +181,46 @@ export const TOUR_TOOLS: ToolDef[] = [
   },
 ];
 
+const evidenceText = { type: 'string', maxLength: EVIDENCE_LIMITS.stringBytes };
+
+export const EVIDENCE_TOOLS: ToolDef[] = [
+  {
+    name: 'submit_evidence',
+    description:
+      'Hand off your work for review. Call it once, after committing, when you believe the task is done. ' +
+      "The app re-runs the project's checks and inspects test changes itself, so report only what it cannot observe: a short summary, what you did not verify, and risks. " +
+      'If a test cannot be made to pass, say so in notVerified; never modify, skip or weaken a test to make it pass. ' +
+      'checkResults is optional; use the check ids get_evidence lists. Returns immediately while the app builds the evidence.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', maxLength: EVIDENCE_LIMITS.summaryBytes },
+        notVerified: { type: 'array', maxItems: EVIDENCE_LIMITS.maxItems, items: evidenceText },
+        risks: { type: 'array', maxItems: EVIDENCE_LIMITS.maxItems, items: evidenceText },
+        checkResults: {
+          type: 'array',
+          maxItems: EVIDENCE_LIMITS.maxCheckResults,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['checkId', 'result'],
+            properties: {
+              checkId: { type: 'string' },
+              result: { enum: ['passed', 'failed', 'not-run'] },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: 'get_evidence',
+    description:
+      "Read the app's evidence status for this task: the configured check ids, the latest results, open flags on test changes, and why confidence is not high. Use it before submit_evidence to learn the check ids, or after it to see what needs fixing.",
+    inputSchema: { type: 'object', properties: {} },
+  },
+];
+
 export const SUBTASK_TOOLS: ToolDef[] = [
   {
     name: 'land_self',
@@ -229,6 +270,21 @@ export const SUBTASK_TOOLS: ToolDef[] = [
     },
   },
 ];
+
+/**
+ * Node's fetch (undici) fails a request that gets no response headers for ~300s, and the
+ * coordinator's own default wait is 300s, so unclamped legacy waits surfaced as "fetch failed".
+ * Stay well below that ceiling; callers loop on timeout.
+ */
+export const LEGACY_WAIT_DEFAULT_MS = 240_000;
+export const LEGACY_WAIT_MAX_MS = 240_000;
+
+const legacyWait = {
+  type: 'number',
+  minimum: 1,
+  maximum: LEGACY_WAIT_MAX_MS,
+  description: `Timeout in milliseconds (default: ${LEGACY_WAIT_DEFAULT_MS} = 4 min, max: ${LEGACY_WAIT_MAX_MS}). On timeout, call again.`,
+};
 
 export const COORDINATOR_TOOLS: ToolDef[] = [
   {
@@ -289,10 +345,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         taskId: { type: 'string', description: 'Task ID' },
-        timeoutMs: {
-          type: 'number',
-          description: 'Timeout in milliseconds (default: 300000 = 5 min)',
-        },
+        timeoutMs: legacyWait,
       },
       required: ['taskId'],
     },
@@ -355,10 +408,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
     inputSchema: {
       type: 'object',
       properties: {
-        timeoutMs: {
-          type: 'number',
-          description: 'Timeout in milliseconds (default: 300000 = 5 min)',
-        },
+        timeoutMs: legacyWait,
       },
       required: [],
     },
@@ -479,6 +529,25 @@ export function sessionInstructions(capabilities: SessionCapabilities): string {
   );
 }
 
+/**
+ * Server instructions, most specific first: Claude Code truncates them at 2048 characters
+ * (observed in 2.1.x), so role guidance must not trail the generic app and canvas text
+ * (the canvas text is also sent with chat prompts that mention a canvas).
+ */
+export function serverInstructions(options: {
+  taskId: string;
+  coordinatorId: string;
+  canvasOnly: boolean;
+  sessionCapabilities?: SessionCapabilities;
+}): string {
+  const { taskId, coordinatorId, canvasOnly, sessionCapabilities } = options;
+  return [
+    ...(sessionCapabilities ? [sessionInstructions(sessionCapabilities)] : []),
+    APP_TASK_INSTRUCTIONS,
+    ...(hasCanvasTools(taskId, coordinatorId, canvasOnly) ? [CANVAS_INSTRUCTIONS] : []),
+  ].join('\n\n');
+}
+
 /** Every session that advertises canvas tools also gets their instructions. */
 export function hasCanvasTools(taskId: string, coordinatorId: string, canvasOnly = false): boolean {
   return canvasOnly || !!taskId || !!coordinatorId;
@@ -490,7 +559,13 @@ export function selectTools(
   canvasOnly = false,
   capabilities?: SessionCapabilities,
 ): ToolDef[] {
-  const canvasTools = [...MINDMAP_TOOLS, ...REASONING_TOOLS, ...CANVAS_VIEW_TOOLS, ...TOUR_TOOLS];
+  const canvasTools = [
+    ...MINDMAP_TOOLS,
+    ...REASONING_TOOLS,
+    ...CANVAS_VIEW_TOOLS,
+    ...TOUR_TOOLS,
+    ...EVIDENCE_TOOLS,
+  ];
   if (capabilities) {
     const taskTools =
       capabilities.profile === 'ordinary'
