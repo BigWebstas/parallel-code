@@ -11,9 +11,13 @@ import {
   generatePairingPin,
 } from '../store/remote';
 import { theme } from '../lib/theme';
+import { invoke } from '../lib/ipc';
+import { IPC } from '../../electron/ipc/channels';
 import type { RemoteAccess } from '../store/types';
 
 type NetworkMode = 'wifi' | 'tailscale';
+
+const ANDROID_APP_GUIDE = 'https://github.com/johannesjo/parallel-code#android-app';
 type RemoteAccessUrls = Pick<RemoteAccess, 'enabled' | 'url' | 'wifiUrl' | 'tailscaleUrl'>;
 
 interface ConnectPhoneModalProps {
@@ -413,6 +417,27 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
           >
             <> Your phone and this computer must be on the same Tailscale network.</>
           </Show>
+        </p>
+        <p
+          style={{
+            'font-size': '13px',
+            color: theme.fgMuted,
+            'text-align': 'center',
+            margin: '0',
+          }}
+        >
+          On Android, the{' '}
+          <a
+            href={ANDROID_APP_GUIDE}
+            style={{ color: theme.accent }}
+            onClick={(e) => {
+              e.preventDefault();
+              void invoke(IPC.ShellOpenExternal, { url: ANDROID_APP_GUIDE });
+            }}
+          >
+            Parallel Code app
+          </a>{' '}
+          also notifies you in the background.
         </p>
 
         {/* Connected clients */}
