@@ -5,6 +5,7 @@ import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import type { CreditUsage, UsageProvider, UsageWindow } from '../ipc/types';
 import type { UsageState } from '../store/types';
+import { ResourcesPanel } from './ResourcesPanel';
 import {
   USAGE_WARN_PERCENT,
   formatCurrency,
@@ -242,34 +243,32 @@ function ProviderUsage(props: { provider: UsageProvider }) {
 
 /**
  * Bottom bar with the rate-limit windows of every agent subscription the app
- * can read (Claude Code, Codex). Hidden until the first successful read, and
- * permanently when no agent has a subscription login (API-key users).
+ * can read (Claude Code, Codex) and the resources panel on the right. A
+ * provider's entry stays hidden until its first successful read, and
+ * permanently when it has no subscription login (API-key users).
  */
 export function UsageStatusBar() {
-  const visible = createMemo(() => USAGE_PROVIDERS.some((p) => usageVisible(store.usage[p])));
-
   return (
-    <Show when={visible()}>
-      <div
-        style={{
-          height: '24px',
-          'min-height': '24px',
-          display: 'flex',
-          'align-items': 'center',
-          gap: '28px',
-          padding: '0 10px',
-          'border-top': `1px solid ${theme.border}`,
-          'font-family': "'JetBrains Mono', monospace",
-          'font-size': sf(11),
-          color: theme.fgMuted,
-          'white-space': 'nowrap',
-          overflow: 'hidden',
-          'user-select': 'none',
-          'flex-shrink': '0',
-        }}
-      >
-        <For each={USAGE_PROVIDERS}>{(provider) => <ProviderUsage provider={provider} />}</For>
-      </div>
-    </Show>
+    <div
+      style={{
+        height: '24px',
+        'min-height': '24px',
+        display: 'flex',
+        'align-items': 'center',
+        gap: '28px',
+        padding: '0 10px',
+        'border-top': `1px solid ${theme.border}`,
+        'font-family': "'JetBrains Mono', monospace",
+        'font-size': sf(11),
+        color: theme.fgMuted,
+        'white-space': 'nowrap',
+        overflow: 'hidden',
+        'user-select': 'none',
+        'flex-shrink': '0',
+      }}
+    >
+      <For each={USAGE_PROVIDERS}>{(provider) => <ProviderUsage provider={provider} />}</For>
+      <ResourcesPanel />
+    </div>
   );
 }

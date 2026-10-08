@@ -1201,6 +1201,24 @@ export function getActiveAgentIds(): string[] {
   return Array.from(sessions.keys());
 }
 
+/**
+ * The local root process of every live PTY. In Docker mode this is the
+ * `docker run` client; the container's own load is not visible from here.
+ */
+export function getPtyProcessRoots(): {
+  agentId: string;
+  taskId: string;
+  isShell: boolean;
+  pid: number;
+}[] {
+  return Array.from(sessions.values(), (s) => ({
+    agentId: s.agentId,
+    taskId: s.taskId,
+    isShell: s.isShell,
+    pid: s.proc.pid,
+  }));
+}
+
 /** Return metadata for a specific agent, or null if not found. */
 export function getAgentMeta(
   agentId: string,

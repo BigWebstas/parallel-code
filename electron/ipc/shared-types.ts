@@ -367,6 +367,33 @@ export type UsageResult =
   /** Transient failure — the renderer keeps its last good snapshot. */
   | { status: 'error'; message: string };
 
+/** One OS process in the resources panel. */
+export interface ResourceProcess {
+  pid: number;
+  name: string;
+  /** Percent of one CPU core; a busy multi-threaded process can exceed 100. */
+  cpuPercent: number;
+  /** Resident memory. */
+  memoryBytes: number;
+}
+
+/** A PTY's process tree, the app itself, or the app's other subprocesses. */
+export interface ResourceGroup {
+  kind: 'agent' | 'shell' | 'app' | 'other';
+  agentId: string | null;
+  taskId: string | null;
+  cpuPercent: number;
+  memoryBytes: number;
+  processes: ResourceProcess[];
+}
+
+export interface ResourceSnapshot {
+  groups: ResourceGroup[];
+  cpuCount: number;
+  totalMemoryBytes: number;
+  sampledAt: number;
+}
+
 export type UpdatePhase =
   | 'unsupported'
   | 'idle'

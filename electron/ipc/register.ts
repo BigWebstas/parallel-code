@@ -23,6 +23,7 @@ import {
   handoffClaudeTerminal,
 } from './pty.js';
 import { loadEnvFile } from './env-file.js';
+import { getResourceSnapshot } from './resources.js';
 import { editorGotoArgs, spawnDetached, validateEditorCommand } from './open-file.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
 import {
@@ -2354,6 +2355,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   ipcMain.handle(IPC.GetClaudeUsage, () => fetchClaudeUsage());
   ipcMain.handle(IPC.GetCodexUsage, () => fetchCodexUsage());
+  ipcMain.handle(IPC.GetResourceUsage, () => getResourceSnapshot());
 
   // --- Forward window events to renderer ---
   win.on('focus', () => {

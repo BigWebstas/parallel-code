@@ -484,3 +484,18 @@ export function ArrowLeftIcon(props: IconProps): JSX.Element {
     </SvgIcon>
   );
 }
+
+export function ActivityIcon(props: IconProps): JSX.Element {
+  return (
+    <SvgIcon {...props}>
+      <path
+        d="M1 8h3l2-5 4 10 2-5h3"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </SvgIcon>
+  );
+}
