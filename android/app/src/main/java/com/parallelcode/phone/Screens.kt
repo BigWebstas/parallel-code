@@ -523,6 +523,7 @@ fun AgentsScreen(
                 contentPadding = PaddingValues(vertical = 12.dp),
             ) {
                 item { UsageStrip(client, connected = state.status == ConnectionStatus.CONNECTED) }
+                item { UpdateBanner() }
                 if (state.status == ConnectionStatus.CONNECTED && !state.canControl) {
                     item { PairBanner(onPair) }
                 }

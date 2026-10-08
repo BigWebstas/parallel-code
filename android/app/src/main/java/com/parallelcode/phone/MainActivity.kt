@@ -291,6 +291,7 @@ class MainActivity : ComponentActivity() {
         model.client.start(HOLDER)
         model.client.resumeViewSize()
         AgentWatchService.sync(this)
+        (application as PhoneApplication).updates.checkIfDue()
     }
 
     override fun onStop() {
