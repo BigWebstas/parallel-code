@@ -17,6 +17,7 @@ import {
   store,
   retryCloseTask,
   activateTaskFromPointer,
+  uncollapseTask,
   setActiveAgent,
   clearInitialPrompt,
   clearPrefillPrompt,
@@ -34,8 +35,8 @@ import { CANVAS_DEFAULT_WIDTH, CANVAS_MIN_WIDTH } from '../lib/layout-sizes';
 import type { EditableTextHandle } from './EditableText';
 import { PromptInput, type PromptInputHandle } from './PromptInput';
 import { CloseTaskDialog } from './CloseTaskDialog';
-import { MergeDialog } from './MergeDialog';
-import { PushDialog } from './PushDialog';
+import { FinishDialog, type FinishAction } from './FinishDialog';
+import { PullRequestDialog } from './PullRequestDialog';
 import { DiffViewerDialog } from './DiffViewerDialog';
 import { PlanViewerDialog } from './PlanViewerDialog';
 import { EditProjectDialog } from './EditProjectDialog';
@@ -122,11 +123,18 @@ export function TaskPanel(props: TaskPanelProps) {
     return remaining > 0 ? `Auto-sending in ${remaining}s` : 'Sending when ready…';
   };
 
-  const [showMergeConfirm, setShowMergeConfirm] = createSignal(false);
-  const [showPushConfirm, setShowPushConfirm] = createSignal(false);
+  // null while the finish dialog is closed; otherwise the option it shows.
+  const [finishAction, setFinishAction] = createSignal<FinishAction | null>(null);
+  const [showDelegationReview, setShowDelegationReview] = createSignal(false);
+  const [openPrUrl, setOpenPrUrl] = createSignal<string | null>(null);
   const [pushSuccess, setPushSuccess] = createSignal(false);
   const [pushing, setPushing] = createSignal(false);
   const isLandedTask = () => isLandedTaskState(props.task.landingState);
+  const canFinish = () => props.task.gitIsolation === 'worktree' && !isLandedTask();
+  // A running push is what the reopened dialog should show, whatever opened it.
+  const openFinish = (action: FinishAction) => {
+    if (canFinish()) setFinishAction(pushing() ? 'push' : action);
+  };
   let pushSuccessTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(pushSuccessTimer));
   const [diffScrollTarget, setDiffScrollTarget] = createSignal<string | null>(null);
@@ -145,6 +153,21 @@ export function TaskPanel(props: TaskPanelProps) {
   const diffBaseBranch = () =>
     getTaskDiffBaseBranch(props.task.gitIsolation, props.task.baseBranch);
   const [startTour, setStartTour] = createSignal(false);
+  const generateTour = () =>
+    void tour.generateForTask({
+      taskName: props.task.name,
+      worktreePath: props.task.worktreePath,
+      projectRoot: getProject(props.task.projectId)?.path,
+      branchName: tourBranchName(),
+      baseBranch: diffBaseBranch(),
+      selectedCommit: selectedCommit(),
+    });
+  const openOrGenerateTour = () => {
+    if (tour.stops().length === 0) return generateTour();
+    setFinishAction(null);
+    setStartTour(true);
+    setDiffScrollTarget('__tour__');
+  };
   const tourIdentity = createMemo(() =>
     JSON.stringify([
       props.task.id,
@@ -273,6 +296,7 @@ export function TaskPanel(props: TaskPanelProps) {
       .catch((error: unknown) => showNotification(`Could not read ${path}: ${errMessage(error)}`));
   };
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(null);
+  const [editingChecks, setEditingChecks] = createSignal(false);
   // Jump-to-step state is a single signal so ↗ can be hidden entirely before
   // TerminalView is ready (otherwise firstIndex would default to 0, showing ↗
   // on every step while `jump` is still undefined and every click no-ops).
@@ -442,10 +466,8 @@ export function TaskPanel(props: TaskPanelProps) {
         setShowCloseConfirm(true);
         break;
       case 'merge':
-        if (props.task.gitIsolation === 'worktree' && !isLandedTask()) setShowMergeConfirm(true);
-        break;
       case 'push':
-        if (props.task.gitIsolation === 'worktree' && !isLandedTask()) setShowPushConfirm(true);
+        openFinish(action.type);
         break;
     }
   });
@@ -635,21 +657,7 @@ export function TaskPanel(props: TaskPanelProps) {
         setDiffScrollTarget(path);
       }}
       tour={tour}
-      onTourClick={() => {
-        if (tour.stops().length > 0) {
-          setStartTour(true);
-          setDiffScrollTarget('__tour__');
-        } else {
-          void tour.generateForTask({
-            taskName: props.task.name,
-            worktreePath: props.task.worktreePath,
-            projectRoot: getProject(props.task.projectId)?.path,
-            branchName: tourBranchName(),
-            baseBranch: diffBaseBranch(),
-            selectedCommit: selectedCommit(),
-          });
-        }
-      }}
+      onTourClick={openOrGenerateTour}
       tourDisabled={changedFileCount() === 0}
       compact={topStripEmpty()}
       onFileCountChange={setChangedFileCount}
@@ -948,11 +956,32 @@ export function TaskPanel(props: TaskPanelProps) {
               gap: '12px',
             }}
           >
-            <span>{autoSendChildUpdates() ? 'Automatic child updates' : 'Child task'}</span>
+            <Show
+              when={props.task.coordinatedBy ? store.tasks[props.task.coordinatedBy] : undefined}
+              fallback={
+                <span>{props.task.coordinatedBy ? 'Subtask' : 'Automatic subtask updates'}</span>
+              }
+            >
+              {(parent) => (
+                <button
+                  class="delegation-button delegation-parent-link"
+                  title={`${parent().collapsed ? 'Resume and open parent' : 'Parent task'}: ${parent().name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (parent().collapsed) uncollapseTask(parent().id);
+                    activateTaskFromPointer(parent().id);
+                  }}
+                >
+                  {parent().collapsed ? 'Resume and open parent' : 'Parent task'}: {parent().name}
+                </button>
+              )}
+            </Show>
             <Show
               when={!!props.task.stagedNotification && !props.task.stagedNotification.userEdited}
             >
-              <span style={{ color: theme.accent, 'font-size': '11px' }}>{stagedCountdown()}</span>
+              <span style={{ color: theme.accent, 'font-size': '11px', 'flex-shrink': '0' }}>
+                {stagedCountdown()}
+              </span>
             </Show>
           </div>
           <Show when={!!props.task.stagedNotification && !props.task.stagedNotification.userEdited}>
@@ -1036,8 +1065,7 @@ export function TaskPanel(props: TaskPanelProps) {
             task={props.task}
             isActive={props.isActive}
             onClose={() => setShowCloseConfirm(true)}
-            onMerge={() => setShowMergeConfirm(true)}
-            onPush={() => setShowPushConfirm(true)}
+            onFinish={() => openFinish('merge')}
             pushing={pushing()}
             pushSuccess={pushSuccess()}
             onTitleEditRef={(h) => (titleEditHandle = h)}
@@ -1047,7 +1075,11 @@ export function TaskPanel(props: TaskPanelProps) {
           <TaskCurrentStateLine task={props.task} nowMs={nowMs()} variant="card" />
         </Show>
         <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
-          <TaskBranchInfoBar task={props.task} onEditProject={(id) => setEditingProjectId(id)} />
+          <TaskBranchInfoBar
+            task={props.task}
+            onEditProject={(id) => setEditingProjectId(id)}
+            onOpenPullRequest={setOpenPrUrl}
+          />
         </div>
       </div>
       <div style={{ flex: '1', 'min-height': '0' }}>
@@ -1060,8 +1092,8 @@ export function TaskPanel(props: TaskPanelProps) {
       </div>
       <DelegationReviewDialog
         task={props.task}
-        open={showMergeConfirm() && props.task.integrationPolicy === 'review'}
-        onClose={() => setShowMergeConfirm(false)}
+        open={showDelegationReview()}
+        onClose={() => setShowDelegationReview(false)}
       />
       <CloseTaskDialog
         open={showCloseConfirm()}
@@ -1069,41 +1101,66 @@ export function TaskPanel(props: TaskPanelProps) {
         onDone={() => setShowCloseConfirm(false)}
       />
       <Show when={props.task.gitIsolation !== 'none' && !isLandedTask()}>
-        <MergeDialog
-          open={showMergeConfirm() && props.task.integrationPolicy !== 'review'}
+        <FinishDialog
+          open={finishAction() !== null}
           task={props.task}
           initialCleanup={
             props.task.externalWorktree
               ? false
               : (getProject(props.task.projectId)?.deleteBranchOnClose ?? true)
           }
-          onDone={() => setShowMergeConfirm(false)}
-          onDiffFileClick={(file) => setDiffScrollTarget(file.path)}
-        />
-        <PushDialog
-          open={showPushConfirm()}
-          task={props.task}
-          onStart={() => {
+          tour={tour}
+          tourDisabled={changedFileCount() === 0}
+          onTourClick={openOrGenerateTour}
+          onRegenerateTour={() => {
+            tour.reset();
+            generateTour();
+          }}
+          onDelegationReview={() => {
+            setFinishAction(null);
+            setShowDelegationReview(true);
+          }}
+          onPushStart={() => {
             setPushing(true);
             setPushSuccess(false);
             clearTimeout(pushSuccessTimer);
           }}
-          onClose={() => {
-            setShowPushConfirm(false);
-          }}
-          onDone={(success) => {
-            const wasHidden = !showPushConfirm();
-            setShowPushConfirm(false);
+          onPushDone={(success) => {
+            const wasHidden = finishAction() === null;
             setPushing(false);
             if (success) {
               setPushSuccess(true);
               pushSuccessTimer = setTimeout(() => setPushSuccess(false), 3000);
+              setFinishAction(null);
             }
-            if (wasHidden) {
-              showNotification(success ? 'Push completed' : 'Push failed');
-            }
+            // A failed push keeps the dialog open so its error stays readable.
+            if (wasHidden) showNotification(success ? 'Push completed' : 'Push failed');
           }}
+          onDiffFileClick={(file) => {
+            // Finish reviews the cumulative change, regardless of the last browsed commit.
+            batch(() => {
+              setSelectedCommit(null);
+              setStartTour(false);
+              setDiffScrollTarget(file.path);
+            });
+          }}
+          onConfigureChecks={() => {
+            setFinishAction(null);
+            setEditingChecks(true);
+            setEditingProjectId(props.task.projectId);
+          }}
+          onClose={() => setFinishAction(null)}
         />
+      </Show>
+      <Show when={openPrUrl()}>
+        {(url) => (
+          <PullRequestDialog
+            open
+            task={props.task}
+            prUrl={url()}
+            onClose={() => setOpenPrUrl(null)}
+          />
+        )}
       </Show>
       <Show when={props.task.gitIsolation !== 'none'}>
         <DiffViewerDialog
@@ -1132,7 +1189,14 @@ export function TaskPanel(props: TaskPanelProps) {
           findingProvider={devQualityFindingProvider ?? eslintQualityFindingProvider}
         />
       </Show>
-      <EditProjectDialog project={editingProject()} onClose={() => setEditingProjectId(null)} />
+      <EditProjectDialog
+        project={editingProject()}
+        focusChecks={editingChecks()}
+        onClose={() => {
+          setEditingProjectId(null);
+          setEditingChecks(false);
+        }}
+      />
       <PlanViewerDialog
         open={planFullscreen()}
         onClose={() => setPlanFullscreen(false)}
