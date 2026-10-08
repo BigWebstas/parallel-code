@@ -84,12 +84,13 @@ export function authorLogin(v: unknown): string {
 }
 
 export interface PrRef {
+  host: string;
   owner: string;
   repo: string;
   number: number;
 }
 
-/** Parses a canonical github.com pull request URL. */
+/** Parses an HTTPS PR URL; gh handles host support and authentication. */
 export function parsePrRef(url: string): PrRef | null {
   let u: URL;
   try {
@@ -98,10 +99,14 @@ export function parsePrRef(url: string): PrRef | null {
     return null;
   }
   if (u.protocol !== 'https:') return null;
-  if (u.hostname !== 'github.com' && u.hostname !== 'www.github.com') return null;
   if (u.username || u.password) return null;
   const [owner, repo, kind, num] = u.pathname.split('/').filter(Boolean);
   if (!owner || !repo || kind !== 'pull' || !/^\d+$/.test(num ?? '')) return null;
   if (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo)) return null;
-  return { owner, repo, number: Number(num) };
+  return {
+    host: u.host === 'www.github.com' ? 'github.com' : u.host,
+    owner,
+    repo,
+    number: Number(num),
+  };
 }
