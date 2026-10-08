@@ -1051,6 +1051,10 @@ export async function spawnAgent(
       rows: args.rows,
       cwd: spawnSpec.cwd,
       env: spawnSpec.env,
+      // Use node-pty's bundled ConPTY (conpty.dll + OpenConsole) instead of the
+      // one in the OS: it forwards output without the system conhost's added
+      // latency and stalls, and behaves the same on every Windows version.
+      ...(process.platform === 'win32' ? { useConptyDll: true } : {}),
     });
   } catch (err) {
     retireAgentLaunch(args.agentId, launchId);
