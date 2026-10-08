@@ -37,6 +37,7 @@ import { warn as logWarn } from '../lib/log';
 import { cleanTaskName } from '../lib/clean-task-name';
 import type {
   AgentDef,
+  CreatePrTaskResult,
   CreateTaskResult,
   ImportableWorktree,
   MergeResult,
@@ -264,6 +265,8 @@ export interface CreateTaskOptions {
   branchPrefixOverride?: string;
   initialPrompt?: string;
   githubUrl?: string;
+  /** Check out this open pull request instead of branching from baseBranch. */
+  pullRequestNumber?: number;
   skipPermissions?: boolean;
   dockerMode?: boolean;
   dockerSource?: DockerSource;
@@ -301,8 +304,23 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
   let taskId: string;
   let branchName: string;
   let worktreePath: string;
+  let effectiveBaseBranch = baseBranch;
+  let prUrl: string | undefined;
 
-  if (gitIsolation === 'worktree') {
+  if (gitIsolation === 'worktree' && opts.pullRequestNumber) {
+    const result = await invoke<CreatePrTaskResult>(IPC.CreatePrTask, {
+      name,
+      projectRoot,
+      symlinkDirs,
+      branchPrefix: opts.branchPrefixOverride ?? getProjectBranchPrefix(projectId),
+      prNumber: opts.pullRequestNumber,
+    });
+    taskId = result.id;
+    branchName = result.branch_name;
+    worktreePath = result.worktree_path;
+    effectiveBaseBranch = result.base_branch || baseBranch;
+    prUrl = result.pr_url;
+  } else if (gitIsolation === 'worktree') {
     const branchPrefix = opts.branchPrefixOverride ?? getProjectBranchPrefix(projectId);
     const result = await invoke<CreateTaskResult>(IPC.CreateTask, {
       name,
@@ -349,7 +367,7 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
       notes: opts.notes,
       projectId,
       gitIsolation,
-      baseBranch: baseBranch || undefined,
+      baseBranch: effectiveBaseBranch || undefined,
       branchName,
       worktreePath,
       agentId,
@@ -361,7 +379,10 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     dockerMode: dockerMode ?? undefined,
     dockerSource: dockerSource ?? undefined,
     dockerImage: dockerImage ?? undefined,
-    githubUrl,
+    // A PR checkout's source is the PR. Recording it here too keeps the PR
+    // link when a branch rename clears prUrl (see updateTaskBranch).
+    githubUrl: prUrl ?? githubUrl,
+    prUrl,
     autoMergeChildren: opts.autoMergeChildren,
     autoSendChildUpdates: opts.autoSendChildUpdates,
     propagateSkipPermissions:

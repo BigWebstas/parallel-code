@@ -18,7 +18,7 @@ import { parseGitHubUrl } from '../lib/github-url';
 import { abbreviateHomePath } from '../lib/path';
 import { projectInitials } from '../lib/project-initials';
 import type { Task } from '../store/types';
-import { AlertIcon, CheckIcon, PencilIcon, PersonIcon } from './icons';
+import { AlertIcon, CheckIcon, GitMergeIcon, PencilIcon, PersonIcon } from './icons';
 
 const infoBarBtnStyle: JSX.CSSProperties = {
   'align-self': 'stretch',
@@ -37,7 +37,10 @@ const warningChipStyle: JSX.CSSProperties = {
   padding: '1px 6px',
 };
 
-type ReviewStatusKind = 'approved' | 'changes-requested' | 'review-needed' | 'draft';
+type ReviewStatusKind = 'approved' | 'changes-requested' | 'review-needed' | 'draft' | 'merged';
+
+/** GitHub's own "merged" purple, so the state reads the same as on github.com. */
+const GITHUB_MERGED_COLOR = '#8957e5';
 
 interface ReviewStatus {
   kind: ReviewStatusKind;
@@ -62,6 +65,9 @@ function ReviewStatusIcon(props: { kind: ReviewStatusKind }) {
       <Match when={props.kind === 'draft'}>
         <PencilIcon size={12} />
       </Match>
+      <Match when={props.kind === 'merged'}>
+        <GitMergeIcon size={12} />
+      </Match>
     </Switch>
   );
 }
@@ -69,6 +75,8 @@ function ReviewStatusIcon(props: { kind: ReviewStatusKind }) {
 interface TaskBranchInfoBarProps {
   task: Task;
   onEditProject: (projectId: string) => void;
+  /** Opens the in-app PR panel; without it the PR chip opens GitHub. */
+  onOpenPullRequest?: (prUrl: string) => void;
 }
 
 export function TaskBranchInfoBar(props: TaskBranchInfoBarProps) {
@@ -167,6 +175,15 @@ export function TaskBranchInfoBar(props: TaskBranchInfoBarProps) {
           const reviewStatus = (): ReviewStatus | null => {
             const c = pr();
             if (!c) return null;
+            if (c.merged) {
+              return {
+                kind: 'merged',
+                label: 'Merged',
+                accessibleLabel: 'Merged',
+                title: 'Pull request merged',
+                color: GITHUB_MERGED_COLOR,
+              };
+            }
             if (c.isDraft) {
               return {
                 kind: 'draft',
@@ -228,17 +245,38 @@ export function TaskBranchInfoBar(props: TaskBranchInfoBarProps) {
               color: theme.error,
             };
           };
+          const hasConflicts = () => pr()?.mergeable === 'CONFLICTING';
           const buttonTitle = () =>
-            [reviewStatus()?.title, ciStatus()?.title, url()].filter(Boolean).join('\n');
+            [
+              reviewStatus()?.title,
+              ciStatus()?.title,
+              hasConflicts() ? 'Merge conflicts with the base branch' : null,
+              url(),
+              props.onOpenPullRequest ? `${mod}+Click to open on GitHub` : null,
+            ]
+              .filter(Boolean)
+              .join('\n');
           const buttonLabel = () =>
-            [`PR #${prNumber()}`, reviewStatus()?.accessibleLabel, ciStatus()?.label]
+            [
+              `PR #${prNumber()}`,
+              reviewStatus()?.accessibleLabel,
+              ciStatus()?.label,
+              hasConflicts() ? 'Conflicts' : null,
+            ]
               .filter(Boolean)
               .join(', ');
+          const openPr = (e: MouseEvent) => {
+            if (props.onOpenPullRequest && !(e.metaKey || e.ctrlKey)) {
+              props.onOpenPullRequest(url());
+            } else {
+              window.open(url(), '_blank');
+            }
+          };
           return (
             <button
               type="button"
               class="task-branch-info-button task-pr-link"
-              onClick={() => window.open(url(), '_blank')}
+              onClick={openPr}
               title={buttonTitle()}
               aria-label={buttonLabel()}
               style={{ ...infoBarBtnStyle, 'margin-right': '8px', color: theme.accent }}
@@ -280,6 +318,11 @@ export function TaskBranchInfoBar(props: TaskBranchInfoBarProps) {
                     </span>
                   </span>
                 )}
+              </Show>
+              <Show when={hasConflicts()}>
+                <span class="task-pr-conflicts" style={{ color: theme.error }}>
+                  Conflicts
+                </span>
               </Show>
             </button>
           );

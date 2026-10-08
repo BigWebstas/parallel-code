@@ -56,6 +56,7 @@ const mocks = vi.hoisted(() => {
   const mockGitMergeTask = vi.fn();
   const mockCreateBackendTask = vi.fn();
   const mockDeleteBackendTask = vi.fn();
+  const mockFsLstat = vi.fn();
   const mockVerifyStart = vi.fn();
   const mockVerifyCancel = vi.fn();
 
@@ -68,6 +69,7 @@ const mocks = vi.hoisted(() => {
     mockMkdirSync,
     mockFsWriteFile,
     mockFsReadFile,
+    mockFsLstat,
     mockFsAccess,
     mockFsUnlink,
     mockFsMkdir,
@@ -115,6 +117,7 @@ vi.mock('fs/promises', () => ({
   access: mocks.mockFsAccess,
   unlink: mocks.mockFsUnlink,
   mkdir: mocks.mockFsMkdir,
+  lstat: mocks.mockFsLstat,
 }));
 
 vi.mock('./atomic.js', () => ({
@@ -252,6 +255,7 @@ export const {
   mockFsWriteFile,
   mockFsReadFile,
   mockFsAccess,
+  mockFsLstat,
   mockFsUnlink,
   mockFsMkdir,
   mockAtomicWriteFileSync,
@@ -323,6 +327,8 @@ export function resetCoordinatorMocks(): void {
   mockFsReadFile.mockResolvedValue('# existing\n');
   mockFsAccess.mockReset();
   mockFsAccess.mockRejectedValue(enoent());
+  mockFsLstat.mockReset();
+  mockFsLstat.mockRejectedValue(enoent());
   mockFsUnlink.mockReset();
   mockFsUnlink.mockResolvedValue(undefined);
   mockFsMkdir.mockReset();
@@ -435,6 +441,12 @@ export function getExitHandler(): (agentId: string, data: unknown) => void {
 export function getInterruptHandler(): (agentId: string) => void {
   const call = mockOnPtyEvent.mock.calls.find((c) => c[0] === 'interrupt');
   if (!call) throw new Error('interrupt handler not registered');
+  return call[1] as (agentId: string) => void;
+}
+
+export function getPromptSubmittedHandler(): (agentId: string) => void {
+  const call = mockOnPtyEvent.mock.calls.find((c) => c[0] === 'prompt-submitted');
+  if (!call) throw new Error('prompt-submitted handler not registered');
   return call[1] as (agentId: string) => void;
 }
 
