@@ -905,7 +905,6 @@ fun AgentScreen(
     var tab by rememberSaveable { mutableStateOf(AgentTab.TERMINAL) }
     var closing by remember { mutableStateOf(false) }
     var merging by remember { mutableStateOf(false) }
-    var committing by remember { mutableStateOf(false) }
     var viewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // With "Fit the terminal to this phone" on and paired, the PTY takes this screen's size so
@@ -937,14 +936,6 @@ fun AgentScreen(
                 merging = false
                 onBack()
             },
-        )
-    }
-
-    if (committing && agent != null) {
-        CommitTaskDialog(
-            taskId = agent.taskId,
-            client = client,
-            onDismiss = { committing = false },
         )
     }
 
@@ -995,9 +986,6 @@ fun AgentScreen(
                         if (agent != null && state.canControl) {
                             TextButton(onClick = { merging = true }) {
                                 Text("Merge", fontWeight = FontWeight.SemiBold)
-                            }
-                            TextButton(onClick = { committing = true }) {
-                                Text("Commit", fontWeight = FontWeight.SemiBold)
                             }
                             TextButton(onClick = { closing = true }) {
                                 Text("Close", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.SemiBold)
