@@ -15,7 +15,9 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  buildCoordinatorLaunchArgs,
   buildCoordinatorMCPConfig,
+  removeCoordinatorTempConfig,
   selectMcpJsonDir,
   validateStartMCPServerArgs,
 } from './register.js';
@@ -708,5 +710,35 @@ describe('Layer 8 — Coordinator routes available after late coordinator attach
     } finally {
       await srv.stop();
     }
+  });
+});
+
+describe('coordinator launch and cleanup hardening', () => {
+  it('keeps the Codex coordinator token out of argv when a config file exists', () => {
+    const config = buildCoordinatorMCPConfig({
+      mcpServerPath: '/srv/mcp-server.cjs',
+      serverUrl: 'http://127.0.0.1:3001',
+      token: 'secret-token-xyz',
+      coordinatorTaskId: TEST_COORDINATOR_ID,
+    });
+    const args = buildCoordinatorLaunchArgs('codex', '/tmp/cfg.json', config).join(' ');
+    expect(args).toContain('--token-file');
+    expect(args).not.toContain('secret-token-xyz');
+    // Docker has no host-readable file, so the inline form remains.
+    expect(buildCoordinatorLaunchArgs('codex', undefined, config).join(' ')).toContain(
+      'secret-token-xyz',
+    );
+  });
+
+  it('removes the temp config, tolerating a missing file and logging other errors', () => {
+    const dir = mkTemp();
+    const file = path.join(dir, 'cfg.json');
+    fs.writeFileSync(file, '{}');
+    removeCoordinatorTempConfig(file);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(() => removeCoordinatorTempConfig(file)).not.toThrow();
+    // A directory at the path makes unlink fail with a non-ENOENT error.
+    fs.mkdirSync(file);
+    expect(() => removeCoordinatorTempConfig(file)).not.toThrow();
   });
 });

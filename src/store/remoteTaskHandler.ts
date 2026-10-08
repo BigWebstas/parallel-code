@@ -7,6 +7,7 @@
 import { publishAgentTour } from './agent-tour';
 import { loadAgents } from './agents';
 import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } from './canvas';
+import { getEvidenceForAgent, submitEvidence } from './evidence';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { unwrap } from 'solid-js/store';
 import { store } from './core';
@@ -28,6 +29,7 @@ import { errMessage } from '../lib/log';
 import { getTaskDiffBaseBranch, loadTaskDiff } from '../lib/load-task-diff';
 import { loadCommitFiles } from '../lib/commit-status';
 import { IPC } from '../../electron/ipc/channels';
+import { parseEvidenceSubmission } from '../../electron/shared/evidence';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
 import type { AgentDef, GitIgnoredEntry, MergeStatus, WorktreeStatus } from '../ipc/types';
 import type { Task } from './types';
@@ -307,7 +309,6 @@ async function handleGetMergeReadiness(req: GetTaskDiffRequest): Promise<void> {
     if (task.gitIsolation !== 'worktree') {
       reply(req.reqId, true, {
         readiness: {
-          overall: 'blocked',
           checks: [
             {
               label: 'Merge safety',
@@ -348,7 +349,7 @@ async function handleGetMergeReadiness(req: GetTaskDiffRequest): Promise<void> {
     });
     reply(req.reqId, true, {
       readiness,
-      canMerge: readiness.overall !== 'blocked',
+      canMerge: !readiness.checks.some((c) => c.status === 'blocked'),
       baseBranch: task.baseBranch ?? mergeStatus.base_branch ?? '',
       branchName: task.branchName,
     });
@@ -557,7 +558,34 @@ export function startRemoteTaskHandlers(): () => void {
       }
     },
   );
+  const offSubmitEvidence = window.electron.ipcRenderer.on(
+    IPC.MCP_SubmitEvidenceRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest & { payload: unknown };
+      try {
+        // Validated again here: the renderer is the boundary that stores it.
+        reply(req.reqId, true, submitEvidence(req.taskId, parseEvidenceSubmission(req.payload)));
+      } catch (error) {
+        reply(req.reqId, false, undefined, errMessage(error));
+      }
+    },
+  );
+  const offGetEvidence = window.electron.ipcRenderer.on(
+    IPC.MCP_GetEvidenceRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest;
+      try {
+        reply(req.reqId, true, getEvidenceForAgent(req.taskId));
+      } catch (error) {
+        reply(req.reqId, false, undefined, errMessage(error));
+      }
+    },
+  );
   return () => {
+    offSubmitEvidence();
+    offGetEvidence();
     offReadReasoning();
     offUpdateReasoning();
     offReadMap();
@@ -569,12 +597,12 @@ export function startRemoteTaskHandlers(): () => void {
     offCreate();
     offGetNotes();
     offSetNotes();
-    offGetUsage();
     offClose();
     offDiff();
     offReadiness();
     offMerge();
     offCommitStatus();
     offCommitAction();
+    offGetUsage();
   };
 }

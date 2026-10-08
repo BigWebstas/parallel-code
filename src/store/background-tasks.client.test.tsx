@@ -273,9 +273,8 @@ it('offers the action and a manual return in the task header', () => {
         task={store.tasks.one}
         isActive={store.activeTaskId === 'one'}
         onClose={() => undefined}
-        onMerge={() => undefined}
         onCommit={() => undefined}
-        onPush={() => undefined}
+        onFinish={() => undefined}
         pushing={false}
         pushSuccess={false}
         onTitleEditRef={() => undefined}

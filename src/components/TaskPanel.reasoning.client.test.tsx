@@ -8,6 +8,8 @@ import { IPC } from '../../electron/ipc/channels';
 import type { CommitInfo } from '../ipc/types';
 import { invoke } from '../lib/ipc';
 import {
+  store,
+  uncollapseTask,
   openCanvasReasoning,
   openCanvasMindMap,
   activateCanvasTab,
@@ -17,6 +19,8 @@ import {
 } from '../store/store';
 import { GIST_LABEL } from '../lib/understanding-tour';
 import type { Task } from '../store/types';
+import type { FinishDialog } from './FinishDialog';
+import { UNCOMMITTED_SELECTION } from './CommitNavBar';
 import type { DiffViewerDialog } from './DiffViewerDialog';
 import type { TaskNotesBody } from './TaskNotesBody';
 import type { UnderstandingTourDialog } from './UnderstandingTourDialog';
@@ -27,6 +31,8 @@ const fileInventory = vi.hoisted(() => ({
   mounts: 0,
   disposals: 0,
 }));
+
+const parentNavigation = vi.hoisted(() => ({ setCollapsed: (_value: boolean) => {} }));
 
 const channels = vi.hoisted(
   () =>
@@ -39,6 +45,7 @@ const channels = vi.hoisted(
 vi.mock('../store/store', () => {
   const [store, setStore] = createStore({
     activeTaskId: 'other-task',
+    tasks: { parent: { id: 'parent', name: 'Parent task', collapsed: false } },
     focusMode: false,
     themePreset: 'obsidian',
     showPlans: true,
@@ -49,6 +56,8 @@ vi.mock('../store/store', () => {
     askCodeProvider: 'minimax',
     agentEnvFiles: {},
   });
+  parentNavigation.setCollapsed = (value: boolean) =>
+    setStore('tasks', 'parent', 'collapsed', value);
   return {
     store,
     getProject: () => undefined,
@@ -74,6 +83,7 @@ vi.mock('../store/store', () => {
     triggerFocus: vi.fn(),
     setActiveTask: (id: string) => setStore('activeTaskId', id),
     activateTaskFromPointer: (id: string) => setStore('activeTaskId', id),
+    uncollapseTask: vi.fn(),
     toggleFocusMode: (on?: boolean) => setStore('focusMode', on ?? !store.focusMode),
   };
 });
@@ -109,8 +119,27 @@ vi.mock('./PromptInput', () => ({
   PromptInput: () => <textarea class="test-prompt" value="Draft" />,
 }));
 vi.mock('./CloseTaskDialog', () => ({ CloseTaskDialog: () => null }));
-vi.mock('./MergeDialog', () => ({ MergeDialog: () => null }));
-vi.mock('./PushDialog', () => ({ PushDialog: () => null }));
+vi.mock('./FinishDialog', () => ({
+  FinishDialog: (props: ComponentProps<typeof FinishDialog>) => (
+    <Show when={props.open}>
+      <button
+        class="test-evidence-review"
+        onClick={() => {
+          props.onClose();
+          props.onDiffFileClick({
+            path: 'src/earlier.ts',
+            status: 'M',
+            lines_added: 1,
+            lines_removed: 0,
+            committed: true,
+          });
+        }}
+      >
+        Review evidence file
+      </button>
+    </Show>
+  ),
+}));
 vi.mock('./DiffViewerDialog', () => ({
   DiffViewerDialog: (props: ComponentProps<typeof DiffViewerDialog>) => (
     <div
@@ -122,6 +151,12 @@ vi.mock('./DiffViewerDialog', () => ({
       <button class="test-diff-select" onClick={() => props.onCommitNavigate?.('old-commit')}>
         Select commit
       </button>
+      <button
+        class="test-diff-uncommitted"
+        onClick={() => props.onCommitNavigate?.(UNCOMMITTED_SELECTION)}
+      >
+        Select uncommitted changes
+      </button>
       <button class="test-diff-close" onClick={() => props.onClose()}>
         Close
       </button>
@@ -130,7 +165,13 @@ vi.mock('./DiffViewerDialog', () => ({
 }));
 vi.mock('./PlanViewerDialog', () => ({ PlanViewerDialog: () => null }));
 vi.mock('./EditProjectDialog', () => ({ EditProjectDialog: () => null }));
-vi.mock('./TaskTitleBar', () => ({ TaskTitleBar: () => null }));
+vi.mock('./TaskTitleBar', () => ({
+  TaskTitleBar: (props: { onFinish: () => void }) => (
+    <button class="test-finish-open" onClick={() => props.onFinish()}>
+      Finish
+    </button>
+  ),
+}));
 vi.mock('./TaskBranchInfoBar', () => ({ TaskBranchInfoBar: () => null }));
 vi.mock('./TaskBranchAdoptionBanner', () => ({ TaskBranchAdoptionBanner: () => null }));
 vi.mock('./TaskSuperProductivityBanner', () => ({ TaskSuperProductivityBanner: () => null }));
@@ -636,4 +677,53 @@ it('keeps prompt focus when incoming files reopen the supporting column', async 
   } finally {
     width.mockRestore();
   }
+});
+
+it.each([
+  ['.test-diff-select', 'old-commit'],
+  ['.test-diff-uncommitted', UNCOMMITTED_SELECTION],
+])('opens evidence in the cumulative diff after selecting %s', (selectionButton, selection) => {
+  const { container } = mountEmptyTask();
+  const click = (selector: string) =>
+    expectDefined(container.querySelector<HTMLButtonElement>(selector)).click();
+  const diff = () => expectDefined(container.querySelector<HTMLElement>('.test-diff'));
+  click('.test-chat-review');
+  click(selectionButton);
+  expect(diff().dataset.commit).toBe(selection);
+  click('.test-diff-close');
+  click('.test-finish-open');
+  click('.test-evidence-review');
+  expect(diff().dataset.open).toBe('true');
+  expect(diff().dataset.file).toBe('src/earlier.ts');
+  expect(diff().dataset.commit).toBe('all');
+  expect(container.querySelector('.test-evidence-review')).toBeNull();
+});
+
+it.each([false, true])('labels parent navigation explicitly when collapsed=%s', (collapsed) => {
+  parentNavigation.setCollapsed(collapsed);
+  vi.mocked(uncollapseTask).mockClear();
+  const task: Task = {
+    id: 'task',
+    name: 'Child',
+    projectId: 'project',
+    agentIds: [],
+    shellAgentIds: [],
+    notes: '',
+    gitIsolation: 'worktree',
+    branchName: 'child',
+    worktreePath: '/tmp/child',
+    lastPrompt: '',
+    coordinatedBy: 'parent',
+  };
+  const container = document.createElement('div');
+  document.body.append(container);
+  dispose = render(() => <TaskPanel task={task} isActive />, container);
+  const label = collapsed ? 'Resume and open parent: Parent task' : 'Parent task: Parent task';
+  const link = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === label,
+  );
+  expectDefined(link).click();
+  expect(store.activeTaskId).toBe('parent');
+  if (collapsed) expect(uncollapseTask).toHaveBeenCalledWith('parent');
+  else expect(uncollapseTask).not.toHaveBeenCalled();
 });
