@@ -3,6 +3,7 @@ import { store, setStore } from './core';
 import { AGENT_HOOK_STALE_MS, getAgentHookStatus, type AgentHookStatus } from './agentHookStatus';
 import { scrollTaskIntoView } from './focused-panel';
 import { setActiveTask } from './navigation';
+import { getPrChecks } from './pr-checks-state';
 import { getCoordinatorChildren } from './sidebar-order';
 import { getTaskOpenQuestions, isAgentIdle, type TaskOpenQuestion } from './taskStatus';
 
@@ -37,6 +38,7 @@ interface AgentActivity {
 
 interface ActivitySnapshot {
   task: string;
+  mergedPrTasks: readonly string[];
   agents: ReadonlyMap<string, AgentActivity>;
 }
 
@@ -66,7 +68,9 @@ function agentActivity(agentId: string, questions: readonly TaskOpenQuestion[]):
  * agents finishing/resuming even when another agent masks the task's status. */
 function activitySnapshot(taskId: string): ActivitySnapshot {
   const agents = new Map<string, AgentActivity>();
-  const tasks = taskBlock(taskId).map((id) => {
+  const block = taskBlock(taskId);
+  const mergedPrTasks = block.filter((id) => getPrChecks(id)?.merged === true);
+  const tasks = block.map((id) => {
     const task = store.tasks[id];
     const agentIds = task?.agentIds ?? [];
     const questions = getTaskOpenQuestions(id);
@@ -84,24 +88,25 @@ function activitySnapshot(taskId: string): ActivitySnapshot {
       agentIds,
     };
   });
-  return { task: JSON.stringify(tasks), agents };
+  return { task: JSON.stringify(tasks), mergedPrTasks, agents };
 }
 
-/** A stale hook claim expires without any new event; the heuristics taking over
- * from it are a new baseline, not activity. */
+/** Expired hooks and cleared merge state reset the baseline without new activity. */
 function activityChange(
   baseline: ActivitySnapshot,
   current: ActivitySnapshot,
-): 'same' | 'expired' | 'new' {
+): 'same' | 'rebaseline' | 'new' {
   if (current.task !== baseline.task) return 'new';
-  let change: 'same' | 'expired' = 'same';
+  if (current.mergedPrTasks.some((id) => !baseline.mergedPrTasks.includes(id))) return 'new';
+  let change: 'same' | 'rebaseline' =
+    current.mergedPrTasks.length !== baseline.mergedPrTasks.length ? 'rebaseline' : 'same';
   for (const [agentId, now] of current.agents) {
     const then = baseline.agents.get(agentId);
     if (!then || now.process !== then.process) return 'new';
     const expired =
       !now.hooked && then.claimAt !== undefined && Date.now() - then.claimAt >= AGENT_HOOK_STALE_MS;
     // Rebaseline hook expiry even when both sources still report the agent busy.
-    if (expired) change = 'expired';
+    if (expired) change = 'rebaseline';
     else if (now.activity !== then.activity) return 'new';
   }
   return change;
@@ -189,7 +194,7 @@ export function startBackgroundTaskWatcher(): () => void {
           change === 'new'
         ) {
           untrack(() => bringTaskToFront(taskId));
-        } else if (change === 'expired') {
+        } else if (change === 'rebaseline') {
           untrack(() => setBackgroundTasks((previous) => new Map(previous).set(taskId, current)));
         }
       }

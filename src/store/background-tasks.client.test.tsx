@@ -6,6 +6,7 @@ import { store, setStore } from './core';
 import { AGENT_HOOK_STALE_MS, applyAgentHookEvent, getAgentHookStatus } from './agentHookStatus';
 import { clearAgentActivity, getTaskAttentionState, markAgentBusy } from './taskStatus';
 import { setActiveTask } from './navigation';
+import { removePrChecks, setPrChecks, type PrChecksState } from './pr-checks-state';
 import { computeAttentionEntries } from './sidebar-attention';
 import {
   bringTaskToFront,
@@ -74,6 +75,7 @@ afterEach(() => {
   for (const id of ['one', 'two', 'three']) {
     bringTaskToFront(id);
     clearAgentActivity(`${id}-agent`);
+    removePrChecks(id);
   }
   vi.useRealTimers();
 });
@@ -143,6 +145,61 @@ it.each([{ stale: true }, { refreshing: true }, { error: 'Git refresh failed' }]
     expect(store.taskOrder).toEqual(['two', 'three', 'one']);
   },
 );
+
+const prChecks: PrChecksState = {
+  overall: 'pending',
+  passing: 0,
+  pending: 1,
+  failing: 0,
+  checks: [],
+  checkedAt: '2026-10-09T10:00:00Z',
+};
+
+it.each(['one', 'three'])('returns when the remote PR for %s merges', (taskId) => {
+  if (taskId === 'three') setStore('tasks', 'three', 'coordinatedBy', 'one');
+  setPrChecks(taskId, { ...prChecks });
+  sendTaskToBack('one');
+
+  setPrChecks(taskId, { ...prChecks, overall: 'success', passing: 1, pending: 0 });
+  expect(isTaskBackgrounded('one')).toBe(true);
+
+  setPrChecks(taskId, { ...prChecks, overall: 'none', merged: true });
+  expect(isTaskBackgrounded('one')).toBe(false);
+  expect(store.taskOrder[0]).toBe('one');
+  expect(store.activeTaskId).toBe('two');
+});
+
+it('returns when a merged PR is first discovered after backgrounding', () => {
+  sendTaskToBack('one');
+
+  setPrChecks('one', { ...prChecks, overall: 'none', merged: true });
+  expect(isTaskBackgrounded('one')).toBe(false);
+  expect(store.taskOrder[0]).toBe('one');
+  expect(store.activeTaskId).toBe('two');
+});
+
+it('does not wake for an already merged PR or cleared PR state', () => {
+  setPrChecks('one', { ...prChecks, overall: 'none', merged: true });
+  sendTaskToBack('one');
+  setPrChecks('one', { ...prChecks, overall: 'none', merged: true });
+  expect(isTaskBackgrounded('one')).toBe(true);
+
+  removePrChecks('one');
+  expect(isTaskBackgrounded('one')).toBe(true);
+});
+
+it('returns when a later PR merges after the previous merge state clears', () => {
+  setPrChecks('one', { ...prChecks, overall: 'none', merged: true });
+  sendTaskToBack('one');
+
+  setPrChecks('one', { ...prChecks, merged: false });
+  expect(isTaskBackgrounded('one')).toBe(true);
+
+  setPrChecks('one', { ...prChecks, overall: 'none', merged: true });
+  expect(isTaskBackgrounded('one')).toBe(false);
+  expect(store.taskOrder[0]).toBe('one');
+  expect(store.activeTaskId).toBe('two');
+});
 
 it('still returns when the task requests review', () => {
   sendTaskToBack('one');
