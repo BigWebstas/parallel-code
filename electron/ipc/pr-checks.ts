@@ -231,7 +231,12 @@ async function refreshOne(taskId: string): Promise<void> {
     return;
   }
 
-  const checks = status.checks;
+  // GitHub does not run pull_request workflows on conflicted branches. Include
+  // a local mergeability check so unrelated passing checks cannot imply success.
+  const checks: PrCheckRun[] =
+    status.mergeable === 'CONFLICTING'
+      ? [...status.checks, { name: 'Merge conflicts with base branch', bucket: 'fail' }]
+      : status.checks;
   const view = { state: status.state, headRefOid: status.headRefOid };
 
   const { overall, passing, pending, failing } = summarize(checks);

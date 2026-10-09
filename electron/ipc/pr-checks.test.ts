@@ -396,6 +396,51 @@ describe('refreshPrChecksWatcher', () => {
     __resetForTests();
   });
 
+  it.each([
+    { statusCheckRollup: [] },
+    { statusCheckRollup: [{ name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS' }] },
+  ])(
+    'reports conflicts instead of green or absent CI for rollup %j',
+    async ({ statusCheckRollup }) => {
+      const send = vi.fn();
+      initPrChecks(fakeWindow(send));
+      let mergeable = 'CONFLICTING';
+      stubGh((_args, cb) =>
+        cb(
+          null,
+          JSON.stringify({ state: 'OPEN', headRefOid: 'sha', mergeable, statusCheckRollup }),
+          '',
+        ),
+      );
+      startPrChecksWatcher({
+        taskId: 't1',
+        prUrl: 'https://github.com/a/b/pull/1',
+        taskName: 'test',
+      });
+      await flushPromises();
+      expect(send.mock.calls[send.mock.calls.length - 1]?.[1]).toMatchObject({
+        overall: 'failure',
+        failing: 1,
+        checks: expect.arrayContaining([
+          { name: 'Merge conflicts with base branch', bucket: 'fail' },
+        ]),
+      });
+
+      mergeable = 'MERGEABLE';
+      const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10 * 60_000);
+      try {
+        await __runTickForTests();
+      } finally {
+        now.mockRestore();
+      }
+      expect(send.mock.calls[send.mock.calls.length - 1]?.[1]).toMatchObject({
+        taskId: 't1',
+        overall: statusCheckRollup.length ? 'success' : 'none',
+        failing: 0,
+      });
+    },
+  );
+
   it('does not suppress the first fetched status after a post-push refresh', async () => {
     const send = vi.fn();
     initPrChecks(fakeWindow(send));
