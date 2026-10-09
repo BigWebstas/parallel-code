@@ -57,6 +57,21 @@ cd android
 ./gradlew installDebug        # install on a connected device
 ```
 
+### Google Play test builds
+
+The Android workflow tests pull requests and pushes that change Android code or its shared theme sources. After tests pass on `main`, it builds a signed Android App Bundle and publishes it to Google Play's **internal testing** track. **Actions → Android → Run workflow** on `main` also publishes a test build. PRs, other branches, and release tags do not publish to Play.
+
+One-time setup:
+
+1. Create the Play Console app for `com.parallelcode.phone`, enroll in Play App Signing, and upload an initial signed bundle manually. Complete the required app setup and roll out the initial internal release so the app can accept `completed` releases via the API.
+2. Register the certificate for the existing CI signing key as the Play upload certificate. CI reuses the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` repository secrets. For seamless updates between GitHub and Play installs, configure Play App Signing to use the existing app signing key too; the upload key alone does not determine the key on installed Play builds.
+3. Enable the Google Play Android Developer API, create a service account, and invite its email in Play Console **Users and permissions**. Give it access to this app and permission to view app information and release to testing tracks. Store its JSON key as the GitHub Actions repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`.
+4. Add testers under **Testing → Internal testing → Testers** and share the opt-in link. Testers install and update through Google Play.
+
+CI uses the Android workflow run number as `versionCode` and `internal.<run>` as `versionName`. The initial manual upload must use a lower version code than the next CI run. After a successful upload, start a **new workflow run** for another upload; rerunning the same run reuses its version code, which Play rejects. Keep this workflow's version-code sequence for future Play releases as well.
+
+Publishing fails with a clear error if a required secret is missing. Signing builds do not restore Gradle caches, publishing jobs are serialized, and the temporary signing key is removed even on failure. See the [upload action setup](https://github.com/r0adkll/upload-google-play#configure-access-via-service-account) and [Android bundle publishing guide](https://developer.android.com/studio/publish/upload-bundle).
+
 ### Releases
 
 `.github/workflows/android.yml` tests and builds the app whenever `android/` changes. Pushing a tag such as `android-v0.2.0` also publishes a signed APK as a GitHub release, kept separate from the desktop's `v*` releases. Signing reads `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` from the environment; CI fills them from repository secrets of the same names, with the keystore stored base64-encoded as `ANDROID_KEYSTORE_BASE64`. Every update must be signed with the same key, so keep a backup of it.
