@@ -13,6 +13,7 @@ Native companion app for the desktop's **Connect Phone** (Remote Access) feature
 - **Settings:** theme and looks, keep the screen on, widget background transparency and card color, connection status, wait for VPN (skipped on your home Wi-Fi, which needs location access to read the network name, and "Allow all the time" for agent notifications in the background), and forget this computer.
 - **Swipe between tasks:** with a task open, swipe sideways to the previous or next one in the list; the header shows its position ("2 of 5").
 - **Terminal:** an agent's terminal in the colors of the look you picked, matching the desktop. Once paired: a reply box and keys a phone keyboard lacks (Enter, Esc, Tab, arrows, Ctrl+C). With "Fit the terminal to this phone" on (Settings, off by default), the terminal takes the phone's size while open so full-screen agents such as Claude Code fill it; the computer's own terminal shifts meanwhile and gets its size back when you leave.
+- **Terminal space and zoom:** A−/A+ adjust the terminal text from 75% to 250%; tap the percentage to reset it. Expand hides the title, tabs, quick keys, and saved replies while keeping the message field and Send/Stop available. Restore or Android Back returns to the normal layout without losing your draft. With fit-to-phone enabled, zoom also updates the remote terminal dimensions. Terminal and chat replies use full-width multiline fields, with action buttons below.
 - **Changes:** the task's diff against its base branch, file by file with added and removed lines.
 - **Quick replies and voice:** saved replies above the reply box (edit them in Settings) and a mic button that dictates with Android's speech recognizer.
 - **Widget:** a home-screen widget with the agents that need you and the usage meters, updated while the app is connected. Settings → Widget sets its background transparency (opaque, 75%, 50% or 25%; the border fades with the card, so your wallpaper shows through) and its card color (Obsidian, Slate or Light, each with text colors that stay readable).
@@ -56,6 +57,21 @@ cd android
 ./gradlew assembleDebug       # app/build/outputs/apk/debug/app-debug.apk
 ./gradlew installDebug        # install on a connected device
 ```
+
+### Google Play test builds
+
+The Android workflow tests pull requests and pushes that change Android code or its shared theme sources. After tests pass on `main`, it builds a signed Android App Bundle and publishes it to Google Play's **internal testing** track. **Actions → Android → Run workflow** on `main` also publishes a test build. PRs, other branches, and release tags do not publish to Play.
+
+One-time setup:
+
+1. Create the Play Console app for `com.parallelcode.phone`, enroll in Play App Signing, and upload an initial signed bundle manually. Complete the required app setup and roll out the initial internal release so the app can accept `completed` releases via the API.
+2. Register the certificate for the existing CI signing key as the Play upload certificate. CI reuses the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` repository secrets. For seamless updates between GitHub and Play installs, configure Play App Signing to use the existing app signing key too; the upload key alone does not determine the key on installed Play builds.
+3. Enable the Google Play Android Developer API, create a service account, and invite its email in Play Console **Users and permissions**. Give it access to this app and permission to view app information and release to testing tracks. Store its JSON key as the GitHub Actions repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`.
+4. Add testers under **Testing → Internal testing → Testers** and share the opt-in link. Testers install and update through Google Play.
+
+CI uses the Android workflow run number as `versionCode` and `internal.<run>` as `versionName`. The initial manual upload must use a lower version code than the next CI run. After a successful upload, start a **new workflow run** for another upload; rerunning the same run reuses its version code, which Play rejects. Keep this workflow's version-code sequence for future Play releases as well.
+
+Publishing fails with a clear error if a required secret is missing. Signing builds do not restore Gradle caches, publishing jobs are serialized, and older runs skip publishing if a newer run has already published successfully. The check uses Android workflow runs rather than the latest main commit, so unrelated desktop changes do not suppress a test build. The temporary signing key is removed even on failure. See the [upload action setup](https://github.com/r0adkll/upload-google-play#configure-access-via-service-account) and [Android bundle publishing guide](https://developer.android.com/studio/publish/upload-bundle).
 
 ### Releases
 
