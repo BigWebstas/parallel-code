@@ -236,7 +236,7 @@ export {
   getTaskChecks,
   isEvidenceBusy,
 } from './evidence-state';
-export { getMergedTasksTodayCount, getMergedLineTotals } from './completion';
+export { getMergedTasksTodayCount } from './completion';
 export {
   createTerminal,
   closeTerminal,

@@ -461,6 +461,7 @@ export interface PersistedState {
   globalScale?: number;
   completedTaskDate?: string;
   completedTaskCount?: number;
+  countedMergedPrs?: string[];
   mergedLinesAdded?: number;
   mergedLinesRemoved?: number;
   terminalFont?: string;
@@ -582,6 +583,7 @@ export interface AppStore {
   notification: string | null;
   completedTaskDate: string;
   completedTaskCount: number;
+  countedMergedPrs: string[];
   mergedLinesAdded: number;
   mergedLinesRemoved: number;
   terminalFont: string;

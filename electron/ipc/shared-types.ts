@@ -151,6 +151,9 @@ export interface PrCheckRun {
 
 export interface PrChecksUpdatePayload {
   taskId: string;
+  prUrl?: string;
+  /** Actual GitHub merge time, not the time the watcher noticed it. */
+  mergedAt?: string;
   overall: PrChecksOverall;
   /** Additive review metadata from GitHub. Absent for older senders and null
    *  when GitHub has no supported review decision. */

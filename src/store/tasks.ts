@@ -651,7 +651,7 @@ export async function mergeTask(
 
   if (cleanup) {
     recordMergedLines(mergeResult.lines_added, mergeResult.lines_removed);
-    recordTaskMerged();
+    recordTaskMerged(task.prUrl ?? task.githubUrl);
     armSpCompletion(taskId, {
       kind: 'merged',
       linesAdded: mergeResult.lines_added,
