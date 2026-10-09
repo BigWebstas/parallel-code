@@ -535,15 +535,20 @@ private fun ChatComposer(
             if (sendQuickReplies) run({ send(it) }, clearDraft = false)
             else draft = appendToDraft(draft, it)
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Message the agent") },
-                maxLines = 5,
-                enabled = enabled,
-            )
+        OutlinedTextField(
+            value = draft,
+            onValueChange = { draft = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("Message the agent") },
+            minLines = 2,
+            maxLines = 6,
+            enabled = enabled,
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
+        ) {
             VoiceInputButton(enabled = enabled && !busy) { draft = appendToDraft(draft, it) }
             if (promptHistory != null) {
                 OutlinedButton(

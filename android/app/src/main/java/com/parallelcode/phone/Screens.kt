@@ -1,5 +1,6 @@
 package com.parallelcode.phone
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -103,6 +104,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -908,6 +911,9 @@ fun AgentScreen(
     var closing by remember { mutableStateOf(false) }
     var merging by remember { mutableStateOf(false) }
     var viewSize by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var terminalExpanded by rememberSaveable { mutableStateOf(false) }
+    var terminalZoom by rememberSaveable { mutableFloatStateOf(1f) }
+    BackHandler(enabled = terminalExpanded) { terminalExpanded = false }
 
     // With "Fit the terminal to this phone" on and paired, the PTY takes this screen's size so
     // full-screen TUIs fill the phone; leaving
@@ -956,7 +962,7 @@ fun AgentScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            Column {
+            if (!terminalExpanded) Column {
                 TopAppBar(
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.surface,
@@ -1005,7 +1011,7 @@ fun AgentScreen(
                 .padding(padding)
                 .imePadding(),
         ) {
-            PrimaryTabRow(
+            if (!terminalExpanded) PrimaryTabRow(
                 selectedTabIndex = tab.ordinal,
                 containerColor = MaterialTheme.colorScheme.surface,
                 contentColor = MaterialTheme.colorScheme.primary,
@@ -1022,6 +1028,37 @@ fun AgentScreen(
                             )
                         },
                     )
+                }
+            }
+            if (tab == AgentTab.TERMINAL) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row {
+                        TextButton(
+                            onClick = { terminalZoom = (terminalZoom - 0.25f).coerceAtLeast(0.75f) },
+                            enabled = terminalZoom > 0.75f,
+                            modifier = Modifier.semantics { contentDescription = "Zoom out" },
+                        ) {
+                            Text("A−")
+                        }
+                        TextButton(
+                            onClick = { terminalZoom = 1f },
+                            modifier = Modifier.semantics { contentDescription = "Reset terminal zoom" },
+                        ) { Text("${(terminalZoom * 100).toInt()}%") }
+                        TextButton(
+                            onClick = { terminalZoom = (terminalZoom + 0.25f).coerceAtMost(2.5f) },
+                            enabled = terminalZoom < 2.5f,
+                            modifier = Modifier.semantics { contentDescription = "Zoom in" },
+                        ) {
+                            Text("A+")
+                        }
+                    }
+                    TextButton(onClick = { terminalExpanded = !terminalExpanded }) {
+                        Text(if (terminalExpanded) "Restore" else "Expand")
+                    }
                 }
             }
             AnimatedContent(
@@ -1069,6 +1106,8 @@ fun AgentScreen(
                             buffer.screen.cols,
                             Modifier.fillMaxSize(),
                             alwaysFollow = alwaysFollowOutput,
+                            zoom = terminalZoom,
+                            fitToView = sizeTerminal,
                             onViewSize = { cols, rows -> viewSize = cols to rows },
                         )
                     }
@@ -1103,6 +1142,7 @@ fun AgentScreen(
             } else if (tab == AgentTab.TERMINAL && agent?.collapsed != true) {
                 ReplyBox(
                     agentId = agentId,
+                    compact = terminalExpanded,
                     quickReplies = quickReplies,
                     sendQuickReplies = sendQuickReplies,
                     working = agent?.running == true &&
@@ -1216,6 +1256,8 @@ private fun TerminalText(
     cols: Int,
     modifier: Modifier,
     alwaysFollow: Boolean,
+    zoom: Float,
+    fitToView: Boolean,
     onViewSize: (cols: Int, rows: Int) -> Unit,
 ) {
     // The terminal follows the active look, as it does on the desktop: its own ANSI
@@ -1267,19 +1309,21 @@ private fun TerminalText(
         val charPxAt10 = remember(measurer) {
             measurer.measure("0".repeat(10), TextStyle(fontFamily = FontFamily.Monospace, fontSize = 10.sp)).size.width / 10f
         }
-        val fontSize = (10f * textWidthPx / (cols.coerceAtLeast(1) * charPxAt10)).coerceIn(8f, 14f).sp
+        val autoFont = (10f * textWidthPx / (cols.coerceAtLeast(1) * charPxAt10)).coerceIn(8f, 14f).sp
+        val phoneFont = TERMINAL_FONT * zoom
+        val fontSize = if (fitToView) phoneFont else autoFont * zoom
 
-        // The size this view fits at the default font, offered for the PTY.
+        // Offer the dimensions at the selected font so zoom also resizes a fitted PTY.
         val viewPaddingPx = with(density) { 16.dp.roundToPx() }
         val viewHeightPx = constraints.maxHeight
-        LaunchedEffect(textWidthPx, viewHeightPx) {
+        LaunchedEffect(textWidthPx, viewHeightPx, phoneFont, density) {
             val probe = measurer.measure(
                 "0".repeat(10),
-                TextStyle(fontFamily = FontFamily.Monospace, fontSize = TERMINAL_FONT, lineHeight = TERMINAL_FONT * 1.27f),
+                TextStyle(fontFamily = FontFamily.Monospace, fontSize = phoneFont, lineHeight = phoneFont * 1.27f),
             )
             val viewCols = (textWidthPx / (probe.size.width / 10f)).toInt()
             val viewRows = ((viewHeightPx - viewPaddingPx) / probe.size.height.toFloat()).toInt()
-            if (viewCols >= 20 && viewRows >= 5) onViewSize(viewCols, viewRows)
+            if (viewCols > 0 && viewRows > 0) onViewSize(viewCols.coerceAtMost(500), viewRows.coerceAtMost(500))
         }
 
         LazyColumn(
@@ -1463,6 +1507,7 @@ private fun arrowKeyFor(label: String): Pair<ImageVector, String>? = when (label
 @Composable
 private fun ReplyBox(
     agentId: String,
+    compact: Boolean = false,
     quickReplies: List<String>,
     sendQuickReplies: Boolean = false,
     working: Boolean = false,
@@ -1494,7 +1539,7 @@ private fun ReplyBox(
         border = BorderStroke(1.dp, AppTheme.extra.border),
     ) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
+            if (!compact) Row(
                 Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -1509,7 +1554,7 @@ private fun ReplyBox(
                     }
                 }
             }
-            QuickReplies(quickReplies, enabled = !busy) {
+            if (!compact) QuickReplies(quickReplies, enabled = !busy) {
                 if (sendQuickReplies) run { send(it) } else draft = appendToDraft(draft, it)
             }
             AnimatedVisibility(
@@ -1519,17 +1564,14 @@ private fun ReplyBox(
             ) {
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             }
-            Row(
-                modifier = Modifier.height(IntrinsicSize.Min),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(
                     value = draft,
                     onValueChange = { draft = it },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("Reply to agent", color = AppTheme.extra.textSubtle) },
-                    maxLines = 5,
+                    minLines = if (compact) 1 else 2,
+                    maxLines = if (compact) 3 else 6,
                     enabled = !busy,
                     shape = MaterialTheme.shapes.large,
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1539,60 +1581,66 @@ private fun ReplyBox(
                         unfocusedBorderColor = AppTheme.extra.border,
                     ),
                 )
-                VoiceInputButton(
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxHeight(),
-                ) { draft = appendToDraft(draft, it) }
-                if (promptHistory != null) {
-                    OutlinedButton(
-                        onClick = { showHistory = true },
-                        enabled = !busy && promptHistory.history(agentId).isNotEmpty(),
-                        shape = MaterialTheme.shapes.large,
-                        modifier = Modifier.fillMaxHeight(),
-                    ) {
-                        Icon(Icons.Filled.History, contentDescription = "Recent messages")
-                    }
-                }
-                if (working && draft.isBlank()) {
-                    OutlinedButton(
-                        // Interrupts the running command, like the Ctrl+C quick key.
-                        onClick = { run { sendKey(3.toChar().toString()) } },
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    VoiceInputButton(
                         enabled = !busy,
-                        shape = MaterialTheme.shapes.large,
                         modifier = Modifier.fillMaxHeight(),
-                    ) { Icon(Icons.Filled.Stop, contentDescription = "Stop") }
-                } else {
-                val sendInteraction = remember { MutableInteractionSource() }
-                val sendPressed by sendInteraction.collectIsPressedAsState()
-                val sendScale by animateFloatAsState(
-                    targetValue = if (sendPressed) 0.94f else 1f,
-                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                    label = "sendButtonScale",
-                )
-                Button(
-                    enabled = draft.isNotBlank() && !busy,
-                    shape = MaterialTheme.shapes.large,
-                    interactionSource = sendInteraction,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .graphicsLayer {
-                            scaleX = sendScale
-                            scaleY = sendScale
-                        },
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        val text = draft
-                        run {
-                            send(text)
-                            promptHistory?.record(agentId, text)
-                            draft = ""
+                    ) { draft = appendToDraft(draft, it) }
+                    if (promptHistory != null) {
+                        OutlinedButton(
+                            onClick = { showHistory = true },
+                            enabled = !busy && promptHistory.history(agentId).isNotEmpty(),
+                            shape = MaterialTheme.shapes.large,
+                            modifier = Modifier.fillMaxHeight(),
+                        ) {
+                            Icon(Icons.Filled.History, contentDescription = "Recent messages")
                         }
-                    },
-                ) { Text("Send", fontWeight = FontWeight.Bold) }
+                    }
+                    if (working && draft.isBlank()) {
+                        OutlinedButton(
+                            // Interrupts the running command, like the Ctrl+C quick key.
+                            onClick = { run { sendKey(3.toChar().toString()) } },
+                            enabled = !busy,
+                            shape = MaterialTheme.shapes.large,
+                            modifier = Modifier.fillMaxHeight(),
+                        ) { Icon(Icons.Filled.Stop, contentDescription = "Stop") }
+                    } else {
+                        val sendInteraction = remember { MutableInteractionSource() }
+                        val sendPressed by sendInteraction.collectIsPressedAsState()
+                        val sendScale by animateFloatAsState(
+                            targetValue = if (sendPressed) 0.94f else 1f,
+                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            label = "sendButtonScale",
+                        )
+                        Button(
+                            enabled = draft.isNotBlank() && !busy,
+                            shape = MaterialTheme.shapes.large,
+                            interactionSource = sendInteraction,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .graphicsLayer {
+                                    scaleX = sendScale
+                                    scaleY = sendScale
+                                },
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                val text = draft
+                                run {
+                                    send(text)
+                                    promptHistory?.record(agentId, text)
+                                    draft = ""
+                                }
+                            },
+                        ) { Text("Send", fontWeight = FontWeight.Bold) }
+                    }
                 }
             }
             if (showHistory) {
