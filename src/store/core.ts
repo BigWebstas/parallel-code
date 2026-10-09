@@ -47,6 +47,7 @@ export const [store, setStore] = createStore<AppStore>({
   notification: null,
   completedTaskDate: getLocalDateKey(),
   completedTaskCount: 0,
+  countedMergedPrs: [],
   mergedLinesAdded: 0,
   mergedLinesRemoved: 0,
   terminalFont: DEFAULT_TERMINAL_FONT,

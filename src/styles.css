@@ -4233,8 +4233,7 @@ html[data-look='islands-light'] .window-title-icon {
   font-variant-numeric: tabular-nums;
 }
 
-.sidebar-footer-stat,
-.sidebar-footer-lines {
+.sidebar-footer-stat {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -4249,19 +4248,6 @@ html[data-look='islands-light'] .window-title-icon {
   font-size: 18px;
   font-weight: 600;
   line-height: 1.2;
-}
-
-.sidebar-footer-lines {
-  color: var(--fg-subtle);
-  font-size: 10px;
-}
-
-.sidebar-footer-line-totals {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  min-width: 0;
-  max-width: 100%;
 }
 
 .sidebar-footer-connection {
