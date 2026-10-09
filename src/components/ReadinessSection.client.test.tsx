@@ -7,6 +7,8 @@ import { ReadinessSection } from './ReadinessSection';
 vi.mock('../store/store', () => ({
   buildEvidence: vi.fn(async () => undefined),
   runTaskVerification: vi.fn(async () => undefined),
+  getEvidenceUiState: vi.fn(() => ({})),
+  isEvidenceBusy: (pkg: { assembling?: boolean }) => Boolean(pkg.assembling),
   getTaskChecks: vi.fn(() => [{ id: 'verify', name: 'Verify', command: 'npm test' }]),
 }));
 vi.mock('../lib/theme', () => ({ theme: {} }));
@@ -20,6 +22,7 @@ afterEach(() => {
 
 const button = (text: string) =>
   [...document.querySelectorAll('button')].find((candidate) => candidate.textContent === text);
+const toggle = () => document.querySelector<HTMLButtonElement>('[aria-expanded]');
 const body = () => document.querySelector<HTMLElement>('[data-testid="body"]')?.parentElement;
 
 function mount(overrides: Partial<Task> = {}) {
@@ -58,10 +61,13 @@ describe('ReadinessSection', () => {
 
   it('expands and folds on a header click', () => {
     mount();
-    button('▸ Readiness and checks')?.click();
+    toggle()?.click();
     expect(body()?.hidden).toBe(false);
-    button('▾ Readiness and checks')?.click();
+    expect(toggle()?.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle()?.getAttribute('aria-controls')).toBe(body()?.id);
+    toggle()?.click();
     expect(body()?.hidden).toBe(true);
+    expect(toggle()?.getAttribute('aria-expanded')).toBe('false');
   });
 
   it.each<Partial<Task>>([
@@ -75,6 +81,17 @@ describe('ReadinessSection', () => {
   it('hides Run without a verify command', () => {
     vi.mocked(getTaskChecks).mockReturnValueOnce([]);
     mount();
+    expect(button('Run')).toBeUndefined();
+  });
+
+  it.each<Partial<Task>>([
+    { evidence: { assembling: true } as Task['evidence'] },
+    { verificationRun: { status: 'running' } as Task['verificationRun'] },
+  ])('offers no header actions while work is running, even when folded: %j', (overrides) => {
+    mount(overrides);
+    toggle()?.click();
+    expect(body()?.hidden).toBe(true);
+    expect(button('Build evidence')).toBeUndefined();
     expect(button('Run')).toBeUndefined();
   });
 });

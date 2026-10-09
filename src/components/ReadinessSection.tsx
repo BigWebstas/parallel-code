@@ -1,7 +1,13 @@
-import { Show, createSignal, untrack, type JSX } from 'solid-js';
+import { Show, createSignal, createUniqueId, untrack, type JSX } from 'solid-js';
 import { VERIFY_CHECK_ID } from '../../electron/shared/evidence';
 import { theme } from '../lib/theme';
-import { buildEvidence, getTaskChecks, runTaskVerification } from '../store/store';
+import {
+  buildEvidence,
+  getEvidenceUiState,
+  getTaskChecks,
+  isEvidenceBusy,
+  runTaskVerification,
+} from '../store/store';
 import type { Task } from '../store/types';
 import { evidenceButtonStyle } from './EvidenceDetails';
 import { PlayIcon } from './icons';
@@ -31,6 +37,16 @@ export function ReadinessSection(props: ReadinessSectionProps) {
   );
   const verifyCommand = () =>
     getTaskChecks(props.task.id).find((check) => check.id === VERIFY_CHECK_ID)?.command;
+  const bodyId = createUniqueId();
+  // Both actions cancel and restart work in flight, so offer them only when idle.
+  const busy = () => {
+    const pkg = props.task.evidence;
+    return (
+      Boolean(getEvidenceUiState(props.task.id).scanning) ||
+      Boolean(pkg && isEvidenceBusy(pkg)) ||
+      props.task.verificationRun?.status === 'running'
+    );
+  };
   const build = () => {
     setOpen(true);
     void buildEvidence(props.task.id, { trigger: 'manual' });
@@ -46,12 +62,13 @@ export function ReadinessSection(props: ReadinessSectionProps) {
         <button
           type="button"
           aria-expanded={open()}
+          aria-controls={bodyId}
           style={toggleStyle}
           onClick={() => setOpen(!open())}
         >
-          {open() ? '▾' : '▸'} Readiness and checks
+          <span aria-hidden="true">{open() ? '▾' : '▸'}</span> Readiness and checks
         </button>
-        <Show when={!open()}>
+        <Show when={!open() && !busy()}>
           <button type="button" style={evidenceButtonStyle} onClick={build}>
             Build evidence
           </button>
@@ -72,7 +89,7 @@ export function ReadinessSection(props: ReadinessSectionProps) {
         </Show>
       </div>
       {/* Hidden rather than unmounted, so folding keeps the panel's local state. */}
-      <div hidden={!open()} style={{ 'margin-top': '8px' }}>
+      <div id={bodyId} hidden={!open()} style={{ 'margin-top': '8px' }}>
         {props.children}
       </div>
     </section>
