@@ -947,6 +947,44 @@ export function TaskPanel(props: TaskPanelProps) {
         closingError={props.task.closingError}
         onRetry={() => retryCloseTask(props.task.id)}
       />
+      {/* The title sits above the collaboration banners so they never push it
+          to a different height across tasks. */}
+      <div
+        class="task-header-stack"
+        style={{
+          flex: `0 0 ${props.task.stepsEnabled ? 120 : 96}px`,
+          display: 'flex',
+          'flex-direction': 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Title + branch bars live outside <Show> so they don't remount on layout flips. */}
+        {/* 68px fits the title bar's two rows: a 30px icon-button row, the 2px
+            row gap, a ~21px badge row, and the bar's 12px vertical padding.
+            The stack totals above are this plus the 28px branch bar (and the
+            24px steps line when enabled). */}
+        <div style={{ flex: '0 0 68px', overflow: 'hidden' }}>
+          <TaskTitleBar
+            task={props.task}
+            isActive={props.isActive}
+            onClose={() => setShowCloseConfirm(true)}
+            onFinish={() => openFinish('merge')}
+            pushing={pushing()}
+            pushSuccess={pushSuccess()}
+            onTitleEditRef={(h) => (titleEditHandle = h)}
+          />
+        </div>
+        <Show when={props.task.stepsEnabled}>
+          <TaskCurrentStateLine task={props.task} nowMs={nowMs()} variant="card" />
+        </Show>
+        <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
+          <TaskBranchInfoBar
+            task={props.task}
+            onEditProject={(id) => setEditingProjectId(id)}
+            onOpenPullRequest={setOpenPrUrl}
+          />
+        </div>
+      </div>
       <Show
         when={
           !!props.task.coordinatedBy ||
@@ -1060,42 +1098,6 @@ export function TaskPanel(props: TaskPanelProps) {
       />
       <TaskBranchAdoptionBanner task={props.task} />
       <TaskSuperProductivityBanner taskId={props.task.id} />
-      <div
-        class="task-header-stack"
-        style={{
-          flex: `0 0 ${props.task.stepsEnabled ? 120 : 96}px`,
-          display: 'flex',
-          'flex-direction': 'column',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Title + branch bars live outside <Show> so they don't remount on layout flips. */}
-        {/* 68px fits the title bar's two rows: a 30px icon-button row, the 2px
-            row gap, a ~21px badge row, and the bar's 12px vertical padding.
-            The stack totals above are this plus the 28px branch bar (and the
-            24px steps line when enabled). */}
-        <div style={{ flex: '0 0 68px', overflow: 'hidden' }}>
-          <TaskTitleBar
-            task={props.task}
-            isActive={props.isActive}
-            onClose={() => setShowCloseConfirm(true)}
-            onFinish={() => openFinish('merge')}
-            pushing={pushing()}
-            pushSuccess={pushSuccess()}
-            onTitleEditRef={(h) => (titleEditHandle = h)}
-          />
-        </div>
-        <Show when={props.task.stepsEnabled}>
-          <TaskCurrentStateLine task={props.task} nowMs={nowMs()} variant="card" />
-        </Show>
-        <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
-          <TaskBranchInfoBar
-            task={props.task}
-            onEditProject={(id) => setEditingProjectId(id)}
-            onOpenPullRequest={setOpenPrUrl}
-          />
-        </div>
-      </div>
       <div style={{ flex: '1', 'min-height': '0' }}>
         <ResizablePanel
           direction="horizontal"

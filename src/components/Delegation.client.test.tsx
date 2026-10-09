@@ -422,3 +422,27 @@ it.each([
   expect(childButton?.textContent).toContain(label);
   expect(childButton?.querySelector('svg')).toBeNull();
 });
+
+it('lists every subtask under a collapsible header', () => {
+  for (const id of ['a', 'b', 'c']) {
+    setStore('tasks', id, {
+      ...task,
+      id,
+      name: `Child ${id}`,
+      coordinatedBy: 'parent',
+      agentIds: [],
+    });
+  }
+  setStore('taskOrder', ['parent', 'a', 'b', 'c']);
+  dispose = render(() => <SubTaskStrip coordinatorTaskId="parent" />, host);
+  const toggle = button('Subtasks (3)');
+  expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+  expect(host.querySelectorAll('li')).toHaveLength(3);
+  toggle?.click();
+  expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+  const list = host.querySelector('ul');
+  expect(list?.id).toBe(toggle?.getAttribute('aria-controls'));
+  expect(list?.hidden).toBe(true);
+  toggle?.click();
+  expect(list?.hidden).toBe(false);
+});
