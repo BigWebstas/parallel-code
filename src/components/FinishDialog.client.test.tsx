@@ -15,6 +15,8 @@ vi.mock('../store/store', () => ({
   getVerifyCommand: () => undefined,
   getTaskChecks: () => [],
   buildEvidence: vi.fn(async () => {}),
+  getEvidenceUiState: () => ({}),
+  isEvidenceBusy: () => false,
   mergeTask: vi.fn(async () => {}),
   pushTask: vi.fn(async () => {}),
   sendPrompt: vi.fn(),

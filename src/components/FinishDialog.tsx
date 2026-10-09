@@ -9,6 +9,7 @@ import { EvidencePanel } from './EvidencePanel';
 import { MergeReadinessPanel } from './MergeReadinessPanel';
 import { MergeBlockers, MergeChanges, MergeOptions } from './MergeSection';
 import { PushSection } from './PushSection';
+import { ReadinessSection } from './ReadinessSection';
 import { createMergeState } from './merge-state';
 import { createPushRun } from './push-run';
 import { parseGitHubUrl } from '../lib/github-url';
@@ -158,24 +159,18 @@ export function FinishDialog(props: FinishDialogProps) {
                 </Show>
               </ChangeTourButton>
             </MergeChanges>
-            {/* Opens with every dialog and folds only on a click, never on a status change. */}
-            <details open style={{ margin: '28px 0', 'font-size': '13px' }}>
-              <summary style={{ cursor: 'pointer', color: theme.fgMuted, padding: '8px 0' }}>
-                Readiness and checks
-              </summary>
-              <div style={{ 'margin-top': '8px' }}>
-                <EvidencePanel
-                  task={props.task}
-                  agentId={merge.selectedAgentId()}
-                  headSha={merge.worktreeStatus()?.head_sha}
-                  dirty={merge.worktreeStatus()?.has_uncommitted_changes}
-                  onConfigure={() => props.onConfigureChecks()}
-                  onReviewFile={(file, line, side) => setReviewLocation({ file, line, side })}
-                >
-                  <MergeReadinessPanel checks={readinessRows()} />
-                </EvidencePanel>
-              </div>
-            </details>
+            <ReadinessSection task={props.task}>
+              <EvidencePanel
+                task={props.task}
+                agentId={merge.selectedAgentId()}
+                headSha={merge.worktreeStatus()?.head_sha}
+                dirty={merge.worktreeStatus()?.has_uncommitted_changes}
+                onConfigure={() => props.onConfigureChecks()}
+                onReviewFile={(file, line, side) => setReviewLocation({ file, line, side })}
+              >
+                <MergeReadinessPanel checks={readinessRows()} />
+              </EvidencePanel>
+            </ReadinessSection>
             <section
               aria-label="GitHub PR and CI"
               style={{ margin: '20px 0', 'font-size': '13px' }}
