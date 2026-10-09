@@ -72,6 +72,7 @@ let core: {
   resumeChildren: ReturnType<typeof vi.fn>;
   setMaxConcurrentSubTasks: ReturnType<typeof vi.fn>;
   hasPendingPrompt: ReturnType<typeof vi.fn>;
+  recordUserMerge: ReturnType<typeof vi.fn>;
 };
 let persist: () => void;
 let prepareParent: ReturnType<typeof vi.fn<() => Promise<void>>>;
@@ -195,6 +196,7 @@ beforeEach(() => {
     resumeChildren: vi.fn(),
     setMaxConcurrentSubTasks: vi.fn(),
     hasPendingPrompt: vi.fn().mockReturnValue(false),
+    recordUserMerge: vi.fn(),
   };
   persist = vi.fn();
   prepareParent = vi.fn(async () => {});
@@ -413,7 +415,7 @@ describe('delegation authority and creation', () => {
     expect(core.createTask).toHaveBeenCalledOnce();
   });
 
-  it('prevents generic merge bypass through a symlinked project path', async () => {
+  it('lets Finish merge a review child and records it through a symlinked project path', async () => {
     await register('parent');
     await register('child', {
       parentTaskId: 'parent',
@@ -423,9 +425,11 @@ describe('delegation authority and creation', () => {
     mocks.realpath.mockImplementation(async (value: string) =>
       value === '/project-link' ? '/repo' : value,
     );
-    await expect(service.assertDirectMergeAllowed('/project-link', 'child')).rejects.toThrow(
-      'Review',
+    await expect(service.assertDirectMergeAllowed('/project-link', 'child')).resolves.toBe(
+      undefined,
     );
+    await service.recordDirectMerge('/project-link', 'child');
+    expect(core.recordUserMerge).toHaveBeenCalledWith('child');
   });
 
   it.each([{ delegationParent: true }, { coordinatorMode: true }])(
@@ -499,12 +503,25 @@ describe('delegation authority and creation', () => {
     expect(service.state('detached').paused).toBe(false);
   });
 
-  it('requires an explicit committed-state choice when the parent is dirty', async () => {
+  it('bases children on main regardless of the parent Git state', async () => {
     await register('parent');
     dirty = ' M changed.ts';
-    await expect(service.create(assignment())).rejects.toThrow('changed files');
+    await service.create(assignment({ expectedHeadSha: 'b'.repeat(40) }));
+    const options = core.createTask.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(options).not.toHaveProperty('baseBranch');
+    expect(options).not.toHaveProperty('snapshotCommit');
+  });
+
+  it('requires an explicit committed-state choice when a parent-based child sees a dirty parent', async () => {
+    await register('parent');
+    dirty = ' M changed.ts';
+    await expect(service.create(assignment({ baseOnParent: true }))).rejects.toThrow(
+      'changed files',
+    );
     expect(core.createTask).not.toHaveBeenCalled();
-    await service.create(assignment({ requestId: 'confirmed', useLastCommit: true }));
+    await service.create(
+      assignment({ requestId: 'confirmed', useLastCommit: true, baseOnParent: true }),
+    );
     expect(core.createTask).toHaveBeenCalledWith(
       expect.objectContaining({
         snapshotCommit: head,
@@ -516,9 +533,9 @@ describe('delegation authority and creation', () => {
 
   it('retains failed attempts and rejects a changed snapshot', async () => {
     await register('parent');
-    await expect(service.create(assignment({ expectedHeadSha: 'b'.repeat(40) }))).rejects.toThrow(
-      'changed',
-    );
+    await expect(
+      service.create(assignment({ expectedHeadSha: 'b'.repeat(40), baseOnParent: true })),
+    ).rejects.toThrow('changed');
     expect(service.state('parent').attempts).toEqual([
       expect.objectContaining({ status: 'failed', error: expect.stringContaining('changed') }),
     ]);
@@ -527,9 +544,9 @@ describe('delegation authority and creation', () => {
 
   it('forgets launch attempts once their parent is closed', async () => {
     await register('parent');
-    await expect(service.create(assignment({ expectedHeadSha: 'b'.repeat(40) }))).rejects.toThrow(
-      'changed',
-    );
+    await expect(
+      service.create(assignment({ expectedHeadSha: 'b'.repeat(40), baseOnParent: true })),
+    ).rejects.toThrow('changed');
     await service.closeParent('parent', false);
     expect(service.state('parent').attempts).toEqual([]);
   });

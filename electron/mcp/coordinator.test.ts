@@ -1045,10 +1045,10 @@ describe('Coordinator registerCoordinator — idempotency', () => {
     );
   });
 
-  it('defaults sub-task baseBranch to the coordinator branch', async () => {
+  it('defaults sub-task baseBranch to the main branch, not the coordinator branch', async () => {
     coordinator.registerCoordinator('coord-1', 'proj-1', {
       branchName: 'task/coordinator-work',
-      worktreePath: '/tmp/project',
+      worktreePath: '/tmp/coordinator',
     });
 
     await coordinator.createTask({ name: 'child', prompt: 'do', coordinatorTaskId: 'coord-1' });
@@ -1058,9 +1058,34 @@ describe('Coordinator registerCoordinator — idempotency', () => {
       '/tmp/project',
       ['.claude', 'node_modules'],
       'task',
-      'task/coordinator-work',
+      'main',
     );
-    expect(coordinator.getTask('task-1')?.baseBranch).toBe('task/coordinator-work');
+    expect(coordinator.getTask('task-1')?.baseBranch).toBe('main');
+
+    // Landing on main merges in the project root, not in the coordinator worktree.
+    await coordinator.signalDone('task-1');
+    await coordinator.mergeTask('task-1');
+    expect(mockGitMergeTask.mock.calls[0]?.[5]).toBe('main');
+    expect(mockGitMergeTask.mock.calls[0]?.[7]).toBeUndefined();
+  });
+
+  it('merges a child based on the coordinator branch in the coordinator worktree', async () => {
+    coordinator.registerCoordinator('coord-1', 'proj-1', {
+      branchName: 'task/coordinator-work',
+      worktreePath: '/tmp/coordinator',
+    });
+
+    await coordinator.createTask({
+      name: 'child',
+      prompt: 'do',
+      coordinatorTaskId: 'coord-1',
+      baseBranch: 'task/coordinator-work',
+    });
+    await coordinator.signalDone('task-1');
+    await coordinator.mergeTask('task-1');
+
+    expect(mockGitMergeTask.mock.calls[0]?.[5]).toBe('task/coordinator-work');
+    expect(mockGitMergeTask.mock.calls[0]?.[7]).toBe('/tmp/coordinator');
   });
 });
 
@@ -1481,7 +1506,7 @@ describe('Coordinator land_self', () => {
           cb(null, statusOut, '');
           return;
         }
-        if (args.join(' ') === 'rev-parse HEAD') {
+        if (args.join(' ') === 'rev-parse HEAD' || args.join(' ') === 'rev-parse main') {
           cb(null, 'landed-sha\n', '');
           return;
         }

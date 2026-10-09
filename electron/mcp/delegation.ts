@@ -378,17 +378,21 @@ export class DelegationService {
       }
       const snapshot = await this.snapshot(task.taskId);
       assertLaunch();
-      if (
-        snapshot.branchName !== assignment.expectedBranch ||
-        snapshot.headSha !== assignment.expectedHeadSha
-      )
-        throw new DelegationError(
-          'Parent branch or commit changed. Refresh the assignment snapshot.',
-        );
-      if (snapshot.changedFileCount && assignment.useLastCommit !== true)
-        throw new DelegationError(
-          `Parent has ${snapshot.changedFileCount} changed files. Review/commit first or explicitly use the last commit (${snapshot.headSha}).`,
-        );
+      // Children start from and land on main by default, so the parent's Git
+      // state only matters when it explicitly asks to base the child on itself.
+      if (assignment.baseOnParent) {
+        if (
+          snapshot.branchName !== assignment.expectedBranch ||
+          snapshot.headSha !== assignment.expectedHeadSha
+        )
+          throw new DelegationError(
+            'Parent branch or commit changed. Refresh the assignment snapshot.',
+          );
+        if (snapshot.changedFileCount && assignment.useLastCommit !== true)
+          throw new DelegationError(
+            `Parent has ${snapshot.changedFileCount} changed files. Review/commit first or explicitly use the last commit (${snapshot.headSha}).`,
+          );
+      }
       const command = assignment.agentCommand ?? task.agentCommand;
       // createTask strips bypass flags itself unless permissions propagate.
       const args = assignment.agentArgs ?? task.agentArgs;
@@ -403,8 +407,9 @@ export class DelegationService {
         name: assignment.name,
         prompt: assignment.prompt,
         coordinatorTaskId: task.taskId,
-        baseBranch: snapshot.branchName,
-        snapshotCommit: snapshot.headSha,
+        ...(assignment.baseOnParent
+          ? { baseBranch: snapshot.branchName, snapshotCommit: snapshot.headSha }
+          : {}),
         agentCommand: command,
         agentArgs: args,
         integrationPolicy: task.autoMergeChildren === true ? 'automatic' : 'review',
@@ -513,6 +518,7 @@ export class DelegationService {
           expectedHeadSha:
             typeof params.expectedHeadSha === 'string' ? params.expectedHeadSha : snap.headSha,
           useLastCommit: params.useLastCommit === true,
+          baseOnParent: params.baseOnParent === true,
         },
         caller,
       );
@@ -922,13 +928,6 @@ export class DelegationService {
         this.options.currentCoordinator()?.setMaxConcurrentSubTasks(task.taskId, limit);
         return { limit };
       }
-      case 'review':
-        return (await this.options.coordinator()).getReviewSnapshot(id(request.taskId));
-      case 'merge':
-        return (await this.options.coordinator()).approveAndMergeTask(
-          id(request.taskId),
-          request.review,
-        );
       case 'dismissAttempt':
         this.attempts.delete(`${id(request.parentTaskId)}:${id(request.requestId)}`);
         this.emit(request.parentTaskId);
@@ -1064,12 +1063,26 @@ export class DelegationService {
     for (const task of this.tasks.values()) {
       if (task.closed || task.projectRoot !== canonicalRoot || task.branchName !== branchName)
         continue;
-      if (task.integrationPolicy === 'review')
-        throw new DelegationError('Review this delegated result before merging it.');
+      // Review-policy children merge here too: the user's Finish click is the approval.
       if (cleanup && (task.delegationParent || task.coordinatorMode))
         throw new DelegationError(
           'Merge first, then close this task to detach its children safely.',
         );
+    }
+  }
+
+  /** Tells the parent that the user merged its child, so the child no longer awaits review. */
+  async recordDirectMerge(projectRoot: string, branchName: string): Promise<void> {
+    const canonicalRoot = await realpath(projectRoot);
+    for (const task of this.tasks.values()) {
+      if (
+        task.closed ||
+        !task.parentTaskId ||
+        task.projectRoot !== canonicalRoot ||
+        task.branchName !== branchName
+      )
+        continue;
+      this.options.currentCoordinator()?.recordUserMerge(task.taskId);
     }
   }
 

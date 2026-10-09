@@ -358,7 +358,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
         baseBranch: {
           type: 'string',
           description:
-            'Git branch to base the worktree on. Defaults to the coordinator task branch. Only set this when deliberately overriding that default.',
+            'Git branch to base the worktree on; the result also merges into it. Defaults to the main branch. Set it to your own branch only when the task must build on your unmerged work.',
         },
       },
       required: ['name', 'prompt'],
@@ -538,7 +538,7 @@ const ORDINARY_TOOLS: ToolDef[] = COORDINATOR_TOOLS.filter(
     return {
       ...tool,
       description:
-        'Create a visible Parallel Code task with its own Git worktree and agent terminal from your current committed snapshot. Use this for requests to create a Parallel Code task or PC task, not native sub-agent tools. Children inherit neither conversation nor uncommitted edits. Include required context in prompt. Use requestId for identical retries. Supply expectedBranch and expectedHeadSha after inspecting your Git state; if dirty, explicitly choose useLastCommit:true to omit dirty edits. This never authorizes committing. The result reports integrationPolicy: review requires user approval; automatic permits the child to verify and self-land via land_self. The policy comes from this task’s user-selected automation options; do not override it in the child prompt.',
+        'Create a visible Parallel Code task with its own Git worktree and agent terminal. Use this for requests to create a Parallel Code task or PC task, not native sub-agent tools. Children branch from the main branch and their results merge into main, not into your branch; merge main into your branch when you need a landed result. Children inherit neither conversation nor your edits. Include required context in prompt. Use requestId for identical retries. Set baseOnParent:true only when the child must build on your own commits; it then branches from your committed snapshot and lands on your branch. With baseOnParent, supply expectedBranch and expectedHeadSha after inspecting your Git state; if dirty, explicitly choose useLastCommit:true to omit dirty edits. This never authorizes committing. The result reports integrationPolicy: review requires user approval; automatic permits the child to verify and self-land via land_self. The policy comes from this task’s user-selected automation options; do not override it in the child prompt.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -548,6 +548,7 @@ const ORDINARY_TOOLS: ToolDef[] = COORDINATOR_TOOLS.filter(
           expectedBranch: { type: 'string' },
           expectedHeadSha: { type: 'string' },
           useLastCommit: { type: 'boolean', default: false },
+          baseOnParent: { type: 'boolean', default: false },
         },
         required: ['name', 'prompt', 'requestId'],
       },

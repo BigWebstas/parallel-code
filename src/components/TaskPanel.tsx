@@ -1,4 +1,3 @@
-import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { DelegationPanel } from './DelegationPanel';
 import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
 import {
@@ -143,7 +142,6 @@ export function TaskPanel(props: TaskPanelProps) {
 
   // null while the finish dialog is closed; otherwise the option it shows.
   const [finishAction, setFinishAction] = createSignal<FinishAction | null>(null);
-  const [showDelegationReview, setShowDelegationReview] = createSignal(false);
   const [openPrUrl, setOpenPrUrl] = createSignal<string | null>(null);
   const [pushSuccess, setPushSuccess] = createSignal(false);
   const [pushing, setPushing] = createSignal(false);
@@ -1106,11 +1104,6 @@ export function TaskPanel(props: TaskPanelProps) {
           children={canvasVisible() ? [mainChild, canvasChild] : [mainChild]}
         />
       </div>
-      <DelegationReviewDialog
-        task={props.task}
-        open={showDelegationReview()}
-        onClose={() => setShowDelegationReview(false)}
-      />
       <CloseTaskDialog
         open={showCloseConfirm()}
         task={props.task}
@@ -1131,10 +1124,6 @@ export function TaskPanel(props: TaskPanelProps) {
           onRegenerateTour={() => {
             tour.reset();
             generateTour();
-          }}
-          onDelegationReview={() => {
-            setFinishAction(null);
-            setShowDelegationReview(true);
           }}
           onOpenPullRequest={(url) => {
             setFinishAction(null);

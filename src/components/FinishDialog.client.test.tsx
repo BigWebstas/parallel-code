@@ -169,7 +169,6 @@ function mount(options: { task?: Task; tour?: ChangeTourController } = {}) {
     onClose: vi.fn(),
     onOpenPullRequest: vi.fn(),
     onPushDone: vi.fn(),
-    onDelegationReview: vi.fn(),
     onRegenerateTour: vi.fn(),
   };
   dispose = render(
@@ -213,13 +212,29 @@ describe('FinishDialog merge', () => {
     },
   );
 
-  it('hands child tasks under review to the delegation review instead of merging', async () => {
-    const handlers = mount({ task: task({ integrationPolicy: 'review' }) });
+  it('merges a child under review like any task and folds its completion report', async () => {
+    mount({
+      task: task({
+        integrationPolicy: 'review',
+        coordinatedBy: 'coordinator',
+        completion: {
+          id: '11111111-1111-4111-8111-111111111111',
+          completedAt: '2026-09-26T10:00:00.000Z',
+          reviewRevision: 1,
+          snapshotState: 'clean',
+          result: { summary: 'Implemented the result' },
+        },
+      }),
+    });
     await flush();
-    expect(confirmButton()?.textContent).toBe('Review and merge…');
+    const report = [...document.querySelectorAll('details')].find((d) =>
+      d.querySelector('summary')?.textContent?.includes('Agent completion report'),
+    );
+    expect(report?.open).toBe(false);
+    expect(report?.textContent).toContain('Implemented the result');
+    expect(confirmButton()?.textContent).toBe('Merge into main');
     confirmButton()?.click();
-    expect(handlers.onDelegationReview).toHaveBeenCalled();
-    expect(mergeTask).not.toHaveBeenCalled();
+    expect(mergeTask).toHaveBeenCalled();
   });
 });
 

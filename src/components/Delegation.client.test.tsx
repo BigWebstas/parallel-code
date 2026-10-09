@@ -8,7 +8,6 @@ import { setStore, store } from '../store/core';
 import type { Task } from '../store/types';
 import { DelegationPanel } from './DelegationPanel';
 import { SubTaskStrip } from './SubTaskStrip';
-import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { setDelegationStates, canUsePeerComposer, usePeerComposer } from '../store/delegation';
 
 vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
@@ -237,35 +236,6 @@ it('changes the child limit only after the backend accepts it', async () => {
   });
   expect(store.tasks.parent.maxConcurrentTasks).toBe(7);
   expect(input()?.value).toBe('7');
-});
-
-it('approves only the child commit and target shown in the review', async () => {
-  const review = {
-    expectedCommit: 'child-sha',
-    expectedTargetBranch: 'task/parent',
-    expectedTargetCommit: 'target-sha',
-    diff: '+ reviewed line',
-  };
-  vi.mocked(invoke).mockImplementation(async (_channel, args) =>
-    args?.action === 'review' ? review : {},
-  );
-  dispose = render(
-    () => <DelegationReviewDialog task={store.tasks.parent} open={true} onClose={vi.fn()} />,
-    host,
-  );
-  await vi.waitFor(() => expect(document.body.textContent).toContain('+ reviewed line'));
-  button('Approve and merge')?.click();
-  await vi.waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
-      action: 'merge',
-      taskId: 'parent',
-      review: {
-        expectedCommit: 'child-sha',
-        expectedTargetBranch: 'task/parent',
-        expectedTargetCommit: 'target-sha',
-      },
-    }),
-  );
 });
 
 it('keeps an automatic failure visible after remount until explicitly dismissed', async () => {

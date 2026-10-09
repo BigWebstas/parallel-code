@@ -1076,7 +1076,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     await delegation.assertDirectMergeAllowed(projectRoot, branchName, args.cleanup ?? false);
     const baseBranch = optionalBaseBranch(args);
     const worktreePath = optionalWorktreePath(args);
-    return mergeTask(
+    const result = await mergeTask(
       projectRoot,
       branchName,
       args.squash,
@@ -1085,6 +1085,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
       baseBranch,
       worktreePath,
     );
+    // The merge already happened; failing to tell the parent must not report it as failed.
+    await delegation
+      .recordDirectMerge(projectRoot, branchName)
+      .catch((err: unknown) => logWarn('mcp', `Could not record merge: ${errMessage(err)}`));
+    return result;
   });
   ipcMain.handle(IPC.GetBranchLog, (_e, args) => {
     const worktreePath = worktreePathArg(args);

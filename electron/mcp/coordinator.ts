@@ -55,6 +55,7 @@ import {
   getChangedFiles,
   getAllFileDiffs,
   getDiffBaseSha,
+  getMainBranch,
   mergeTask as gitMergeTask,
 } from '../ipc/git.js';
 import {
@@ -1291,13 +1292,10 @@ export class Coordinator {
     const root = opts.projectRoot ?? coordinatorState.projectRoot ?? this.projectRoot;
     const projId = opts.projectId ?? coordinatorState.projectId ?? this.projectId;
     if (!root || !projId) throw new Error('No project configured for coordinator');
-    const coordinatorBranch = coordinatorState.branchName?.trim()
-      ? coordinatorState.branchName
-      : undefined;
-    const baseBranch = opts.baseBranch ?? coordinatorBranch;
-    if (baseBranch !== undefined) {
-      validateBranchName(baseBranch, 'baseBranch');
-    }
+    // Children land on main unless the caller deliberately targets another
+    // branch, so results do not pile up on the coordinator's branch.
+    const baseBranch = opts.baseBranch ?? (await getMainBranch(root));
+    validateBranchName(baseBranch, 'baseBranch');
 
     if (opts.snapshotCommit && !/^[a-f0-9]{40,64}$/i.test(opts.snapshotCommit)) {
       throw new Error('Invalid snapshot commit.');
@@ -2190,12 +2188,22 @@ export class Coordinator {
     }
   }
 
+  /**
+   * The coordinator worktree holds the target branch only for children based on
+   * it; every other target merges in the project root, like a normal Finish.
+   */
+  private integrationWorktree(task: CoordinatedTask): string | undefined {
+    const parent = this.coordinators.get(task.coordinatorTaskId);
+    return parent?.worktreePath && parent.branchName === task.baseBranch
+      ? parent.worktreePath
+      : undefined;
+  }
+
   private async runGitMerge(
     task: CoordinatedTask,
     opts?: { squash?: boolean; message?: string },
     assertAllowed?: () => void,
   ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
-    const coordinatorState = this.coordinators.get(task.coordinatorTaskId);
     const runMerge = () => {
       assertAllowed?.();
       return gitMergeTask(
@@ -2206,7 +2214,7 @@ export class Coordinator {
         false,
         task.baseBranch,
         task.worktreePath,
-        coordinatorState?.worktreePath,
+        this.integrationWorktree(task),
       );
     };
     let result: Awaited<ReturnType<typeof runMerge>>;
@@ -2230,10 +2238,10 @@ export class Coordinator {
   }
 
   private async resolveLandedCommit(task: CoordinatedTask, targetBranch: string): Promise<string> {
-    const coordinatorState = this.coordinators.get(task.coordinatorTaskId);
+    const integrationWorktree = this.integrationWorktree(task);
     const attempts: Array<{ cwd: string; rev: string }> = [];
-    if (coordinatorState?.worktreePath) {
-      attempts.push({ cwd: coordinatorState.worktreePath, rev: 'HEAD' });
+    if (integrationWorktree) {
+      attempts.push({ cwd: integrationWorktree, rev: 'HEAD' });
     }
     attempts.push({ cwd: task.projectRoot, rev: targetBranch });
 
@@ -2567,83 +2575,14 @@ export class Coordinator {
     };
   }
 
-  async getReviewSnapshot(taskId: string): Promise<{
-    expectedCommit: string;
-    expectedTargetBranch: string;
-    expectedTargetCommit: string;
-    diff: string;
-  }> {
+  /** The user merged this child through the desktop Finish dialog; that merge is the review. */
+  recordUserMerge(taskId: string): void {
     const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Task not found: ${taskId}`);
-    const parent = this.coordinators.get(task.coordinatorTaskId);
-    if (!parent?.worktreePath || !task.baseBranch || parent.lifecycle === 'closing') {
-      throw new Error('The parent integration target is unavailable.');
-    }
-    const [child, target, branch] = await Promise.all([
-      execAsync('git', ['rev-parse', 'HEAD'], { cwd: task.worktreePath }),
-      execAsync('git', ['rev-parse', 'HEAD'], { cwd: parent.worktreePath }),
-      this.currentBranch(parent.worktreePath),
-    ]);
-    if (branch !== task.baseBranch)
-      throw new Error('The parent branch changed. Review the integration target first.');
-    return {
-      expectedCommit: execStdout(child).trim(),
-      expectedTargetBranch: task.baseBranch,
-      expectedTargetCommit: execStdout(target).trim(),
-      diff: (await this.getTaskDiff(taskId)).diff,
-    };
-  }
-
-  /** Desktop-only entry point: agents must never receive a route to this method. */
-  async approveAndMergeTask(
-    taskId: string,
-    approval: {
-      expectedCommit: string;
-      expectedTargetBranch: string;
-      expectedTargetCommit: string;
-    },
-  ): Promise<{ mainBranch: string; linesAdded: number; linesRemoved: number }> {
-    return this.withTaskIntegration(taskId, async () => {
-      const task = this.tasks.get(taskId);
-      if (!task) throw new Error(`Task not found: ${taskId}`);
-      this.assertTaskCanBeMerged(task);
-      const parent = this.coordinators.get(task.coordinatorTaskId);
-      if (
-        !parent?.worktreePath ||
-        parent.lifecycle === 'closing' ||
-        task.baseBranch !== approval.expectedTargetBranch
-      ) {
-        throw new Error('The integration target changed or is unavailable. Review again.');
-      }
-      // Remove uncommitted runtime guidance only. Never stage or commit reviewed results.
-      await stripPreambleFromBranch(task);
-      if ((await this.statusPaths(task.worktreePath)).length) {
-        throw new Error(
-          'The child has uncommitted changes. Commit the intended result and review again.',
-        );
-      }
-      await this.verifyBeforeLanding(task);
-      const result = await gitMergeTask(
-        task.projectRoot,
-        task.branchName,
-        false,
-        null,
-        false,
-        task.baseBranch,
-        task.worktreePath,
-        parent.worktreePath,
-        approval,
-      );
-      // Keep the integrated result visible; cleanup is a separate explicit action.
-      task.landingState = 'reviewed';
-      this.syncLandingState(task);
-      this.suppressPendingNotificationForTask(task, true);
-      return {
-        mainBranch: result.main_branch,
-        linesAdded: result.lines_added,
-        linesRemoved: result.lines_removed,
-      };
-    });
+    if (!task || task.landingState === 'reviewed') return;
+    task.landingState = 'reviewed';
+    task.landingReason = undefined;
+    this.syncLandingState(task);
+    this.suppressPendingNotificationForTask(task, true);
   }
 
   private assertTaskCanBeMerged(task: CoordinatedTask): void {

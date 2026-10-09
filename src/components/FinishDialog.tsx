@@ -3,6 +3,7 @@ import type { ChangeTourController } from '../lib/create-change-tour';
 import type { Task } from '../store/types';
 import type { ChangedFile } from '../ipc/types';
 import { ChangeTourButton } from './ChangeTourButton';
+import { CompletionReport } from './CompletionReport';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DiffViewerDialog } from './DiffViewerDialog';
 import { EvidencePanel } from './EvidencePanel';
@@ -28,8 +29,6 @@ interface FinishDialogProps {
   /** Opens a ready tour, or starts generating one, like the Changed Files button. */
   onTourClick: () => void;
   onRegenerateTour: () => void;
-  /** Child tasks under review merge through the delegation review instead. */
-  onDelegationReview: () => void;
   onOpenPullRequest: (url: string) => void;
   onPushStart: () => void;
   onPushDone: (success: boolean) => void;
@@ -79,7 +78,6 @@ export function FinishDialog(props: FinishDialogProps) {
       return parsed?.type === 'pull' && !!parsed.number;
     });
   const pr = () => getPrChecks(props.task.id);
-  const viaReview = () => props.task.integrationPolicy === 'review';
 
   // Tracks only `open`: reset reads `pushing`, and re-running when a push ends
   // would wipe the error it just reported.
@@ -93,7 +91,6 @@ export function FinishDialog(props: FinishDialogProps) {
   );
 
   const confirmLabel = () => {
-    if (viaReview()) return 'Review and merge…';
     if (merge.merging()) return 'Merging...';
     // The target lives on the button, so the dialog needs no sentence restating it.
     return `${merge.squash() ? 'Squash merge' : 'Merge'} into ${merge.baseBranchName()}`;
@@ -102,12 +99,11 @@ export function FinishDialog(props: FinishDialogProps) {
   // verify command in the check list, evidence by the panel these rows sit in.
   const readinessRows = () =>
     merge.mergeReadiness().checks.filter((check) => !SHOWN_ELSEWHERE.has(check.label));
-  const confirmDisabled = () => push.pushing() || (viaReview() ? false : !merge.canMerge());
+  const confirmDisabled = () => push.pushing() || !merge.canMerge();
   const mergeAndClose = async () => {
     if (await merge.merge()) props.onClose();
   };
   const confirm = () => {
-    if (viaReview()) return props.onDelegationReview();
     void mergeAndClose();
   };
 
@@ -120,20 +116,13 @@ export function FinishDialog(props: FinishDialogProps) {
         autoFocusCancel
         message={
           <div>
-            <Show when={!viaReview()}>
-              <MergeBlockers
-                task={props.task}
-                state={merge}
-                open={props.open}
-                onDone={() => props.onClose()}
-                onDiffFileClick={props.onDiffFileClick}
-              />
-            </Show>
-            <Show when={viaReview()}>
-              <p style={{ margin: '0 0 12px', 'font-size': '13px' }}>
-                This task merges through its parent's review. The worktree is kept.
-              </p>
-            </Show>
+            <MergeBlockers
+              task={props.task}
+              state={merge}
+              open={props.open}
+              onDone={() => props.onClose()}
+              onDiffFileClick={props.onDiffFileClick}
+            />
             <MergeChanges
               task={props.task}
               state={merge}
@@ -159,6 +148,18 @@ export function FinishDialog(props: FinishDialogProps) {
                 </Show>
               </ChangeTourButton>
             </MergeChanges>
+            {/* A sub-task's own report is context for the review, so it starts folded. */}
+            <Show when={props.task.coordinatedBy && props.task.completion}>
+              <details style={{ 'margin-bottom': '20px', 'font-size': '13px' }}>
+                <summary style={{ cursor: 'pointer', color: theme.fgMuted }}>
+                  Agent completion report
+                </summary>
+                <CompletionReport
+                  task={props.task}
+                  headSha={merge.worktreeStatus()?.head_sha ?? undefined}
+                />
+              </details>
+            </Show>
             <ReadinessSection task={props.task}>
               <EvidencePanel
                 task={props.task}
@@ -232,9 +233,7 @@ export function FinishDialog(props: FinishDialogProps) {
                 )}
               </Show>
             </section>
-            <Show when={!viaReview()}>
-              <MergeOptions task={props.task} state={merge} />
-            </Show>
+            <MergeOptions task={props.task} state={merge} />
             <Show when={push.pushing() || push.output() || push.error()}>
               <div style={{ 'margin-top': '12px' }}>
                 <PushSection run={push} />
@@ -260,7 +259,7 @@ export function FinishDialog(props: FinishDialogProps) {
           </button>
         }
         confirmDisabled={confirmDisabled()}
-        footerNote={viaReview() || merge.merging() ? undefined : merge.mergeBlocker()}
+        footerNote={merge.merging() ? undefined : merge.mergeBlocker()}
         confirmLoading={merge.merging()}
         confirmLabel={confirmLabel()}
         cancelLabel={push.pushing() ? 'Close' : 'Cancel'}

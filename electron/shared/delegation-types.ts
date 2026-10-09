@@ -59,6 +59,8 @@ export interface DelegateAssignment {
   expectedBranch: string;
   expectedHeadSha: string;
   useLastCommit: boolean;
+  /** Branch from the parent's committed snapshot and land on the parent branch instead of main. */
+  baseOnParent?: boolean;
   agentCommand?: string;
   agentArgs?: string[];
   agentEnvFile?: string;
@@ -96,13 +98,6 @@ export interface PeerMessage {
   deliveryFailed?: boolean;
 }
 
-export interface DelegationReview {
-  expectedCommit: string;
-  expectedTargetBranch: string;
-  expectedTargetCommit: string;
-  diff: string;
-}
-
 export type DelegationRequest =
   | { action: 'register'; task: TaskAuthorityInput }
   | { action: 'unregister'; taskId: string }
@@ -110,8 +105,6 @@ export type DelegationRequest =
   | { action: 'orchestrationSetting'; enabled: boolean }
   | { action: 'pause'; taskId: string; paused: boolean }
   | { action: 'childLimit'; taskId: string; limit: number }
-  | { action: 'review'; taskId: string }
-  | { action: 'merge'; taskId: string; review: Omit<DelegationReview, 'diff'> }
   | { action: 'inbox'; taskId: string }
   | { action: 'dismissMessageFailure'; deliveryId: string }
   | {
