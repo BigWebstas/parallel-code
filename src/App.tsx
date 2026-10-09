@@ -734,6 +734,10 @@ function App() {
         const id = store.activeTaskId;
         if (id && listedTask(id)) spawnShellForTask(id);
       },
+      secondOpinion: (e) => {
+        const id = store.activeTaskId;
+        if (!e.repeat && id && listedTask(id)) triggerAction(`${id}:second-opinion`);
+      },
       sendPrompt: () => {
         if (!store.githubIssuesProjectId) sendActivePrompt();
       },

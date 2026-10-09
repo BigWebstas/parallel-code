@@ -16,6 +16,7 @@ const APP_LAYER_IDS = [
   'app.task.push',
   'app.task.new-shell',
   'app.task.send-prompt',
+  'app.task.second-opinion',
   'app.new-terminal',
   'app.new-task',
   'app.new-task-alt',

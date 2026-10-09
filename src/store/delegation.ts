@@ -207,7 +207,7 @@ export function startPeerMessageDelivery(onDelivered: (message: PeerMessage) => 
           isLandedTaskState(task.landingState) ||
           task.delegationPaused ||
           state.paused ||
-          task.controlledBy === 'human' ||
+          (task.controlledBy === 'human' && message.origin !== 'user') ||
           task.initialPrompt ||
           task.automationWriteInFlight ||
           task.promptDraftActive ||

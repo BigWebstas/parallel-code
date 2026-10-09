@@ -197,9 +197,11 @@ export function taskAgentOpensSessionPicker(
     : agentDef.command.split('/').pop() === 'claude'
       ? '--resume'
       : undefined;
-  const configured = (agentDef.resume_args?.length ? agentDef.resume_args : agentDef.args).join(
-    ' ',
-  );
+  const configuredArgs = agentDef.resume_args?.length ? agentDef.resume_args : agentDef.args;
+  // Reviewer model overrides do not change whether the resume command opens a picker.
+  const configured = configuredArgs
+    .filter((arg, index) => arg !== '--model' && configuredArgs[index - 1] !== '--model')
+    .join(' ');
   if (
     !selector ||
     (configured !== selector &&
@@ -208,5 +210,5 @@ export function taskAgentOpensSessionPicker(
     return false;
   }
   const args = buildTaskAgentArgs(...launch);
-  return args[0] === selector && (!args[1] || args[1].startsWith('-'));
+  return args[0] === selector && args[1] !== '--last' && (!args[1] || args[1].startsWith('-'));
 }

@@ -446,3 +446,21 @@ describe('delegation state hydration', () => {
     expect(delegationStates[task.id]?.messages).toEqual([]);
   });
 });
+
+it('delivers an explicitly requested user handoff under human control, without taking control', async () => {
+  inbox([{ ...message(), origin: 'user' }]);
+  setStore('tasks', task.id, 'controlledBy', 'human');
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(delivered).toHaveBeenCalledOnce();
+  expect(store.tasks[task.id].controlledBy).toBe('human');
+});
+
+it.each([{ promptDraft: 'draft' }, { terminalInputPending: true }, { promptDraftActive: true }])(
+  'keeps user handoffs queued when human input is present: %j',
+  async (blocked) => {
+    inbox([{ ...message(), origin: 'user' }]);
+    setStore('tasks', task.id, { controlledBy: 'human', ...blocked });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(invoke).not.toHaveBeenCalled();
+  },
+);

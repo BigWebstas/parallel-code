@@ -230,6 +230,7 @@ export interface Task {
   promptedAgentIds?: string[];
   initialPrompt?: string; // auto-sends when agent is ready
   savedInitialPrompt?: string;
+  secondOpinionDismissed?: boolean;
   prefillPrompt?: string; // fills prompt input without sending
   closingStatus?: 'closing' | 'removing' | 'error';
   closingError?: string;
@@ -385,6 +386,7 @@ export interface PersistedTask {
   /** Validated on load. */
   superProductivity?: unknown;
   savedInitialPrompt?: string;
+  secondOpinionDismissed?: boolean;
   collapsed?: boolean;
   savedAgentSessionIds?: (string | null)[];
   savedSelectedAgentIndex?: number;

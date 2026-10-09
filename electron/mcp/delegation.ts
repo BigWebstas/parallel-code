@@ -289,10 +289,7 @@ export class DelegationService {
       throw new DelegationError('Invalid project policy');
     this.policies.set(policy.projectId, { ...policy });
     for (const message of this.messages.values()) {
-      if (
-        message.state === 'waiting' &&
-        !this.canContact(message.sender.taskId, message.recipient.taskId)
-      ) {
+      if (message.state === 'waiting' && !this.canDeliverMessage(message)) {
         message.state = 'closed';
         message.reason = 'Peer access disabled';
         this.messageChanged(message);
@@ -684,6 +681,15 @@ export class DelegationService {
         observedAt: new Date().toISOString(),
       };
     }
+    return this.queueMessage(caller, target, params);
+  }
+
+  private queueMessage(
+    caller: SessionCaller,
+    target: SessionCaller,
+    params: Record<string, unknown>,
+    origin?: 'user',
+  ): ReturnType<DelegationService['receipt']> {
     const prompt = text(params.prompt, 'prompt', MAX_PROMPT_BYTES).replace(/\r\n?/g, '\n');
     if (Buffer.byteLength(prompt) > MAX_PROMPT_BYTES) throw new DelegationError('Prompt too large');
     // Peer content is text, never terminal control input (including paste delimiters).
@@ -691,7 +697,7 @@ export class DelegationService {
       throw new DelegationError('Prompt contains terminal or invisible control characters');
     if (PEER_MARKER.test(prompt))
       throw new DelegationError('Prompt must not contain peer message markers');
-    const requestId = id(params.requestId, 'requestId');
+    const requestId = `${origin ?? 'agent'}:${id(params.requestId, 'requestId')}`;
     const payloadHash = createHash('sha256')
       .update(JSON.stringify([target.agentId, target.sessionInstanceId, prompt]))
       .digest('base64');
@@ -726,10 +732,11 @@ export class DelegationService {
       const evicted = settled.find((entry) => !entry.deliveryFailed) ?? settled[0];
       if (!evicted) throw new DelegationError('Incoming message queue is full', 429);
       this.messages.delete(evicted.deliveryId);
-      if (evicted.deliveryFailed) this.emit(evicted.recipient.taskId);
+      if (evicted.deliveryFailed || evicted.origin === 'user') this.emit(evicted.recipient.taskId);
     }
     const message: PeerMessage = {
       deliveryId: randomUUID(),
+      ...(origin ? { origin } : {}),
       sender: this.peer(caller),
       recipient: this.peer(target),
       prompt,
@@ -768,7 +775,7 @@ export class DelegationService {
     for (const message of this.messages.values()) {
       if (
         message.state === 'waiting' &&
-        (!this.canContact(message.sender.taskId, message.recipient.taskId) ||
+        (!this.canDeliverMessage(message) ||
           !sessions.some(
             (s) =>
               s.agentId === message.recipient.agentId &&
@@ -785,10 +792,16 @@ export class DelegationService {
     this.options.changed({ taskId, state: this.state(taskId) });
   }
   state(taskId: string): DelegationState {
+    const messages = [...this.messages.values()].filter((m) => m.recipient.taskId === taskId);
+    const recentHandoffs = new Set(
+      messages
+        .filter((m) => m.origin === 'user' && m.state !== 'waiting' && !m.deliveryFailed)
+        .slice(-5),
+    );
     return {
       attempts: [...this.attempts.values()].filter((a) => a.parentTaskId === taskId),
-      messages: [...this.messages.values()].filter(
-        (m) => m.recipient.taskId === taskId && (m.state === 'waiting' || m.deliveryFailed),
+      messages: messages.filter(
+        (m) => m.state === 'waiting' || m.deliveryFailed || recentHandoffs.has(m),
       ),
       paused: this.tasks.get(taskId)?.delegationPaused === true,
     };
@@ -838,7 +851,8 @@ export class DelegationService {
     this.delivering.add(agentId);
     try {
       assertCurrent();
-      const prompt = peerEnvelope(message.sender, message.prompt);
+      const prompt =
+        message.origin === 'user' ? message.prompt : peerEnvelope(message.sender, message.prompt);
       if (
         !(await writeAgentPrompt(agentId, prompt, assertCurrent, () => {
           // Submission is final even if the session ends while other input drains.
@@ -863,9 +877,52 @@ export class DelegationService {
     }
   }
 
+  private canDeliverMessage(message: PeerMessage): boolean {
+    return message.origin === 'user'
+      ? this.canHandoff(message.sender.taskId, message.recipient.taskId)
+      : this.canContact(message.sender.taskId, message.recipient.taskId);
+  }
+
+  private canHandoff(sourceTaskId: string, recipientTaskId: string): boolean {
+    const task = this.tasks.get(sourceTaskId);
+    return Boolean(
+      this.orchestrationEnabled &&
+      task &&
+      !task.closed &&
+      !task.closing &&
+      sourceTaskId === recipientTaskId,
+    );
+  }
+
+  private handoffSessions(taskId: string): SessionCaller[] {
+    if (!this.canHandoff(taskId, taskId))
+      throw new DelegationError('Task unavailable or agent orchestration is disabled');
+    return this.options.sessions().filter((session) => {
+      const meta = getAgentMeta(session.agentId);
+      return session.taskId === taskId && meta?.taskId === taskId && !meta.isShell;
+    });
+  }
+
   async request(raw: unknown): Promise<unknown> {
     const request = record(raw) as unknown as DelegationRequest;
     switch (request.action) {
+      case 'handoffSessions':
+        return this.handoffSessions(id(request.taskId));
+      case 'handoff': {
+        this.expireMessages();
+        const sessions = this.handoffSessions(id(request.taskId));
+        const source = sessions.find(
+          (s) =>
+            s.agentId === request.sourceAgentId &&
+            s.sessionInstanceId === request.sourceSessionInstanceId,
+        );
+        const target = sessions.find(
+          (s) => s.agentId === request.agentId && s.sessionInstanceId === request.sessionInstanceId,
+        );
+        if (!source || !target || source.agentId === target.agentId)
+          throw new DelegationError('Source or recipient session changed');
+        return this.queueMessage(source, target, { ...request }, 'user');
+      }
       case 'orchestrationSetting':
         this.setOrchestrationEnabled(request.enabled);
         return { enabled: this.orchestrationEnabled };

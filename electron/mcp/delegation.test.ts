@@ -1179,3 +1179,155 @@ describe('backend detach normalization', () => {
     expect(saved.taskOrder).toEqual(['child']);
   });
 });
+
+describe('user handoffs', () => {
+  async function setup() {
+    await register('pair');
+    const source = session('pair');
+    const recipient = { ...source, agentId: 'other-agent', sessionInstanceId: 'other-instance' };
+    sessions.push(recipient);
+    mocks.meta.mockImplementation((agentId: string) => ({
+      agentId,
+      taskId: 'pair',
+      isShell: false,
+    }));
+    const request = {
+      action: 'handoff' as const,
+      taskId: 'pair',
+      sourceAgentId: source.agentId,
+      sourceSessionInstanceId: source.sessionInstanceId,
+      agentId: recipient.agentId,
+      sessionInstanceId: recipient.sessionInstanceId,
+      prompt: 'Review these changes. Do not edit.',
+      requestId: 'user-request',
+    };
+    return { source, recipient, request };
+  }
+
+  it('only broadcasts the last five finished handoffs while retaining pending ones', async () => {
+    const { request, recipient } = await setup();
+    for (let i = 0; i < 7; i++) {
+      const receipt = (await service.request({ ...request, requestId: `review-${i}` })) as {
+        deliveryId: string;
+      };
+      await service.request({
+        action: 'handleMessage',
+        deliveryId: receipt.deliveryId,
+        agentId: recipient.agentId,
+        sessionInstanceId: recipient.sessionInstanceId,
+        state: 'closed',
+      });
+    }
+    expect(service.state('pair').messages).toHaveLength(5);
+    await service.request({ ...request, requestId: 'pending' });
+    expect(service.state('pair').messages).toHaveLength(6);
+    expect(service.state('pair').messages.filter((m) => m.state === 'waiting')).toHaveLength(1);
+  });
+
+  it('queues same-task user requests without enabling cross-task peer access, deduplicates, and preserves origin', async () => {
+    vi.useFakeTimers();
+    const { request, recipient } = await setup();
+    const receipt = (await service.request(request)) as { deliveryId: string };
+    expect(await service.request(request)).toEqual(receipt);
+    expect(service.state('pair').messages).toHaveLength(1);
+    expect(service.state('pair').messages[0].origin).toBe('user');
+    const deliver = () =>
+      service.request({
+        action: 'deliverMessage',
+        deliveryId: receipt.deliveryId,
+        agentId: recipient.agentId,
+        sessionInstanceId: recipient.sessionInstanceId,
+      });
+    await deliver();
+    await vi.advanceTimersByTimeAsync(1500);
+    await expect(deliver()).resolves.toMatchObject({ state: 'delivered' });
+    await deliver();
+    expect(mocks.writePrompt).toHaveBeenCalledOnce();
+    expect(mocks.writePrompt).toHaveBeenCalledWith(
+      recipient.agentId,
+      request.prompt,
+      expect.any(Function),
+      expect.any(Function),
+    );
+    expect(service.state('pair').messages[0].state).toBe('delivered');
+  });
+
+  it('rejects different content on the same request ID and unsafe text', async () => {
+    const { request } = await setup();
+    await service.request(request);
+    await expect(service.request({ ...request, prompt: 'Different' })).rejects.toThrow('reused');
+    await expect(
+      service.request({ ...request, requestId: 'unsafe', prompt: '\u001b[200~bad' }),
+    ).rejects.toThrow('control');
+  });
+
+  it('rejects cross-task, shell, self, replaced source and replaced recipient sessions', async () => {
+    const { request, recipient } = await setup();
+    await register('elsewhere');
+    const other = session('elsewhere');
+    await expect(
+      service.request({
+        ...request,
+        agentId: other.agentId,
+        sessionInstanceId: other.sessionInstanceId,
+      }),
+    ).rejects.toThrow('changed');
+    await expect(
+      service.request({
+        ...request,
+        agentId: request.sourceAgentId,
+        sessionInstanceId: request.sourceSessionInstanceId,
+      }),
+    ).rejects.toThrow('changed');
+    await expect(
+      service.request({ ...request, sourceSessionInstanceId: 'replacement' }),
+    ).rejects.toThrow('changed');
+    await expect(service.request({ ...request, sessionInstanceId: 'replacement' })).rejects.toThrow(
+      'changed',
+    );
+    mocks.meta.mockImplementation((agentId: string) => ({
+      agentId,
+      taskId: 'pair',
+      isShell: agentId === recipient.agentId,
+    }));
+    await expect(service.request(request)).rejects.toThrow('changed');
+  });
+
+  it('preserves user handoffs when peer policy changes in this or another project', async () => {
+    const { request } = await setup();
+    await service.request(request);
+    service.updatePolicy({ projectId: 'unrelated-project', allowPeerAccess: true });
+    expect(service.state('pair').messages[0].state).toBe('waiting');
+    service.updatePolicy({ projectId: 'project', allowPeerAccess: false });
+    expect(service.state('pair').messages[0].state).toBe('waiting');
+  });
+
+  it('closes queued requests on recipient restart, without delivering to a replacement', async () => {
+    const { request, recipient } = await setup();
+    await service.request(request);
+    sessions = sessions.filter((s) => s !== recipient);
+    sessions.push({ ...recipient, sessionInstanceId: 'replacement' });
+    service.expireMessages();
+    expect(service.state('pair').messages[0]).toMatchObject({
+      state: 'closed',
+      reason: expect.stringContaining('ended'),
+    });
+    expect(mocks.writePrompt).not.toHaveBeenCalled();
+  });
+
+  it('cancels queued delivery and rejects new handoffs when orchestration is disabled', async () => {
+    const { request, recipient } = await setup();
+    const receipt = (await service.request(request)) as { deliveryId: string };
+    await service.request({
+      action: 'handleMessage',
+      deliveryId: receipt.deliveryId,
+      agentId: recipient.agentId,
+      sessionInstanceId: recipient.sessionInstanceId,
+      state: 'closed',
+    });
+    expect(service.state('pair').messages[0].state).toBe('closed');
+    await service.request({ action: 'orchestrationSetting', enabled: false });
+    await expect(service.request({ ...request, requestId: 'again' })).rejects.toThrow('disabled');
+    expect(mocks.writePrompt).not.toHaveBeenCalled();
+  });
+});

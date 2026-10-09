@@ -88,6 +88,8 @@ export interface PeerSession {
 
 export interface PeerMessage {
   deliveryId: string;
+  /** Missing on existing agent-origin peer messages. */
+  origin?: 'user';
   sender: PeerSession;
   recipient: PeerSession;
   prompt: string;
@@ -106,6 +108,17 @@ export type DelegationRequest =
   | { action: 'pause'; taskId: string; paused: boolean }
   | { action: 'childLimit'; taskId: string; limit: number }
   | { action: 'inbox'; taskId: string }
+  | { action: 'handoffSessions'; taskId: string }
+  | {
+      action: 'handoff';
+      taskId: string;
+      sourceAgentId: string;
+      sourceSessionInstanceId: string;
+      agentId: string;
+      sessionInstanceId: string;
+      prompt: string;
+      requestId: string;
+    }
   | { action: 'dismissMessageFailure'; deliveryId: string }
   | {
       action: 'deliverMessage';

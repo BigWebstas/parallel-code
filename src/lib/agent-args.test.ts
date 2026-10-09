@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { reviewerWithModel } from './agent-handoff';
 
 import { buildTaskAgentArgs, isResumeArgsFailure, taskAgentOpensSessionPicker } from './agent-args';
 
@@ -115,6 +116,15 @@ describe('buildTaskAgentArgs with a session id', () => {
       '--mcp-config',
       '/tmp/c.json',
     ]);
+  });
+
+  it('keeps the session picker when a reviewer has a model override', () => {
+    const codex = reviewerWithModel(codexAgent, 'codex-test');
+    const claude = reviewerWithModel({ ...claudeAgent, resume_args: ['--continue'] }, 'opus');
+    expect(buildTaskAgentArgs(codex, {}, true)).toEqual(['resume', '--model', 'codex-test']);
+    expect(buildTaskAgentArgs(claude, {}, true)).toEqual(['--resume', '--model', 'opus']);
+    expect(taskAgentOpensSessionPicker(codex, {}, true)).toBe(true);
+    expect(taskAgentOpensSessionPicker(claude, {}, true)).toBe(true);
   });
 
   it('offers the Codex picker after restart when no session id was saved', () => {

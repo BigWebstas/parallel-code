@@ -244,6 +244,17 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // App layer — App shortcuts
   // -------------------------------------------------------------------------
   {
+    id: 'app.task.second-opinion',
+    layer: 'app',
+    category: 'Task',
+    description: 'Ask for a second opinion',
+    platform: 'both',
+    key: 'O',
+    modifiers: { cmdOrCtrl: true, shift: true },
+    action: 'secondOpinion',
+    global: true,
+  },
+  {
     id: 'app.new-terminal',
     layer: 'app',
     category: 'App',
