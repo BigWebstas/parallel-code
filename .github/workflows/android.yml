@@ -60,6 +60,7 @@ jobs:
     concurrency:
       group: android-play-internal
       cancel-in-progress: false
+      queue: max
     steps:
       # Builds can finish out of order, even though publishing is serialized.
       - name: Skip superseded Play builds
