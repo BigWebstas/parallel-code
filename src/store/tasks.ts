@@ -1,3 +1,4 @@
+import { matchesTaskProjectFilter } from './task-project-filter';
 import { parseCompletionRecord } from '../../electron/shared/completion-report';
 import {
   registerTaskAuthority,
@@ -126,7 +127,12 @@ function removeTaskDraftEntries(
   delete s.taskGitStatus[taskId];
 
   const neighborId =
-    s.activeTaskId === taskId ? selectActiveNeighborAfterRemoval(s.taskOrder, taskId) : null;
+    s.activeTaskId === taskId
+      ? selectActiveNeighborAfterRemoval(
+          s.taskOrder.filter((id) => id === taskId || matchesTaskProjectFilter(id)),
+          taskId,
+        )
+      : null;
 
   cleanupPanelEntries(s, taskId);
 
@@ -161,6 +167,8 @@ function initTaskInStore(
       assignFreshSessionId(s, taskId, agent.id, agent.def.command);
       s.taskOrder.push(taskId);
       if (opts.activate) {
+        if (s.taskProjectFilter && s.taskProjectFilter !== task.projectId)
+          s.taskProjectFilter = null;
         s.activeTaskId = taskId;
         s.activeAgentId = agent.id;
       }
@@ -1078,7 +1086,10 @@ export async function collapseTask(taskId: string): Promise<void> {
 
       // Switch active task to neighbor
       if (s.activeTaskId === taskId) {
-        const neighbor = selectActiveNeighborAfterRemoval(originalOrder, taskId);
+        const neighbor = selectActiveNeighborAfterRemoval(
+          originalOrder.filter(matchesTaskProjectFilter),
+          taskId,
+        );
         s.activeTaskId = neighbor;
         const neighborTask = neighbor ? s.tasks[neighbor] : null;
         s.activeAgentId = neighborTask ? effectiveAgentId(neighborTask) : null;
@@ -1109,6 +1120,7 @@ export function uncollapseTask(taskId: string): void {
       t.collapsed = false;
       s.collapsedTaskOrder = s.collapsedTaskOrder.filter((id) => id !== taskId);
       s.taskOrder.push(taskId);
+      if (s.taskProjectFilter && s.taskProjectFilter !== t.projectId) s.taskProjectFilter = null;
       s.activeTaskId = taskId;
 
       for (let i = 0; i < restoredAgents.length; i++) {

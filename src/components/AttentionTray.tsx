@@ -1,3 +1,4 @@
+import { matchesTaskProjectFilter } from '../store/task-project-filter';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { store } from '../store/core';
 import { setSidebarNeedsInputFirst } from '../store/ui';
@@ -118,7 +119,9 @@ function AttentionRow(props: { entry: AttentionEntry; nowMs: number; onOpen: () 
 }
 
 export function AttentionTray(props: { nowMs: number }) {
-  const entries = createMemo(() => computeAttentionEntries());
+  const entries = createMemo(() =>
+    computeAttentionEntries().filter((entry) => matchesTaskProjectFilter(entry.taskId)),
+  );
   const [reviewTaskId, setReviewTaskId] = createSignal<string>();
   const reviewTask = () => {
     const id = reviewTaskId();
