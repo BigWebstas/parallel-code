@@ -603,6 +603,8 @@ export interface AppStore {
   /** Pin tasks that are waiting on an answer to the top of the sidebar task
    *  list, newest question first. */
   sidebarNeedsInputFirst: boolean;
+  /** Session-only project filter for task navigation and panels. */
+  taskProjectFilter: string | null;
   projectsCollapsed: boolean;
   desktopNotificationsEnabled: boolean;
   inactiveColumnOpacity: number;

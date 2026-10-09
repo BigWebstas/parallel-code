@@ -1,3 +1,6 @@
+import { taskProjectFilter } from '../store/task-project-filter';
+import { TaskProjectFilter } from './TaskProjectFilter';
+import { createProjectFilterTransition } from '../lib/projectFilterTransition';
 import { createSignal, createEffect, createMemo, onMount, onCleanup, For, Show } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { GitHubIcon } from './icons';
@@ -347,6 +350,7 @@ export function Sidebar() {
   const [resizing, setResizing] = createSignal(false);
   const [nowMs, setNowMs] = createSignal(Date.now());
   let taskListRef: HTMLDivElement | undefined;
+  createProjectFilterTransition(taskProjectFilter, () => taskListRef);
 
   const sidebarWidth = () => getPanelUserSize(SIDEBAR_SIZE_KEY) ?? SIDEBAR_DEFAULT_WIDTH;
 
@@ -882,6 +886,8 @@ export function Sidebar() {
             New Task
           </button>
         </Show>
+
+        <TaskProjectFilter />
 
         {/* Tasks waiting on an answer — pinned here so they never scroll away */}
         <AttentionTray nowMs={nowMs()} />

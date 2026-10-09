@@ -1,3 +1,4 @@
+import { matchesTaskProjectFilter } from './task-project-filter';
 import { batch, createEffect, createRoot, createSignal, untrack } from 'solid-js';
 import { store, setStore } from './core';
 import { AGENT_HOOK_STALE_MS, getAgentHookStatus, type AgentHookStatus } from './agentHookStatus';
@@ -119,7 +120,9 @@ function foregroundNeighbor(taskId: string, block: readonly string[]): string | 
     ...store.taskOrder.slice(0, index).reverse(),
     ...store.taskOrder.slice(index + 1),
   ];
-  return candidates.find((id) => !block.includes(id) && !isTaskBackgrounded(id));
+  return candidates.find(
+    (id) => !block.includes(id) && !isTaskBackgrounded(id) && matchesTaskProjectFilter(id),
+  );
 }
 
 /** Moving a tile re-inserts its DOM nodes, which drops focus inside it, e.g. in

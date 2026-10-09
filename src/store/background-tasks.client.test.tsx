@@ -40,6 +40,7 @@ function hook(state: 'working' | 'waiting' | 'done', event: string, taskId = 'on
 let stop: () => void;
 beforeEach(() => {
   vi.useFakeTimers();
+  setStore('taskProjectFilter', null);
   setStore('tasks', reconcile({ one: task('one'), two: task('two'), three: task('three') }));
   setStore('agents', reconcile({}));
   setStore('taskGitStatus', reconcile({}));
@@ -373,4 +374,17 @@ it('forgets removed tasks without inserting them into the order', () => {
   setStore('taskOrder', ['two', 'three']);
   expect(isTaskBackgrounded('one')).toBe(false);
   expect(store.taskOrder).toEqual(['two', 'three']);
+});
+
+it('keeps the selected project when sending its active task to the back', () => {
+  setStore('projects', [
+    { id: 'project', name: 'Project', path: '/project', color: '#abc' },
+    { id: 'other', name: 'Other', path: '/other', color: '#def' },
+  ]);
+  setStore('tasks', 'one', 'projectId', 'other');
+  setActiveTask('two');
+  setStore('taskProjectFilter', 'project');
+  sendTaskToBack('two');
+  expect(store.activeTaskId).toBe('three');
+  expect(store.taskProjectFilter).toBe('project');
 });
