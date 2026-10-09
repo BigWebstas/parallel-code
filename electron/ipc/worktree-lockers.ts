@@ -4,8 +4,11 @@ import { debug as logDebug, warn as logWarn } from '../log.js';
 
 const exec = promisify(execFile);
 
-/** Compiling the helper and walking every process takes a couple of seconds at most. */
-const SCAN_TIMEOUT_MS = 20_000;
+/**
+ * Compiling the helper and walking every process takes a couple of seconds on an
+ * idle machine; endpoint-security scanners can stretch the compile far longer.
+ */
+const SCAN_TIMEOUT_MS = 60_000;
 const KILL_TIMEOUT_MS = 10_000;
 
 /**
@@ -74,6 +77,26 @@ foreach ($p in [Diagnostics.Process]::GetProcesses()) {
   }
 }`;
 
+/**
+ * The useful parts of an execFile failure. `String(err)` embeds the whole
+ * command line — here a multi-kilobyte encoded script — and none of the cause.
+ */
+function describeExecFailure(err: unknown): Record<string, unknown> {
+  const e = err as { code?: unknown; killed?: unknown; signal?: unknown; stderr?: unknown };
+  const stderr = typeof e.stderr === 'string' ? e.stderr : '';
+  return {
+    code: e.code,
+    timedOut: e.killed === true,
+    signal: e.signal,
+    // PowerShell wraps errors in CLIXML; drop the tags so the message is readable.
+    stderr: stderr
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 500),
+  };
+}
+
 /** Parse the scanner's `pid<TAB>name` lines, ignoring anything else it printed. */
 export function parseLockerOutput(stdout: string): WorktreeLocker[] {
   const lockers: WorktreeLocker[] = [];
@@ -108,9 +131,14 @@ export async function findWorktreeLockers(root: string): Promise<WorktreeLocker[
         windowsHide: true,
       },
     );
-    return parseLockerOutput(stdout);
+    const lockers = parseLockerOutput(stdout);
+    logDebug('git', 'findWorktreeLockers: scan finished', { root, found: lockers.length });
+    return lockers;
   } catch (err) {
-    logDebug('git', 'findWorktreeLockers: scan failed', { err: String(err) });
+    logWarn('git', 'findWorktreeLockers: scan failed, no holders will be reported', {
+      root,
+      ...describeExecFailure(err),
+    });
     return [];
   }
 }
@@ -145,7 +173,10 @@ export async function killWorktreeLockers(lockers: WorktreeLocker[]): Promise<vo
           windowsHide: true,
         });
       } catch (err) {
-        logDebug('git', 'killWorktreeLockers: taskkill failed', { ...locker, err: String(err) });
+        logWarn('git', 'killWorktreeLockers: taskkill failed', {
+          ...locker,
+          ...describeExecFailure(err),
+        });
       }
     }),
   );
