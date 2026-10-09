@@ -7,14 +7,6 @@
   --docws-floating-z: 1100;
 }
 
-.task-workspace {
-  position: relative;
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
 .docws-workspace {
   position: relative;
   height: 100%;

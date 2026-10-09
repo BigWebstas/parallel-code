@@ -1,3 +1,5 @@
+// The workspace panel that also loads these styles is lazy, and this dialog opens before it.
+import './documents.css';
 import {
   For,
   Show,

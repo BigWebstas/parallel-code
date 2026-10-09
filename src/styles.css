@@ -2421,6 +2421,17 @@ textarea::placeholder {
   overflow: hidden;
 }
 
+/* Hosts the tiling strip beside the sidebar. Must stay in this eager stylesheet:
+   without min-width: 0 the strip grows to its full content width and <main>
+   scrolls instead of the strip. */
+.task-workspace {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
 .tiling-layout-shell {
   position: relative;
   flex: 1;
