@@ -67,6 +67,7 @@ import type { CommitInfo } from '../ipc/types';
 import type { TranscriptMarks } from '../investigation/transcript';
 import { isLandedTaskState } from '../store/landing';
 import { shouldPollTaskCommits } from './task-commit-polling';
+import { ACTIVE_TASK_SETTLE_MS, createSettledFlag } from '../lib/settled-flag';
 import { devQualityFindingProvider } from './dev-quality-finding-fixture';
 import { createEslintQualityFindingProvider } from '../lib/eslint-quality-findings';
 import { createChangeTour } from '../lib/create-change-tour';
@@ -105,6 +106,18 @@ export function TaskPanel(props: TaskPanelProps) {
   const autoSendChildUpdates = () => props.task.autoSendChildUpdates ?? props.task.coordinatorMode;
   const eslintQualityFindingProvider = createEslintQualityFindingProvider(
     () => props.task.worktreePath,
+  );
+  // Git checks wait until the task stays active; UI and focus react at once.
+  const isSettledActive = createSettledFlag(() => props.isActive, ACTIVE_TASK_SETTLE_MS);
+  // Alt+Arrow also scrolls tiles past; only one that stays in view polls commits.
+  const shouldPollCommits = createSettledFlag(
+    () =>
+      shouldPollTaskCommits(
+        store.focusMode,
+        props.isActive,
+        store.focusMode ? undefined : store.taskViewportVisibility[props.task.id],
+      ),
+    ACTIVE_TASK_SETTLE_MS,
   );
   const [showCloseConfirm, setShowCloseConfirm] = createSignal(false);
   const [planFullscreen, setPlanFullscreen] = createSignal(false);
@@ -488,16 +501,7 @@ export function TaskPanel(props: TaskPanelProps) {
     const isolation = props.task.gitIsolation;
     if (isLandedTask()) return;
     if (isolation !== 'worktree' && isolation !== 'direct') return;
-    const focusMode = store.focusMode;
-    if (
-      !shouldPollTaskCommits(
-        focusMode,
-        focusMode ? props.isActive : false,
-        focusMode ? undefined : store.taskViewportVisibility[props.task.id],
-      )
-    ) {
-      return;
-    }
+    if (!shouldPollCommits()) return;
     let cancelled = false;
 
     async function fetchCommits() {
@@ -653,7 +657,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const changedFilesEl = (
     <TaskChangedFilesSection
       task={props.task}
-      isActive={props.isActive}
+      isActive={isSettledActive()}
       commitList={commitList()}
       selectedCommit={selectedCommit()}
       onCommitNavigate={setSelectedCommit}
