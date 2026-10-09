@@ -366,6 +366,7 @@ export async function saveState(): Promise<void> {
     globalScale: store.globalScale,
     completedTaskDate: store.completedTaskDate,
     completedTaskCount: store.completedTaskCount,
+    countedMergedPrs: store.countedMergedPrs,
     mergedLinesAdded: store.mergedLinesAdded,
     mergedLinesRemoved: store.mergedLinesRemoved,
     terminalFont: store.terminalFont,
@@ -565,6 +566,7 @@ interface LegacyPersistedState {
   globalScale?: unknown;
   completedTaskDate?: unknown;
   completedTaskCount?: unknown;
+  countedMergedPrs?: unknown;
   mergedLinesAdded?: unknown;
   mergedLinesRemoved?: unknown;
   terminalFont?: unknown;
@@ -786,6 +788,10 @@ export async function loadState(): Promise<void> {
         typeof completedTaskCountRaw === 'number' && Number.isFinite(completedTaskCountRaw)
           ? Math.max(0, Math.floor(completedTaskCountRaw))
           : 0;
+      s.countedMergedPrs =
+        completedTaskDate === today && Array.isArray(raw.countedMergedPrs)
+          ? raw.countedMergedPrs.filter((value): value is string => typeof value === 'string')
+          : [];
       if (completedTaskDate === today) {
         s.completedTaskDate = completedTaskDate;
         s.completedTaskCount = completedTaskCount;

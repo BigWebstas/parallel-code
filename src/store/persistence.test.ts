@@ -1,3 +1,4 @@
+import { getLocalDateKey } from '../lib/date';
 import { reconcile } from 'solid-js/store';
 import { createMindMap } from '../graph/model';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2290,5 +2291,34 @@ describe('task automation settings persistence', () => {
     const save = mockInvoke.mock.calls.findLast(([channel]) => channel === IPC.SaveAppState);
     expect(JSON.parse(save?.[1].json)).not.toHaveProperty('coordinatorModeEnabled');
     expect(JSON.parse(save?.[1].json).tasks['task-1'].coordinatorMode).toBe(true);
+  });
+});
+
+describe('daily merge count persistence', () => {
+  it('round-trips counted PRs and discards them with an old daily count', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      basePayload({
+        completedTaskDate: getLocalDateKey(),
+        completedTaskCount: 2,
+        countedMergedPrs: ['github.com/acme/app/12', 123],
+      }),
+    );
+    await loadState();
+    expect(store.completedTaskCount).toBe(2);
+    expect(store.countedMergedPrs).toEqual(['github.com/acme/app/12']);
+    await saveState();
+    const saved = mockInvoke.mock.calls.findLast(([channel]) => channel === IPC.SaveAppState);
+    expect(JSON.parse(saved?.[1].json).countedMergedPrs).toEqual(['github.com/acme/app/12']);
+
+    mockInvoke.mockResolvedValueOnce(
+      basePayload({
+        completedTaskDate: '2000-01-01',
+        completedTaskCount: 2,
+        countedMergedPrs: ['github.com/acme/app/12'],
+      }),
+    );
+    await loadState();
+    expect(store.completedTaskCount).toBe(0);
+    expect(store.countedMergedPrs).toEqual([]);
   });
 });
