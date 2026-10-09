@@ -23,6 +23,7 @@ import type {
 } from '../ipc/types';
 import type { ChatPermissionMode, ChatSession } from '../../electron/shared/agent-chat-types';
 import type { AskCodeProvider } from '../../electron/shared/ask-code-models';
+import type { TaskNameModelId } from '../../electron/shared/task-name-model';
 import type {
   EvidenceModelSettings,
   EvidencePackage,
@@ -471,6 +472,8 @@ export interface PersistedState {
   windowState?: PersistedWindowState;
   autoTrustFolders?: boolean;
   showPlans?: boolean;
+  modelTaskNames?: boolean;
+  taskNameModel?: TaskNameModelId;
   showSidebarTips?: boolean;
   showSidebarProgress?: boolean;
   sidebarNeedsInputFirst?: boolean;
@@ -592,6 +595,9 @@ export interface AppStore {
   windowState: PersistedWindowState | null;
   autoTrustFolders: boolean;
   showPlans: boolean;
+  /** Opt-in: ask a cheap model for a short title when a task is named from its prompt. */
+  modelTaskNames: boolean;
+  taskNameModel: TaskNameModelId;
   showSidebarTips: boolean;
   showSidebarProgress: boolean;
   /** Pin tasks that are waiting on an answer to the top of the sidebar task

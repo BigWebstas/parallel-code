@@ -1720,6 +1720,28 @@ describe('code Q&A model persistence', () => {
     setAskCodeProvider('claude');
     expect(store.askCodeModel).toBe('sonnet');
   });
+
+  it('keeps model task naming off unless it was explicitly enabled', async () => {
+    mockInvoke.mockResolvedValueOnce(stateJson({ modelTaskNames: 'yes' }));
+    await loadState();
+    expect(store.modelTaskNames).toBe(false);
+
+    mockInvoke.mockResolvedValueOnce(stateJson({ modelTaskNames: true }));
+    await loadState();
+    expect(store.modelTaskNames).toBe(true);
+    expect((await lastSaved()).modelTaskNames).toBe(true);
+  });
+
+  it('keeps a chosen naming model and falls back to Haiku for an unknown one', async () => {
+    mockInvoke.mockResolvedValueOnce(stateJson({ taskNameModel: 'luna' }));
+    await loadState();
+    expect(store.taskNameModel).toBe('luna');
+    expect((await lastSaved()).taskNameModel).toBe('luna');
+
+    mockInvoke.mockResolvedValueOnce(stateJson({ taskNameModel: 'gpt-4' }));
+    await loadState();
+    expect(store.taskNameModel).toBe('haiku');
+  });
 });
 
 describe('active task repair', () => {

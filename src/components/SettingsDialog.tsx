@@ -6,6 +6,7 @@ import {
   type AskCodeProvider,
 } from '../../electron/shared/ask-code-models';
 import { codexModels, loadCodexModels } from '../lib/codex-models';
+import { TASK_NAME_MODELS, type TaskNameModelId } from '../../electron/shared/task-name-model';
 import { CustomThemeDialog } from './CustomThemeDialog';
 import {
   getAvailableTerminalFonts,
@@ -24,6 +25,8 @@ import {
   setAutoTrustFolders,
   setShowPlans,
   setShowPromptInput,
+  setModelTaskNames,
+  setTaskNameModel,
   setShowSidebarTips,
   setShowSidebarProgress,
   setSidebarNeedsInputFirst,
@@ -489,6 +492,48 @@ export function SettingsDialog(props: SettingsDialogProps) {
               onChange={setShowPlans}
               description="Show a Review Plan button in Notes when a plan file is available"
             />
+            <SettingsCheckboxRow
+              label="Name tasks with a model"
+              checked={store.modelTaskNames}
+              onChange={setModelTaskNames}
+              description="Ask a cheap model for a short title when a task is named from its prompt; sends the prompt to that model's provider. The branch keeps its prompt-based name"
+            />
+            <Show when={store.modelTaskNames}>
+              <label
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '10px',
+                  padding: '8px 12px',
+                  'border-radius': 'var(--radius-md)',
+                  background: theme.bgInput,
+                  border: `1px solid ${theme.border}`,
+                }}
+              >
+                <span style={{ 'font-size': '13px', color: theme.fg, 'white-space': 'nowrap' }}>
+                  Naming model
+                </span>
+                <select
+                  value={store.taskNameModel}
+                  onChange={(e) => setTaskNameModel(e.currentTarget.value as TaskNameModelId)}
+                  style={{
+                    flex: '1',
+                    background: theme.taskPanelBg,
+                    border: `1px solid ${theme.border}`,
+                    'border-radius': 'var(--radius-sm)',
+                    padding: '6px 10px',
+                    color: theme.fg,
+                    'font-size': '13px',
+                    outline: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <For each={Object.entries(TASK_NAME_MODELS)}>
+                    {([id, choice]) => <option value={id}>{choice.label}</option>}
+                  </For>
+                </select>
+              </label>
+            </Show>
             <SettingsCheckboxRow
               label="Show ownership badges on canvases"
               checked={store.canvasOwnershipBadges}

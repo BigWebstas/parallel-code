@@ -40,6 +40,8 @@ function structuralSnapshot(): string {
     defaultSkipPermissions: store.defaultSkipPermissions,
     defaultPropagateSkipPermissions: store.defaultPropagateSkipPermissions,
     canvasOwnershipBadges: store.canvasOwnershipBadges,
+    modelTaskNames: store.modelTaskNames,
+    taskNameModel: store.taskNameModel,
     showSidebarTips: store.showSidebarTips,
     showSidebarProgress: store.showSidebarProgress,
     sidebarNeedsInputFirst: store.sidebarNeedsInputFirst,
