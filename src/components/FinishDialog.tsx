@@ -160,7 +160,7 @@ export function FinishDialog(props: FinishDialogProps) {
             </MergeChanges>
             {/* Opens with every dialog and folds only on a click, never on a status change. */}
             <details open style={{ margin: '28px 0', 'font-size': '13px' }}>
-              <summary style={{ cursor: 'pointer', color: theme.fgMuted }}>
+              <summary style={{ cursor: 'pointer', color: theme.fgMuted, padding: '8px 0' }}>
                 Readiness and checks
               </summary>
               <div style={{ 'margin-top': '8px' }}>
