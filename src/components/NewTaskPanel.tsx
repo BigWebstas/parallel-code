@@ -1,6 +1,7 @@
 import { createCanvasTask, validateCanvasTaskSource } from '../store/canvas-tasks';
 import type { AppStore, SpNewTaskSource } from '../store/types';
 import { linkNewTaskToSp } from '../store/superProductivityOpen';
+import { nameTaskWithModel } from '../store/model-task-name';
 import {
   createSignal,
   createEffect,
@@ -1135,6 +1136,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
       }
       const source = spSource();
       if (source) linkNewTaskToSp(taskId, source, projectId);
+      if (!manualName && p) void nameTaskWithModel(taskId, p);
       toggleNewTaskPanel(false);
     } catch (err) {
       setError(String(err));

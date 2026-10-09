@@ -27,6 +27,7 @@ import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
 import { normalizeReasoningProfile } from '../investigation/profiles';
 import { restoreReasoningWorkspaces } from '../investigation/editing';
 import { isValidSpId } from '../../electron/shared/super-productivity';
+import { DEFAULT_TASK_NAME_MODEL, isTaskNameModelId } from '../../electron/shared/task-name-model';
 
 /** A map that fails validation is kept aside rather than crashing load or being overwritten
  *  by the next save; the user is told once. */
@@ -375,6 +376,8 @@ export async function saveState(): Promise<void> {
     windowState: store.windowState ? { ...store.windowState } : undefined,
     autoTrustFolders: store.autoTrustFolders,
     showPlans: store.showPlans,
+    modelTaskNames: store.modelTaskNames,
+    taskNameModel: store.taskNameModel,
     showSidebarTips: store.showSidebarTips,
     showSidebarProgress: store.showSidebarProgress,
     sidebarNeedsInputFirst: store.sidebarNeedsInputFirst,
@@ -573,6 +576,8 @@ interface LegacyPersistedState {
   autoTrustFolders?: unknown;
   showPlans?: unknown;
   showSteps?: unknown;
+  modelTaskNames?: unknown;
+  taskNameModel?: unknown;
   showSidebarTips?: unknown;
   showSidebarProgress?: unknown;
   sidebarNeedsInputFirst?: unknown;
@@ -810,6 +815,10 @@ export async function loadState(): Promise<void> {
       s.windowState = parsePersistedWindowState(raw.windowState);
       s.autoTrustFolders = typeof raw.autoTrustFolders === 'boolean' ? raw.autoTrustFolders : false;
       s.showPlans = typeof raw.showPlans === 'boolean' ? raw.showPlans : true;
+      s.modelTaskNames = raw.modelTaskNames === true;
+      s.taskNameModel = isTaskNameModelId(raw.taskNameModel)
+        ? raw.taskNameModel
+        : DEFAULT_TASK_NAME_MODEL;
       s.showSidebarTips = typeof raw.showSidebarTips === 'boolean' ? raw.showSidebarTips : true;
       s.showSidebarProgress =
         typeof raw.showSidebarProgress === 'boolean' ? raw.showSidebarProgress : true;
