@@ -203,6 +203,39 @@ describe('PromptInput initial prompt after an app restart', () => {
     expect(onAgentReady).toHaveBeenCalled();
   });
 
+  it.each([
+    ['claude', undefined],
+    ['codex', undefined],
+    ['claude', 'fb4f2bc6-62d9-4b29-a795-240caf2fc459'],
+    ['codex', 'fb4f2bc6-62d9-4b29-a795-240caf2fc459'],
+  ])('only auto-sends to %s when a saved session exists (%s)', (command, sessionId) => {
+    vi.mocked(onAgentReady).mockClear();
+    storeMock.agents = {
+      'agent-1': {
+        id: 'agent-1',
+        resumed: true,
+        def: {
+          command,
+          args: [],
+          resume_args: command === 'claude' ? ['--continue'] : ['resume', '--last'],
+        },
+      },
+    };
+    storeMock.tasks = {
+      'task-1': {
+        id: 'task-1',
+        agentIds: ['agent-1'],
+        agentSessionIds: sessionId ? { 'agent-1': sessionId } : undefined,
+      },
+    };
+    mountWithInitialPrompt();
+    if (sessionId) expect(onAgentReady).toHaveBeenCalled();
+    else expect(onAgentReady).not.toHaveBeenCalled();
+    expect(document.querySelector<HTMLTextAreaElement>('textarea.prompt-textarea')?.value).toBe(
+      'do it',
+    );
+  });
+
   it('sends the prompt again when a failed resume falls back to a fresh session', () => {
     vi.mocked(onAgentReady).mockClear();
     const [agents, setAgents] = createStore({ 'agent-1': { resumed: true, generation: 0 } });
