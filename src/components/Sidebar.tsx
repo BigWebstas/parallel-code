@@ -1,5 +1,10 @@
+import { taskProjectFilter } from '../store/task-project-filter';
+import { TaskProjectFilter } from './TaskProjectFilter';
+import { createProjectFilterTransition } from '../lib/projectFilterTransition';
 import { createSignal, createEffect, createMemo, onMount, onCleanup, For, Show } from 'solid-js';
 import type { JSX } from 'solid-js';
+import { GitHubIcon } from './icons';
+import { openGitHubIssues } from '../store/github';
 import { errMessage } from '../lib/log';
 import {
   store,
@@ -48,7 +53,7 @@ import { SidebarFooter } from './SidebarFooter';
 import { IconButton } from './IconButton';
 import { StatusDot, getDotTooltip } from './StatusDot';
 import { ProjectSwatch } from './ProjectSwatch';
-import { TaskCurrentStateLine } from './TaskCurrentStateLine';
+import { TaskBriefLine } from './TaskBrief';
 import { TaskAgentStatusLine } from './TaskAgentStatusLine';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
@@ -345,6 +350,7 @@ export function Sidebar() {
   const [resizing, setResizing] = createSignal(false);
   const [nowMs, setNowMs] = createSignal(Date.now());
   let taskListRef: HTMLDivElement | undefined;
+  createProjectFilterTransition(taskProjectFilter, () => taskListRef);
 
   const sidebarWidth = () => getPanelUserSize(SIDEBAR_SIZE_KEY) ?? SIDEBAR_DEFAULT_WIDTH;
 
@@ -756,6 +762,33 @@ export function Sidebar() {
                           Folder not found
                         </span>
                       </Show>
+                      <Show when={!isDocumentProject(project) && !isProjectMissing(project.id)}>
+                        <button
+                          type="button"
+                          class="icon-btn"
+                          title={`Browse GitHub issues for ${project.name}`}
+                          aria-label={`Browse GitHub issues for ${project.name}`}
+                          aria-pressed={store.githubIssuesProjectId === project.id}
+                          onKeyDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openGitHubIssues(project.id);
+                          }}
+                          style={{
+                            color:
+                              store.githubIssuesProjectId === project.id
+                                ? theme.accent
+                                : theme.fgMuted,
+                            display: 'flex',
+                            background: 'transparent',
+                            border: 'none',
+                            padding: '2px',
+                            'flex-shrink': '0',
+                          }}
+                        >
+                          <GitHubIcon size={14} />
+                        </button>
+                      </Show>
                       <button
                         class="icon-btn"
                         onClick={(e) => {
@@ -853,6 +886,8 @@ export function Sidebar() {
             New Task
           </button>
         </Show>
+
+        <TaskProjectFilter />
 
         {/* Tasks waiting on an answer — pinned here so they never scroll away */}
         <AttentionTray nowMs={nowMs()} />
@@ -1093,6 +1128,7 @@ function CoordinatorFolder(props: TaskEntryProps) {
             title={`${t().name} — ${getDotTooltip(
               getTaskDotStatus(props.taskId),
               getTaskAttentionState(props.taskId),
+              props.taskId,
             )}`}
             onClick={() => {
               setActiveTask(props.taskId);
@@ -1132,7 +1168,7 @@ function CoordinatorFolder(props: TaskEntryProps) {
               status={getTaskAgentHookStatus(props.taskId)}
               nowMs={props.nowMs}
             />
-            <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <TaskBriefLine task={t()} />
             <Show when={getChildAttentionSummary(props.taskId)}>
               {(summary) => (
                 <div style={{ 'font-size': sf(11), color: theme.fgMuted }}>{summary()}</div>
@@ -1251,7 +1287,7 @@ function CollapsedTaskEntry(props: {
                 </span>
               </Show>
             </div>
-            <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <TaskBriefLine task={t()} />
             <Show when={getChildAttentionSummary(props.taskId)}>
               {(summary) => (
                 <div style={{ 'font-size': sf(11), color: theme.fgMuted }}>{summary()}</div>
@@ -1317,6 +1353,7 @@ function TaskRow(props: TaskRowProps) {
             title={`${t().name} — ${getDotTooltip(
               getTaskDotStatus(props.taskId),
               getTaskAttentionState(props.taskId),
+              props.taskId,
             )}`}
             onClick={() => {
               setActiveTask(props.taskId);
@@ -1366,7 +1403,7 @@ function TaskRow(props: TaskRowProps) {
               status={getTaskAgentHookStatus(props.taskId)}
               nowMs={props.nowMs}
             />
-            <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <TaskBriefLine task={t()} />
           </TaskRowShell>
         </>
       )}

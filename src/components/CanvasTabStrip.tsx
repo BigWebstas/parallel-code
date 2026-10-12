@@ -4,7 +4,7 @@ import { sf } from '../lib/fontScale';
 import { canvasTabKey } from '../lib/canvas-tabs';
 import type { CanvasTab, CanvasTabKind } from '../store/types';
 import { IconButton } from './IconButton';
-import { CloseIcon, ExpandIcon, ExternalLinkIcon, PlusIcon } from './icons';
+import { CloseIcon, ExpandIcon, ExternalLinkIcon, PlusIcon, ScreenNormalIcon } from './icons';
 import { UnderstandButton, tourButtonStyle } from './understanding/UnderstandButton';
 import type { UnderstandingTourController } from '../lib/create-understanding-tour';
 
@@ -26,6 +26,8 @@ interface CanvasTabStripProps {
   /** Both present: the open document gets a Take Tour button. */
   understanding?: UnderstandingTourController;
   onTakeTour?: (path: string) => void;
+  /** Which tour the open document gets: the task's plan or any other document. */
+  tourKind?: (path: string) => 'plan' | 'document';
 }
 
 /** What the "+" menu offers. */
@@ -151,6 +153,7 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
       <div style={{ position: 'relative', display: 'flex', 'align-items': 'center', gap: '2px' }}>
         <Show when={props.fullscreen}>
           <button
+            class="btn-with-icon"
             type="button"
             onClick={() => props.onExitFullscreen()}
             title="Exit fullscreen"
@@ -165,6 +168,7 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
               'font-size': sf(11),
             }}
           >
+            <ScreenNormalIcon size={12} />
             Exit fullscreen
           </button>
         </Show>
@@ -173,7 +177,7 @@ export function CanvasTabStrip(props: CanvasTabStripProps) {
             <UnderstandButton
               label="Take Tour"
               tour={target().tour}
-              kind="plan"
+              kind={props.tourKind?.(target().path) ?? 'document'}
               subject={target().path}
               onClick={() => target().onTakeTour(target().path)}
               class="btn-secondary review-plan-btn canvas-tour-btn"

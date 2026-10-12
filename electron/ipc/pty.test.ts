@@ -108,10 +108,14 @@ import {
   onPtyEvent,
   projectImageTag,
   resizeAgent,
+  setAgentRemoteSize,
+  setRemoteHistory,
   resolveProjectDockerfile,
+  scrollAgent,
   spawnAgent,
   setAgentHookRuntime,
   subscribeToAgent,
+  subscribeToAgentRendered,
   validateCommand,
   writeToAgent,
   writeAgentPrompt,
@@ -1073,6 +1077,27 @@ describe('spawnAgent output batching', () => {
     }
   });
 
+  it('reports the last 8 KiB of output on exit', async () => {
+    const { notify, proc } = await launch('agent-batch-tail');
+    const lines = Array.from({ length: 100 }, (_, i) => `line-${i}-`.padEnd(400, 'x'));
+    for (const line of lines) proc.emitData(`${line}\r\n`);
+    proc.emitExit({ exitCode: 1, signal: undefined });
+
+    const exit = vi
+      .mocked(notify)
+      .mock.calls.map(([, message]) => message as { type: string; data?: unknown })
+      .find((payload) => payload.type === 'Exit');
+    const tail = Buffer.from(lines.map((line) => `${line}\r\n`).join(''))
+      .subarray(-8 * 1024)
+      .toString();
+    const expected = tail
+      .split('\n')
+      .map((line) => line.replace(/\r$/, ''))
+      .filter((line) => line.length > 0);
+    expect(exit?.data).toMatchObject({ last_output: expected });
+    expect(expected[expected.length - 1]).toBe(lines[99]);
+  });
+
   it('sends raw bytes to the window and base64 to subscribers', async () => {
     const { notify, proc } = await launch('agent-batch-subscriber');
     const sub = vi.fn();
@@ -1103,6 +1128,18 @@ describe('spawnAgent terminal queries', () => {
     const proc = await launch('agent-query-cpr');
     proc.emitData('hi\x1b[6n');
     await vi.waitFor(() => expect(proc.write).toHaveBeenCalledWith('\x1b[1;3R'));
+  });
+
+  it('takes a phone size and restores the desktop size, remembering desktop resizes', async () => {
+    const proc = await launch('agent-remote-size');
+    resizeAgent('agent-remote-size', 100, 30);
+    setAgentRemoteSize('agent-remote-size', { cols: 60, rows: 50 });
+    expect(proc.resize).toHaveBeenLastCalledWith(60, 50);
+    // The desktop pane refits while the phone views: remembered, not applied.
+    resizeAgent('agent-remote-size', 110, 32);
+    expect(proc.resize).toHaveBeenLastCalledWith(60, 50);
+    setAgentRemoteSize('agent-remote-size', null);
+    expect(proc.resize).toHaveBeenLastCalledWith(110, 32);
   });
 
   it('answers at the size the PTY was resized to', async () => {
@@ -1220,6 +1257,26 @@ describe('peer prompt delivery', () => {
       }
     },
   );
+
+  it('scrolls a TUI that reads the wheel without holding back peer prompts', async () => {
+    const { args, proc } = await launch();
+    scrollAgent(args.agentId, -2, 10, 5);
+    expect(proc.write).not.toHaveBeenCalled();
+    proc.emitData('\x1b[?1049h\x1b[?1000;1006h');
+    await vi.waitFor(() => expect(getAgentPromptSnapshot(args.agentId)).not.toBeNull());
+    scrollAgent(args.agentId, -2, 10, 5);
+    expect(proc.write.mock.calls).toEqual([['\x1b[<64;10;5M\x1b[<64;10;5M']]);
+    const delivery = writeAgentPrompt(args.agentId, 'peer', () => {});
+    // A report inside the peer's paste would be typed into the composer.
+    scrollAgent(args.agentId, 1, 10, 5);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await delivery).toBe(true);
+    expect(proc.write.mock.calls.slice(1)).toEqual([
+      ['\x1b[I'],
+      ['\x1b[200~peer\x1b[201~'],
+      ['\r'],
+    ]);
+  });
 
   it('defers to recent raw input for five seconds', async () => {
     const { args, proc } = await launch();
@@ -2170,6 +2227,72 @@ describe('Claude terminal handoff', () => {
       expect(() => writeToAgent(agentId, 'still here')).not.toThrow();
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe('subscribeToAgentRendered', () => {
+  async function launch(agentId: string) {
+    await spawnAgent(
+      createMockNotify(),
+      buildSpawnArgs({ agentId, command: 'claude', args: [], dockerMode: false }),
+    );
+    return mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value as ReturnType<
+      typeof mockPtySpawn
+    >;
+  }
+
+  const decode = (encoded: string) => Buffer.from(encoded, 'base64').toString();
+
+  it('starts from the rendered screen and sends later output once, after it', async () => {
+    const proc = await launch('agent-rendered');
+    // Repaints of one line: the raw replay keeps every frame, the render only the last.
+    proc.emitData('first\r\nframe 1\rframe 2\rframe 3');
+    const events: string[] = [];
+    const subscriber = subscribeToAgentRendered(
+      'agent-rendered',
+      (snapshot) => events.push(`snapshot:${decode(snapshot?.data ?? '')}`),
+      (encoded) => events.push(`output:${decode(encoded)}`),
+    );
+    expect(subscriber).not.toBeNull();
+    proc.emitData('\r\nlater');
+
+    await vi.waitFor(() => expect(events.some((e) => e === 'output:\r\nlater')).toBe(true));
+    expect(events).toHaveLength(2);
+    expect(events[0]).toContain('first');
+    expect(events[0]).toContain('frame 3');
+    expect(events[0]).not.toContain('frame 1');
+    expect(events[1]).toBe('output:\r\nlater');
+  });
+
+  it('returns null for an unknown agent', () => {
+    expect(subscribeToAgentRendered('missing', vi.fn(), vi.fn())).toBeNull();
+  });
+
+  it('keeps long history in running mirrors only while phones can connect', async () => {
+    const snapshotOf = async (agentId: string) => {
+      let data: string | null = null;
+      subscribeToAgentRendered(
+        agentId,
+        (snapshot) => (data = decode(snapshot?.data ?? '')),
+        vi.fn(),
+      );
+      await vi.waitFor(() => expect(data).not.toBeNull());
+      return data ?? '';
+    };
+    const proc = await launch('agent-history');
+    try {
+      // Raised after launch, so this checks the running session follows, not just new ones.
+      setRemoteHistory(true);
+      for (let i = 0; i < 500; i++) proc.emitData(`line-${String(i).padStart(3, '0')}\r\n`);
+      expect(await snapshotOf('agent-history')).toContain('line-000');
+
+      setRemoteHistory(false);
+      const trimmed = await snapshotOf('agent-history');
+      expect(trimmed).not.toContain('line-000');
+      expect(trimmed).toContain('line-499');
+    } finally {
+      setRemoteHistory(false);
     }
   });
 });
