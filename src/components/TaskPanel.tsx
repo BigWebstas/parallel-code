@@ -34,7 +34,6 @@ import { CANVAS_DEFAULT_WIDTH, CANVAS_MIN_WIDTH } from '../lib/layout-sizes';
 import type { EditableTextHandle } from './EditableText';
 import { PromptInput, type PromptInputHandle } from './PromptInput';
 import { CloseTaskDialog } from './CloseTaskDialog';
-import { CommitDialog } from './CommitDialog';
 import { FinishDialog, type FinishAction } from './FinishDialog';
 import { PullRequestDialog } from './PullRequestDialog';
 import { DiffViewerDialog } from './DiffViewerDialog';
@@ -140,7 +139,6 @@ export function TaskPanel(props: TaskPanelProps) {
     return remaining > 0 ? `Auto-sending in ${remaining}s` : 'Sending when ready…';
   };
 
-  const [showCommitDialog, setShowCommitDialog] = createSignal(false);
   // null while the finish dialog is closed; otherwise the option it shows.
   const [finishAction, setFinishAction] = createSignal<FinishAction | null>(null);
   const [openPrUrl, setOpenPrUrl] = createSignal<string | null>(null);
@@ -953,7 +951,6 @@ export function TaskPanel(props: TaskPanelProps) {
             task={props.task}
             isActive={props.isActive}
             onClose={() => setShowCloseConfirm(true)}
-            onCommit={() => setShowCommitDialog(true)}
             onFinish={() => openFinish('merge')}
             pushing={pushing()}
             pushSuccess={pushSuccess()}
@@ -1096,11 +1093,6 @@ export function TaskPanel(props: TaskPanelProps) {
         onDone={() => setShowCloseConfirm(false)}
       />
       <Show when={props.task.gitIsolation !== 'none' && !isLandedTask()}>
-        <CommitDialog
-          open={showCommitDialog()}
-          task={props.task}
-          onDone={() => setShowCommitDialog(false)}
-        />
         <FinishDialog
           open={finishAction() !== null}
           task={props.task}

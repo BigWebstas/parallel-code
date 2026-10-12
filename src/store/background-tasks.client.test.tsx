@@ -348,7 +348,6 @@ it('offers the action and a manual return in the task header', () => {
         task={store.tasks.one}
         isActive={store.activeTaskId === 'one'}
         onClose={() => undefined}
-        onCommit={() => undefined}
         onFinish={() => undefined}
         pushing={false}
         pushSuccess={false}
@@ -716,7 +715,6 @@ it('offers the CI snooze in the Later menu and shows it in the header', () => {
       <TaskTitleBar
         task={store.tasks.one}
         isActive={store.activeTaskId === 'one'}
-        onCommit={() => undefined}
         onClose={() => undefined}
         onFinish={() => undefined}
         pushing={false}
