@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createTerminalQueryResponder } from './terminal-query-responder.js';
+import {
+  createTerminalQueryResponder,
+  REMOTE_SCROLLBACK_LINES,
+} from './terminal-query-responder.js';
 
 function setup(cols = 80, rows = 24) {
   const replies: string[] = [];
@@ -68,6 +71,55 @@ describe('createTerminalQueryResponder', () => {
     responder.resize(40, 5);
     responder.feed('\x1b[6n');
     await vi.waitFor(() => expect(replies).toEqual(['\x1b[5;1R']));
+  });
+
+  it('keeps a short history by default', async () => {
+    const { responder } = setup();
+    const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
+    responder.feed(lines.join('\r\n'));
+    const text = await responder.serialize();
+    expect(text).not.toContain('line 0\r\n');
+    expect(text).toContain('line 4999');
+    responder.dispose();
+  });
+
+  it('serializes the desktop history depth once the scrollback grows', async () => {
+    const { responder } = setup();
+    responder.setScrollback(REMOTE_SCROLLBACK_LINES);
+    const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
+    responder.feed(lines.join('\r\n'));
+    const text = await responder.serialize();
+    expect(text).toContain('line 0\r\n');
+    expect(text).toContain('line 4999');
+    responder.dispose();
+  });
+
+  it('reports wheel turns only while the program reads them as SGR reports', async () => {
+    const { responder } = setup();
+    expect(responder.wheelReport(-1, 10, 5)).toBeNull();
+    // Serializing waits for everything fed so far to be parsed.
+    responder.feed('\x1b[?1049h\x1b[?1000h');
+    await responder.serialize();
+    // Default-encoded reports go out as binary events the desktop pane never forwards.
+    expect(responder.wheelReport(-1, 10, 5)).toBeNull();
+    responder.feed('\x1b[?1006h');
+    await responder.serialize();
+    expect(responder.wheelReport(-2, 10, 5)).toBe('\x1b[<64;10;5M\x1b[<64;10;5M');
+    expect(responder.wheelReport(1, 500, 0)).toBe('\x1b[<65;80;1M');
+    responder.feed('\x1b[?1016h');
+    await responder.serialize();
+    expect(responder.wheelReport(1, 10, 5)).toBeNull();
+    responder.feed('\x1bc\x1b[?1002;1006h');
+    await responder.serialize();
+    expect(responder.wheelReport(-1, 1, 1)).toBe('\x1b[<64;1;1M');
+    responder.feed('\x1bc\x1b[?1002h');
+    await responder.serialize();
+    expect(responder.wheelReport(-1, 1, 1)).toBeNull();
+    responder.feed('\x1b[?1006h\x1b[?1002l\x1b[?9h');
+    await responder.serialize();
+    expect(responder.wheelReport(-1, 1, 1)).toBeNull();
+    responder.dispose();
+    expect(responder.wheelReport(-1, 1, 1)).toBeNull();
   });
 
   it('stops answering once disposed', async () => {

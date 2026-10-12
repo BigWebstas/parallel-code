@@ -17,9 +17,14 @@ import {
   stripAnsi,
 } from './taskStatus';
 import { taskUsesAgentChat } from './agent-chat';
+import { getPrChecks } from './pr-checks-state';
 import { fireAndForget } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
-import type { RemoteAttentionState, RemoteAgent } from '../../electron/remote/protocol';
+import type {
+  RemoteAttentionState,
+  RemoteAgent,
+  RemoteCiStatus,
+} from '../../electron/remote/protocol';
 import type { AgentChatState } from '../../electron/shared/agent-chat-types';
 
 /** Pick recent content rather than terminal UI chrome for the phone's task cards. */
@@ -56,6 +61,13 @@ export function remoteChatPreview(state: AgentChatState | undefined): string {
   return (reply?.text.trim().split('\n').at(-1) ?? '').trim().slice(0, 300);
 }
 
+/** A merged PR no longer gates anything, and 'none' means GitHub reported no checks. */
+function remoteCiStatus(taskId: string): RemoteCiStatus | undefined {
+  const checks = getPrChecks(taskId);
+  if (!checks || checks.merged || checks.overall === 'none') return undefined;
+  return checks.overall;
+}
+
 export function startRemoteStatusSync(): () => void {
   // Serialized snapshot of the last push, so we only send on actual change.
   let lastSerialized = '';
@@ -77,7 +89,16 @@ export function startRemoteStatusSync(): () => void {
       const statuses: Record<string, RemoteAttentionState> = {};
       const contexts: Record<
         string,
-        Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'>
+        Pick<
+          RemoteAgent,
+          | 'projectName'
+          | 'projectColor'
+          | 'agentName'
+          | 'lastLine'
+          | 'taskName'
+          | 'collapsed'
+          | 'ci'
+        >
       > = {};
       for (const taskId of [...store.taskOrder, ...store.collapsedTaskOrder]) {
         // Like the desktop attention tray, surface unanswered questions even
@@ -92,13 +113,22 @@ export function startRemoteStatusSync(): () => void {
         const agent = store.agents[agentId];
         const project = store.projects.find((project) => project.id === task.projectId);
         contexts[taskId] = {
+          taskName: task.name,
+          collapsed: Boolean(task.collapsed),
+          ci: remoteCiStatus(taskId),
           projectName: project?.name ?? '',
           projectColor: project?.color ?? '',
-          agentName: agent?.def.name ?? '',
+          agentName: agent?.def.name ?? task.savedAgentDef?.name ?? '',
           // Untracked like the terminal tail: a streaming reply changes every frame.
           lastLine: taskUsesAgentChat(task)
-            ? untrack(() => remoteChatPreview(store.agents[task.agentIds[0]]?.chatState))
-            : remoteOutputPreview(getAgentOutputTail(agentId)),
+            ? untrack(() =>
+                remoteChatPreview(
+                  task.agentIds[0] ? store.agents[task.agentIds[0]]?.chatState : undefined,
+                ),
+              )
+            : agentId
+              ? remoteOutputPreview(getAgentOutputTail(agentId))
+              : '',
         };
       }
 

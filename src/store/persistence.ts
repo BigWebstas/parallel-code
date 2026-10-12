@@ -1,5 +1,7 @@
 import { parseCompletionRecord } from '../../electron/shared/completion-report';
 import { persistedEvidence, restoredEvidence } from '../lib/evidence-package';
+import { restoreTaskBriefRecord } from '../lib/task-brief';
+import { restoreTaskConfidence } from '../lib/task-confidence';
 import {
   parseEvidenceModelSettings,
   parseProjectChecks,
@@ -27,6 +29,7 @@ import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
 import { normalizeReasoningProfile } from '../investigation/profiles';
 import { restoreReasoningWorkspaces } from '../investigation/editing';
 import { isValidSpId } from '../../electron/shared/super-productivity';
+import { DEFAULT_TASK_NAME_MODEL, isTaskNameModelId } from '../../electron/shared/task-name-model';
 
 /** A map that fails validation is kept aside rather than crashing load or being overwritten
  *  by the next save; the user is told once. */
@@ -65,7 +68,7 @@ import { syncTerminalCounter } from './terminals';
 import { showNotification, NOTIFICATION_ERROR_MS } from './notification';
 import { errMessage, warn as logWarn } from '../lib/log';
 import { canvasTabKey } from '../lib/canvas-tabs';
-import { documentAgentTaskIds } from '../documents/task-id';
+import { hiddenAgentTaskIds, isHiddenAgentTaskId } from '../documents/task-id';
 
 function restoredCodexHandoff(value: unknown): Task['codexChatHandoff'] {
   if (!value || typeof value !== 'object') return;
@@ -250,6 +253,15 @@ function validBranch(value: unknown, exclude?: string): string | undefined {
   return typeof value === 'string' && value.length > 0 && value !== exclude ? value : undefined;
 }
 
+function restoredSnoozedUntil(value: unknown): number | undefined {
+  return typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= 8_640_000_000_000_000
+    ? value
+    : undefined;
+}
+
 /**
  * Serialize a Task to its persisted shape. The caller supplies agentDefs
  * because active and collapsed tasks source them differently (live store
@@ -293,6 +305,7 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     prUrl: task.prUrl,
     superProductivity: task.superProductivity,
     savedInitialPrompt: task.savedInitialPrompt,
+    secondOpinionDismissed: task.secondOpinionDismissed || undefined,
     savedSelectedAgentIndex: task.savedSelectedAgentIndex,
     savedAgentSessionIds: task.savedAgentSessionIds,
     savedPromptedAgentIndexes: task.savedPromptedAgentIndexes,
@@ -304,9 +317,10 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     mindMap: task.mindMap ?? task.mindMapUnreadable,
     reasoningProfile: task.reasoningProfile,
     reasoningWorkspaces: task.reasoningWorkspaces,
-    stepsEnabled: task.stepsEnabled,
     branchAdoptedFrom: task.branchAdoptedFrom,
     branchOfferDismissed: task.branchOfferDismissed,
+    snoozedUntil: task.snoozedUntil,
+    snoozedUntilCi: task.snoozedUntilCi,
     ...(collapsed ? { collapsed: true } : {}),
     delegationParent: task.delegationParent,
     delegationPaused: task.delegationPaused,
@@ -328,6 +342,8 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     verification: task.verification,
     verificationRun: task.verificationRun,
     evidence: persistedEvidence(task.evidence),
+    brief: task.brief,
+    confidence: task.confidence,
     landingState: task.landingState,
     landingReason: task.landingReason,
     landingSummary: task.landingSummary,
@@ -365,6 +381,7 @@ export async function saveState(): Promise<void> {
     globalScale: store.globalScale,
     completedTaskDate: store.completedTaskDate,
     completedTaskCount: store.completedTaskCount,
+    countedMergedPrs: store.countedMergedPrs,
     mergedLinesAdded: store.mergedLinesAdded,
     mergedLinesRemoved: store.mergedLinesRemoved,
     terminalFont: store.terminalFont,
@@ -375,6 +392,10 @@ export async function saveState(): Promise<void> {
     windowState: store.windowState ? { ...store.windowState } : undefined,
     autoTrustFolders: store.autoTrustFolders,
     showPlans: store.showPlans,
+    modelTaskNames: store.modelTaskNames,
+    taskNameModel: store.taskNameModel,
+    taskBriefs: store.taskBriefs || undefined,
+    confidencePrompt: store.confidencePrompt.trim() || undefined,
     showSidebarTips: store.showSidebarTips,
     showSidebarProgress: store.showSidebarProgress,
     sidebarNeedsInputFirst: store.sidebarNeedsInputFirst,
@@ -410,7 +431,6 @@ export async function saveState(): Promise<void> {
     documentFullWidth: store.documentFullWidth || undefined,
     coordinatorControlHintDismissed: store.coordinatorControlHintDismissed || undefined,
     preferUiMode: store.preferUiMode || undefined,
-    defaultStepsEnabled: store.defaultStepsEnabled || undefined,
     defaultSkipPermissions: store.defaultSkipPermissions || undefined,
     defaultPropagateSkipPermissions: store.defaultPropagateSkipPermissions || undefined,
     // Default on: only an explicit opt-out is stored.
@@ -418,8 +438,8 @@ export async function saveState(): Promise<void> {
     autoStartRemoteAccess: store.autoStartRemoteAccess || undefined,
   };
 
-  const documentTaskIds = documentAgentTaskIds(store.projects);
-  for (const taskId of new Set([...store.taskOrder, ...documentTaskIds])) {
+  const hiddenTaskIds = hiddenAgentTaskIds(store.projects);
+  for (const taskId of new Set([...store.taskOrder, ...hiddenTaskIds])) {
     const task = store.tasks[taskId];
     if (!task) continue;
 
@@ -562,6 +582,7 @@ interface LegacyPersistedState {
   globalScale?: unknown;
   completedTaskDate?: unknown;
   completedTaskCount?: unknown;
+  countedMergedPrs?: unknown;
   mergedLinesAdded?: unknown;
   mergedLinesRemoved?: unknown;
   terminalFont?: unknown;
@@ -572,7 +593,10 @@ interface LegacyPersistedState {
   windowState?: unknown;
   autoTrustFolders?: unknown;
   showPlans?: unknown;
-  showSteps?: unknown;
+  modelTaskNames?: unknown;
+  taskNameModel?: unknown;
+  taskBriefs?: unknown;
+  confidencePrompt?: unknown;
   showSidebarTips?: unknown;
   showSidebarProgress?: unknown;
   sidebarNeedsInputFirst?: unknown;
@@ -604,7 +628,6 @@ interface LegacyPersistedState {
   documentFullWidth?: unknown;
   coordinatorControlHintDismissed?: unknown;
   preferUiMode?: unknown;
-  defaultStepsEnabled?: unknown;
   defaultSkipPermissions?: unknown;
   defaultPropagateSkipPermissions?: unknown;
   canvasOwnershipBadges?: unknown;
@@ -733,7 +756,7 @@ export async function loadState(): Promise<void> {
   );
   for (const task of authorityTasks) {
     const project = projects.find((p) => p.id === task.projectId);
-    if (!project || project.kind === 'document') continue;
+    if (!project || project.kind === 'document' || isHiddenAgentTaskId(task.id)) continue;
     const agent = task.agentDefs?.[0] ?? task.agentDef ?? undefined;
     try {
       await delegationRequest({
@@ -781,6 +804,10 @@ export async function loadState(): Promise<void> {
         typeof completedTaskCountRaw === 'number' && Number.isFinite(completedTaskCountRaw)
           ? Math.max(0, Math.floor(completedTaskCountRaw))
           : 0;
+      s.countedMergedPrs =
+        completedTaskDate === today && Array.isArray(raw.countedMergedPrs)
+          ? raw.countedMergedPrs.filter((value): value is string => typeof value === 'string')
+          : [];
       if (completedTaskDate === today) {
         s.completedTaskDate = completedTaskDate;
         s.completedTaskCount = completedTaskCount;
@@ -810,6 +837,13 @@ export async function loadState(): Promise<void> {
       s.windowState = parsePersistedWindowState(raw.windowState);
       s.autoTrustFolders = typeof raw.autoTrustFolders === 'boolean' ? raw.autoTrustFolders : false;
       s.showPlans = typeof raw.showPlans === 'boolean' ? raw.showPlans : true;
+      s.modelTaskNames = raw.modelTaskNames === true;
+      s.taskNameModel = isTaskNameModelId(raw.taskNameModel)
+        ? raw.taskNameModel
+        : DEFAULT_TASK_NAME_MODEL;
+      s.taskBriefs = raw.taskBriefs === true;
+      s.confidencePrompt =
+        typeof raw.confidencePrompt === 'string' ? raw.confidencePrompt.slice(0, 4_000) : '';
       s.showSidebarTips = typeof raw.showSidebarTips === 'boolean' ? raw.showSidebarTips : true;
       s.showSidebarProgress =
         typeof raw.showSidebarProgress === 'boolean' ? raw.showSidebarProgress : true;
@@ -898,15 +932,6 @@ export async function loadState(): Promise<void> {
 
       s.coordinatorControlHintDismissed = raw.coordinatorControlHintDismissed === true;
 
-      // Migrate legacy showSteps — only fall back to it when the new field is
-      // absent (not present-but-invalid) so invalid values and explicit false
-      // are never overridden by the legacy field.
-      s.defaultStepsEnabled =
-        typeof raw.defaultStepsEnabled === 'boolean'
-          ? raw.defaultStepsEnabled
-          : 'defaultStepsEnabled' in (raw as object)
-            ? false
-            : raw.showSteps === true;
       s.preferUiMode = raw.preferUiMode === true;
       s.defaultSkipPermissions = raw.defaultSkipPermissions === true;
       s.defaultPropagateSkipPermissions = raw.defaultPropagateSkipPermissions === true;
@@ -960,8 +985,8 @@ export async function loadState(): Promise<void> {
         }
       }
 
-      const documentTaskIds = documentAgentTaskIds(projects);
-      for (const taskId of new Set([...raw.taskOrder, ...documentTaskIds])) {
+      const hiddenTaskIds = hiddenAgentTaskIds(projects);
+      for (const taskId of new Set([...raw.taskOrder, ...hiddenTaskIds])) {
         const pt = raw.tasks[taskId];
         if (!pt) continue;
 
@@ -985,7 +1010,7 @@ export async function loadState(): Promise<void> {
                 : undefined,
           projectId: pt.projectId ?? '',
           branchName: pt.branchName,
-          worktreePath: documentTaskIds.includes(taskId)
+          worktreePath: hiddenTaskIds.includes(taskId)
             ? (projects.find((project) => project.id === pt.projectId)?.path ?? pt.worktreePath)
             : pt.worktreePath,
           agentIds,
@@ -1003,6 +1028,8 @@ export async function loadState(): Promise<void> {
           claudeChatSessionId:
             typeof pt.claudeChatSessionId === 'string' ? pt.claudeChatSessionId : undefined,
           shellAgentIds,
+          snoozedUntil: restoredSnoozedUntil(pt.snoozedUntil),
+          snoozedUntilCi: pt.snoozedUntilCi === true ? true : undefined,
           notes: pt.notes,
           promptDraft: typeof pt.promptDraft === 'string' ? pt.promptDraft : undefined,
           browserUrl: typeof pt.browserUrl === 'string' ? pt.browserUrl : undefined,
@@ -1025,6 +1052,7 @@ export async function loadState(): Promise<void> {
           prUrl: pt.prUrl,
           superProductivity: restoreSuperProductivityLink(pt.superProductivity),
           savedInitialPrompt: pt.savedInitialPrompt,
+          secondOpinionDismissed: pt.secondOpinionDismissed === true || undefined,
           savedSelectedAgentIndex: validAgentIndex(pt.savedSelectedAgentIndex),
           savedPromptedAgentIndexes: validPromptedAgentIndexes(pt.savedPromptedAgentIndexes),
           planFileName: pt.planFileName,
@@ -1033,7 +1061,6 @@ export async function loadState(): Promise<void> {
           reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
           canvasTaskLinks: restoreCanvasTaskLinks(pt.canvasTaskLinks),
           reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),
-          stepsEnabled: pt.stepsEnabled,
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),
           branchOfferDismissed: validBranch(pt.branchOfferDismissed),
           delegationParent: pt.delegationParent === true,
@@ -1069,6 +1096,8 @@ export async function loadState(): Promise<void> {
           verification: pt.verification,
           verificationRun: restoredVerificationRun(pt.verificationRun),
           evidence: restoredEvidence(pt.evidence),
+          brief: restoreTaskBriefRecord(pt.brief),
+          confidence: restoreTaskConfidence(pt.confidence),
           landingState: pt.landingState,
           landingReason: pt.landingReason,
           landingSummary: pt.landingSummary,
@@ -1169,6 +1198,7 @@ export async function loadState(): Promise<void> {
           prUrl: pt.prUrl,
           superProductivity: restoreSuperProductivityLink(pt.superProductivity),
           savedInitialPrompt: pt.savedInitialPrompt,
+          secondOpinionDismissed: pt.secondOpinionDismissed === true || undefined,
           savedSelectedAgentIndex: validAgentIndex(pt.savedSelectedAgentIndex),
           savedPromptedAgentIndexes: validPromptedAgentIndexes(pt.savedPromptedAgentIndexes),
           planFileName: pt.planFileName,
@@ -1177,10 +1207,10 @@ export async function loadState(): Promise<void> {
           reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
           canvasTaskLinks: restoreCanvasTaskLinks(pt.canvasTaskLinks),
           reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),
-          stepsEnabled: pt.stepsEnabled,
           branchAdoptedFrom: validBranch(pt.branchAdoptedFrom, pt.branchName),
           branchOfferDismissed: validBranch(pt.branchOfferDismissed),
           collapsed: true,
+          snoozedUntil: restoredSnoozedUntil(pt.snoozedUntil),
           savedAgentSessionIds: Array.isArray(pt.savedAgentSessionIds)
             ? agentDefs.map((_, index) => {
                 const id = pt.savedAgentSessionIds?.[index];
@@ -1220,6 +1250,8 @@ export async function loadState(): Promise<void> {
           verification: pt.verification,
           verificationRun: restoredVerificationRun(pt.verificationRun),
           evidence: restoredEvidence(pt.evidence),
+          brief: restoreTaskBriefRecord(pt.brief),
+          confidence: restoreTaskConfidence(pt.confidence),
           landingState: pt.landingState,
           landingReason: pt.landingReason,
           landingSummary: pt.landingSummary,

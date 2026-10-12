@@ -2,7 +2,7 @@ import { expectDefined } from '../store/test-helpers';
 import { For, Show, createEffect, createSignal, onCleanup, type ComponentProps } from 'solid-js';
 import { render } from 'solid-js/web';
 import { createStore } from 'solid-js/store';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { TaskPanel } from './TaskPanel';
 import { IPC } from '../../electron/ipc/channels';
 import type { CommitInfo } from '../ipc/types';
@@ -28,11 +28,13 @@ import type { UnderstandingTourDialog } from './UnderstandingTourDialog';
 // Understanding tours stream through Channel, so the panel's ipc mock provides one.
 const fileInventory = vi.hoisted(() => ({
   report: (_count: number) => {},
+  isActive: (): boolean => false,
   mounts: 0,
   disposals: 0,
 }));
 
 const parentNavigation = vi.hoisted(() => ({ setCollapsed: (_value: boolean) => {} }));
+const viewport = vi.hoisted(() => ({ set: (_taskId: string, _visibility: string) => {} }));
 
 const channels = vi.hoisted(
   () =>
@@ -52,12 +54,14 @@ vi.mock('../store/store', () => {
     focusedPanel: { task: 'prompt' },
     showPromptInput: true,
     taskGitStatus: {},
-    taskViewportVisibility: {},
+    taskViewportVisibility: {} as Record<string, string>,
     askCodeProvider: 'minimax',
     agentEnvFiles: {},
   });
   parentNavigation.setCollapsed = (value: boolean) =>
     setStore('tasks', 'parent', 'collapsed', value);
+  viewport.set = (taskId: string, visibility: string) =>
+    setStore('taskViewportVisibility', taskId, visibility);
   return {
     store,
     getProject: () => undefined,
@@ -209,10 +213,15 @@ vi.mock('./TaskChangedFilesSection', () => ({
   TaskChangedFilesSection: (props: {
     onFileCountChange?: (count: number) => void;
     commitList: CommitInfo[];
+    isActive: boolean;
   }) => {
     fileInventory.mounts++;
     createEffect(() => {
       fileInventory.report = props.onFileCountChange ?? (() => {});
+    });
+    createEffect(() => {
+      const active = props.isActive;
+      fileInventory.isActive = () => active;
     });
     onCleanup(() => fileInventory.disposals++);
     return (
@@ -230,8 +239,6 @@ vi.mock('./TaskCanvasDocument', () => ({
   TaskCanvasDocument: () => <textarea class="test-canvas" />,
 }));
 vi.mock('./ConfirmDialog', () => ({ ConfirmDialog: () => null }));
-vi.mock('./TaskStepsSection', () => ({ TaskStepsSection: () => null }));
-vi.mock('./TaskCurrentStateLine', () => ({ TaskCurrentStateLine: () => null }));
 vi.mock('./TaskClosingOverlay', () => ({ TaskClosingOverlay: () => null }));
 vi.mock('./SubTaskStrip', () => ({ SubTaskStrip: () => null }));
 vi.mock('./TaskReasoningGraphHost', () => ({
@@ -239,6 +246,15 @@ vi.mock('./TaskReasoningGraphHost', () => ({
 }));
 
 let dispose: (() => void) | undefined;
+// The graph canvases and document tabs are lazy-loaded; transform them before the tests poll for them.
+beforeAll(async () => {
+  await Promise.all([
+    import('./TaskMindMap'),
+    import('./TaskReasoningGraphHost'),
+    import('./TaskCanvasDocument'),
+  ]);
+});
+
 afterEach(() => {
   dispose?.();
   toggleFocusMode(false);
@@ -310,7 +326,7 @@ it.each([undefined, 'landed_pending_review'] as const)(
 
 it.each(['reasoning', 'mindmap'] as const)(
   'gives the %s canvas the larger share in focus mode and keeps every pane',
-  (kind) => {
+  async (kind) => {
     const [task, setTask] = createStore<Task>({
       id: 'task',
       name: 'Task',
@@ -348,7 +364,9 @@ it.each(['reasoning', 'mindmap'] as const)(
     expect(terminal).not.toBeNull();
     prompt.value = 'Draft';
     const notes = expectDefined(container.querySelector<HTMLTextAreaElement>('.test-notes'));
-    const canvas = expectDefined(container.querySelector<HTMLTextAreaElement>('.test-canvas'));
+    const canvas = await vi.waitFor(() =>
+      expectDefined(container.querySelector<HTMLTextAreaElement>('.test-canvas')),
+    );
     notes.value = 'Unsaved notes';
     canvas.value = 'Unsaved Markdown';
     expectDefined(
@@ -360,8 +378,10 @@ it.each(['reasoning', 'mindmap'] as const)(
       ),
     ).click();
     const graphSelector = kind === 'reasoning' ? '.test-graph' : '.mindmap-editor';
-    const graph = expectDefined(
-      container.querySelector<HTMLTextAreaElement>(`.task-canvas-reasoning ${graphSelector}`),
+    const graph = await vi.waitFor(() =>
+      expectDefined(
+        container.querySelector<HTMLTextAreaElement>(`.task-canvas-reasoning ${graphSelector}`),
+      ),
     );
     graph.value = 'Held graph state';
     const canvasCell = expectDefined(graph.closest<HTMLElement>('.rp-cell'));
@@ -567,6 +587,30 @@ function mountEmptyTask() {
   return { container, setTask };
 }
 
+it('sizes the focus support column to content until a shell opens, preserving its panels', () => {
+  const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200);
+  try {
+    toggleFocusMode(true);
+    const { container, setTask } = mountEmptyTask();
+    fileInventory.report(1);
+    const notes = expectDefined(container.querySelector('.test-notes'));
+    const terminal = container.querySelector('.test-terminal');
+    const notesCell = expectDefined(notes.closest<HTMLElement>('.rp-cell'));
+    const column = expectDefined(notesCell.parentElement);
+
+    expect(column.style.height).toBe('auto');
+    expect(notesCell.style.minHeight).toBe('100px');
+    setTask('shellAgentIds', ['shell']);
+    expect(column.style.height).toBe('100%');
+    expect(container.querySelector('.test-notes')).toBe(notes);
+    expect(container.querySelector('.test-terminal')).toBe(terminal);
+    setTask('shellAgentIds', []);
+    expect(column.style.height).toBe('auto');
+  } finally {
+    width.mockRestore();
+  }
+});
+
 it('preserves commit rows on unchanged polls and updates changed messages, order and length', async () => {
   vi.useFakeTimers();
   let commits: CommitInfo[] = [
@@ -598,6 +642,71 @@ it('preserves commit rows on unchanged polls and updates changed messages, order
   commits = [{ hash: 'c', message: 'New hash' }];
   await vi.advanceTimersByTimeAsync(5000);
   expect(rows()[0].dataset.commitHash).toBe('c');
+});
+
+it('starts git checks only once a task stays active and stops them at once', async () => {
+  vi.useFakeTimers();
+  toggleFocusMode(true);
+  const commitFetches = () =>
+    vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === IPC.GetBranchCommits).length;
+  const task: Task = {
+    id: 'task',
+    name: 'Task',
+    projectId: 'project',
+    agentIds: [],
+    shellAgentIds: [],
+    notes: '',
+    gitIsolation: 'worktree',
+    branchName: 'task-branch',
+    worktreePath: '/tmp/task',
+    lastPrompt: '',
+  };
+  const [active, setActive] = createSignal(false);
+  const container = document.createElement('div');
+  document.body.append(container);
+  dispose = render(() => <TaskPanel task={task} isActive={active()} />, container);
+
+  // Passed over by a held Alt+Arrow: no git work starts.
+  setActive(true);
+  await vi.advanceTimersByTimeAsync(30);
+  setActive(false);
+  await vi.advanceTimersByTimeAsync(100);
+  expect(commitFetches()).toBe(0);
+  expect(fileInventory.isActive()).toBe(false);
+
+  setActive(true);
+  await vi.advanceTimersByTimeAsync(60);
+  expect(commitFetches()).toBe(1);
+  expect(fileInventory.isActive()).toBe(true);
+
+  setActive(false);
+  expect(fileInventory.isActive()).toBe(false);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(commitFetches()).toBe(1);
+});
+
+it('starts commit polling only once a tile stays scrolled into view', async () => {
+  vi.useFakeTimers();
+  viewport.set('task', 'offscreen-right');
+  const commitFetches = () =>
+    vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === IPC.GetBranchCommits).length;
+  mountEmptyTask();
+
+  // Scrolled past by a held Alt+Arrow: no git work starts.
+  viewport.set('task', 'visible');
+  await vi.advanceTimersByTimeAsync(30);
+  viewport.set('task', 'offscreen-left');
+  await vi.advanceTimersByTimeAsync(100);
+  expect(commitFetches()).toBe(0);
+
+  viewport.set('task', 'visible');
+  await vi.advanceTimersByTimeAsync(60);
+  expect(commitFetches()).toBe(1);
+  viewport.set('task', 'offscreen-left');
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(commitFetches()).toBe(1);
+  // Other tests expect the shared mock store's tile to poll.
+  viewport.set('task', 'visible');
 });
 
 it('collapses empty support panels without disposing file watching or terminal state', () => {
@@ -642,7 +751,7 @@ it.each(['notes', 'changed-files'])(
   },
 );
 
-it('keeps plans, steps and shells visible even with no notes or files', () => {
+it('keeps plans and shells visible even with no notes or files', () => {
   const { container, setTask } = mountEmptyTask();
   const isCollapsed = () =>
     container.querySelector('.task-support-toggle')?.getAttribute('aria-expanded') === 'false';
@@ -652,9 +761,6 @@ it('keeps plans, steps and shells visible even with no notes or files', () => {
   expect(container.querySelector('.test-notes')).not.toBeNull();
   setTask('planContent', undefined);
   expect(isCollapsed()).toBe(true);
-  setTask('stepsEnabled', true);
-  expect(isCollapsed()).toBe(false);
-  setTask('stepsEnabled', false);
   setTask('shellAgentIds', ['shell']);
   expect(isCollapsed()).toBe(false);
   setTask('shellAgentIds', []);

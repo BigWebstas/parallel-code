@@ -3,6 +3,7 @@ import type { MapData } from '../graph/model';
 import type { NodeAction } from '../graph/NodeContextMenu';
 import { canvasTaskPrompt, type CanvasTaskSource } from '../lib/canvas-task-links';
 import { store, setStore } from '../store/core';
+import { isHiddenAgentTaskId } from '../documents/task-id';
 import {
   canvasTaskLink,
   canvasTaskPending,
@@ -11,7 +12,7 @@ import {
 } from '../store/canvas-tasks';
 import { toggleNewTaskPanel, setActiveTask } from '../store/navigation';
 import { uncollapseTask } from '../store/tasks';
-import { getTaskAttentionState } from '../store/taskStatus';
+import { getReadyLabel, getTaskAttentionState } from '../store/taskStatus';
 import { getTaskFocusedPanel, setTaskFocusedPanel } from '../store/focused-panel';
 import { showNotification } from '../store/notification';
 
@@ -21,7 +22,6 @@ const attentionLabels = {
   needs_input: 'Needs input',
   error: 'Error',
   review: 'Review',
-  ready: 'Ready to merge',
   idle: 'Idle',
 };
 
@@ -43,6 +43,7 @@ export function createCanvasTaskControls(context: Accessor<Omit<CanvasTaskSource
     if (task.closingStatus) return 'Closing';
     if (task.collapsed) return 'Collapsed';
     const attention = getTaskAttentionState(task.id);
+    if (attention === 'ready') return getReadyLabel(task.id);
     if (attention !== 'idle') return attentionLabels[attention];
     if (task.agentIds.length && task.agentIds.every((id) => store.agents[id]?.status === 'exited'))
       return 'Stopped';
@@ -69,7 +70,10 @@ export function createCanvasTaskControls(context: Accessor<Omit<CanvasTaskSource
     const disabled = !owner || !!owner.closingStatus || canvasTaskPending(ref);
     const candidates = Object.values(store.tasks).filter(
       (task) =>
-        task.id !== ref.taskId && task.projectId === owner?.projectId && !task.closingStatus,
+        task.id !== ref.taskId &&
+        task.projectId === owner?.projectId &&
+        !task.closingStatus &&
+        !isHiddenAgentTaskId(task.id),
     );
     return [
       {

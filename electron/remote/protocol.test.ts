@@ -60,3 +60,53 @@ describe('chat message validation', () => {
     expect(parseClientMessage(JSON.stringify({ ...action, ...invalid }))).toBeNull();
   });
 });
+
+describe('parseClientMessage view-size', () => {
+  it('accepts a size and a bare release', () => {
+    expect(
+      parseClientMessage(JSON.stringify({ type: 'view-size', agentId: 'a', cols: 60, rows: 50 })),
+    ).toEqual({ type: 'view-size', agentId: 'a', cols: 60, rows: 50 });
+    expect(parseClientMessage(JSON.stringify({ type: 'view-size', agentId: 'a' }))).toEqual({
+      type: 'view-size',
+      agentId: 'a',
+    });
+  });
+
+  it('rejects partial or out-of-range sizes', () => {
+    for (const size of [
+      { cols: 60 },
+      { cols: 0, rows: 50 },
+      { cols: 60, rows: 501 },
+      { cols: 1.5, rows: 2 },
+    ]) {
+      expect(
+        parseClientMessage(JSON.stringify({ type: 'view-size', agentId: 'a', ...size })),
+      ).toBeNull();
+    }
+  });
+});
+
+describe('parseClientMessage scroll', () => {
+  it('accepts wheel lines over a cell', () => {
+    expect(
+      parseClientMessage(
+        JSON.stringify({ type: 'scroll', agentId: 'a', lines: -3, col: 10, row: 5 }),
+      ),
+    ).toEqual({ type: 'scroll', agentId: 'a', lines: -3, col: 10, row: 5 });
+  });
+
+  it('rejects empty, fractional, oversized, or off-screen scrolls', () => {
+    for (const scroll of [
+      { lines: 0, col: 1, row: 1 },
+      { lines: 1.5, col: 1, row: 1 },
+      { lines: -101, col: 1, row: 1 },
+      { lines: '1', col: 1, row: 1 },
+      { lines: 1, col: 0, row: 1 },
+      { lines: 1, col: 1 },
+    ]) {
+      expect(
+        parseClientMessage(JSON.stringify({ type: 'scroll', agentId: 'a', ...scroll })),
+      ).toBeNull();
+    }
+  });
+});
