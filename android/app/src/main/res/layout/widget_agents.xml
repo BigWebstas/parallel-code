@@ -73,12 +73,19 @@
         android:background="#33919191" />
 
     <TextView
-        android:id="@+id/widget_usage"
+        android:id="@+id/widget_usage_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:fontFamily="monospace"
-        android:lineSpacingExtra="2dp"
+        android:text="Left:"
         android:textColor="#FFB5B5B5"
         android:textSize="12sp" />
+
+    <!-- Filled with one widget_usage_section per computer. -->
+    <LinearLayout
+        android:id="@+id/widget_usage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
 </LinearLayout>

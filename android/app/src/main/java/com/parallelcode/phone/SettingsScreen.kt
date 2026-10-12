@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -38,6 +39,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -127,8 +129,8 @@ fun SettingsScreen(
                         navigationIconContentColor = MaterialTheme.colorScheme.primary,
                     ),
                     navigationIcon = {
-                        TextButton(onClick = onBack) {
-                            Text("← Back", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
                     title = {
@@ -786,26 +788,7 @@ fun SettingsScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Parallel Code", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                            Text("v3.1.0", color = AppTheme.extra.textMuted, fontFamily = FontFamily.Monospace)
-                        }
-                        Text(
-                            "Mobile companion for monitoring and interacting with parallel AI agents.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = AppTheme.extra.textMuted,
-                        )
-                    }
+                    Box(Modifier.fillMaxWidth().padding(16.dp)) { UpdateSettings() }
                 }
             }
         }
@@ -959,7 +942,7 @@ private fun SectionHeader(title: String) {
 }
 
 @Composable
-private fun SettingSwitchRow(
+internal fun SettingSwitchRow(
     title: String,
     description: String,
     checked: Boolean,
@@ -1058,7 +1041,7 @@ private fun HomeWifiEditor(ssid: String?, onChange: (String?) -> Unit, currentSs
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            "On this Wi-Fi network, connect without waiting for the VPN. Android needs location access to read the network's name.",
+            "On this Wi-Fi network, connect without waiting for the VPN. Android needs location access to read the network's name; allow it all the time so agent notifications connect here too.",
             style = MaterialTheme.typography.bodySmall,
             color = AppTheme.extra.textMuted,
         )
@@ -1093,7 +1076,7 @@ private fun QuickRepliesEditor(replies: List<String>, onChange: (List<String>) -
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            "Shown above the reply box; tap one to add it to your message. One per line.",
+            "Shown above the reply box in built-in chats and behind the star button in terminals. One per line.",
             style = MaterialTheme.typography.bodyMedium,
             color = AppTheme.extra.textMuted,
         )

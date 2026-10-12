@@ -2,10 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { expectDefined, type MockStoreHarness } from './test-helpers';
 
 type MockStore = {
+  taskProjectFilter?: string | null;
   activeTaskId: string | null;
+  githubIssuesProjectId: string | null;
   activeDocumentProjectId: string | null;
   activeAgentId: string | null;
-  tasks: Record<string, { id: string; agentIds: string[]; selectedAgentId?: string }>;
+  tasks: Record<
+    string,
+    { id: string; agentIds: string[]; selectedAgentId?: string; projectId?: string }
+  >;
   terminals: Record<string, unknown>;
   taskOrder: string[];
   collapsedTaskOrder: string[];
@@ -37,6 +42,7 @@ vi.mock('./tasks', () => ({ reorderTask: vi.fn() }));
 vi.mock('./focused-panel', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./focused-panel')>()),
   scheduleTaskFocus: vi.fn(),
+  setTaskFocusedPanel: vi.fn(),
 }));
 
 import { activateTaskFromPointer, jumpToTask, moveActiveTask, setActiveTask } from './navigation';
@@ -47,6 +53,7 @@ beforeEach(() => {
   const harness = expectDefined(core.harness, 'mock store harness');
   mockStore = harness.reset({
     activeTaskId: null,
+    githubIssuesProjectId: null,
     activeDocumentProjectId: null,
     activeAgentId: null,
     tasks: {
@@ -71,6 +78,23 @@ afterEach(() => {
 });
 
 describe('moveActiveTask', () => {
+  it.each([
+    ['right', 'task-1', 0, 2],
+    ['left', 'task-3', 2, 0],
+  ] as const)(
+    'moves %s past tasks hidden by the project filter',
+    (direction, activeId, from, to) => {
+      mockStore.projects = [{ id: 'a' }, { id: 'b' }];
+      mockStore.taskProjectFilter = 'a';
+      mockStore.tasks['task-1'].projectId = 'a';
+      mockStore.tasks['task-2'].projectId = 'b';
+      mockStore.tasks['task-3'].projectId = 'a';
+      mockStore.activeTaskId = activeId;
+      moveActiveTask(direction);
+      expect(reorderTask).toHaveBeenCalledWith(from, to);
+    },
+  );
+
   it('does not reorder the previous task while the new-task panel is focused', () => {
     mockStore.activeTaskId = 'task-2';
     mockStore.newTaskPanelFocused = true;
@@ -227,5 +251,33 @@ describe('activateTaskFromPointer', () => {
   it('keeps keyboard jumps on the sidebar, as they were', () => {
     jumpToTask(1);
     expect(mockStore.sidebarFocused).toBe(true);
+  });
+});
+
+describe('issue page navigation', () => {
+  it('returns to the workspace even when selecting the already active task', () => {
+    mockStore.activeTaskId = 'task-1';
+    mockStore.githubIssuesProjectId = 'project';
+    setActiveTask('task-1');
+    expect(mockStore.githubIssuesProjectId).toBeNull();
+    expect(mockStore.activeTaskId).toBe('task-1');
+  });
+
+  it('keeps the issue page open when its own agent panel selects an agent', () => {
+    mockStore.activeTaskId = 'task-1';
+    mockStore.githubIssuesProjectId = 'project';
+    mockStore.tasks['gh-agent-project'] = {
+      id: 'gh-agent-project',
+      agentIds: ['gh-agent-project'],
+    };
+    setActiveTask('gh-agent-project');
+    expect(mockStore.githubIssuesProjectId).toBe('project');
+    expect(mockStore.activeTaskId).toBe('task-1');
+  });
+
+  it('keeps the issue page open for an invalid task target', () => {
+    mockStore.githubIssuesProjectId = 'project';
+    setActiveTask('missing');
+    expect(mockStore.githubIssuesProjectId).toBe('project');
   });
 });

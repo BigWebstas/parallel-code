@@ -77,7 +77,9 @@ class NetworkMonitor(context: Context) {
         if (!registered) return
         try {
             cm?.unregisterNetworkCallback(networkCallback)
-        } catch (_: Exception) {}
+        } catch (_: IllegalArgumentException) {
+            // Android already dropped the callback (e.g. after a restricted-context failure); nothing to undo.
+        }
         registered = false
     }
 
@@ -123,7 +125,9 @@ class NetworkMonitor(context: Context) {
         val callback = wifiCallback ?: return
         try {
             cm?.unregisterNetworkCallback(callback)
-        } catch (_: Exception) {}
+        } catch (_: IllegalArgumentException) {
+            // Android already dropped the callback (e.g. after a restricted-context failure); nothing to undo.
+        }
         wifiCallback = null
     }
 

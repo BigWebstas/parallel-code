@@ -152,7 +152,7 @@ body.font-smoothing {
 .task-title-actions {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 8px;
   padding: 1px 2px;
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--bg-input) 65%, transparent);
@@ -163,13 +163,36 @@ body.font-smoothing {
 .task-action-group {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
 }
 
-.task-action-group + .task-action-group {
-  margin-left: 5px;
-  padding-left: 5px;
-  border-left: 1px solid var(--border);
+/* Labelled because it is the task's main action, but kept neutral: the header
+   already carries status and badges, and colour there is reserved for urgency. */
+.task-finish-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.task-finish-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.task-finish-btn[data-state='pushed'] {
+  color: var(--success);
 }
 
 .task-title-details {
@@ -198,8 +221,28 @@ body.font-smoothing {
   white-space: nowrap;
 }
 
+/* The lane centres glyphs for sidebar columns; here the glyph's left edge has
+   to meet the title's, and the fixed lane width still keeps the label steady. */
+.task-title-status > .status-glyph {
+  justify-content: flex-start;
+}
+
 .task-status-explanation {
   display: none;
+}
+
+/* Reads as the status text it extends; the underline on hover shows it opens Finish. */
+.task-check-signal {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  white-space: pre;
+  cursor: pointer;
+}
+
+.task-check-signal:hover {
+  text-decoration: underline;
 }
 
 .task-title-bar .task-title-actions .icon-btn {
@@ -215,6 +258,23 @@ body.font-smoothing {
 
 .task-title-bar .task-title-actions .icon-btn:not(:hover) {
   border-color: transparent !important;
+}
+
+/* Quiet the icon controls in columns you are not working in; pressed toggles
+   stay full strength because they show state. */
+.task-title-bar .task-title-actions .icon-btn {
+  transition: opacity 0.12s ease;
+}
+
+.task-title-bar:not([data-active='true']):not(:hover):not(:focus-within)
+  .task-title-actions
+  .icon-btn:not([aria-pressed='true']) {
+  opacity: 0.45;
+}
+
+.task-title-bar .task-title-actions .icon-btn[aria-pressed='true'] {
+  background: var(--bg-selected-subtle) !important;
+  color: var(--accent) !important;
 }
 
 .task-title-bar[data-active='true'] {
@@ -378,6 +438,31 @@ body.font-smoothing {
   flex: 0 0 auto;
 }
 
+/* Neutral like Finish: merging is routine, so only hover adds emphasis. */
+.task-pr-merge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin-right: 8px;
+  padding: 0 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.task-pr-merge:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
 .task-pr-label,
 .task-pr-review-status {
   display: inline-flex;
@@ -389,6 +474,12 @@ body.font-smoothing {
   display: none;
   align-items: center;
   flex: 0 0 auto;
+}
+
+/* The merged badge keeps its icon at every width, leading like GitHub's. */
+.task-pr-review-icon--merged {
+  display: inline-flex;
+  order: -1;
 }
 
 .task-branch-project-label,
@@ -574,6 +665,135 @@ body:has(
   outline-offset: -2px;
 }
 
+/* Parallel Code website palette: parallelcode.app. */
+html[data-look='parallel-code'] {
+  color-scheme: dark;
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Sora', var(--font-ui);
+  --bg: #080c10;
+  --bg-elevated: #10161c;
+  --bg-input: #0c1218;
+  --bg-hover: #151e26;
+  --bg-selected: #18343e;
+  --bg-selected-subtle: #11232c;
+  --border: #29343d;
+  --border-subtle: #1e272f;
+  --border-focus: #67d9ed;
+  --fg: #f0f4f7;
+  --fg-muted: #9aa9b6;
+  --fg-subtle: #8193a2;
+  --accent: #67d9ed;
+  --accent-hover: #91e5f3;
+  --accent-text: #080c10;
+  --link: #67d9ed;
+  --success: #98c9ae;
+  --error: #f08f8a;
+  --warning: #dfba83;
+  --review: #c1b0e8;
+  --info: #8fbddd;
+  --diff-add-bg: rgba(152, 201, 174, 0.12);
+  --diff-remove-bg: rgba(240, 143, 138, 0.12);
+  --search-match: #dfba83;
+  --search-match-active: #efa66f;
+  --island-bg: #10161c;
+  --island-border: #29343d;
+  --island-radius: 12px;
+  --task-container-bg: #0c1218;
+  --task-panel-bg: #10161c;
+  --shadow-soft: 0 4px 16px rgba(0, 0, 0, 0.16);
+  --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.3);
+}
+
+.app-shell[data-look='parallel-code']::before {
+  background: radial-gradient(ellipse at 50% 0%, #16485b33, transparent 60%);
+}
+
+/* Compact UI text, geometric headings, and relaxed prose form three clear levels. */
+html[data-look='parallel-code']
+  :is(.icon-btn, .btn-primary, .btn-secondary, .btn-danger, .input-field, .project-select) {
+  font-family: var(--font-ui);
+}
+
+html[data-look='parallel-code'] :is(.editable-text, .settings-theme-title) {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+html[data-look='parallel-code'] .task-item-name {
+  letter-spacing: -0.015em;
+}
+
+html[data-look='parallel-code'] .task-item :is(.task-agent-status, .task-brief-line) {
+  font-family: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  opacity: 1;
+}
+
+html[data-look='parallel-code'] :is(.prompt-textarea, .task-notes-body textarea) {
+  font-family: var(--font-ui) !important;
+  line-height: 1.6;
+}
+
+html[data-look='parallel-code'] :is(.prompt-textarea, .task-notes-body textarea)::placeholder {
+  color: var(--fg-subtle);
+  opacity: 1;
+}
+
+html[data-look='parallel-code'] :is(.info-bar, .changed-files-list-panel) {
+  font-family: var(--font-ui) !important;
+}
+
+html[data-look='parallel-code'] :is(.info-bar, .changed-files-list-panel, .sidebar-footer) {
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-look='parallel-code'] .settings-theme-desc {
+  line-height: 1.6;
+}
+
+/* Let task names and the focused workspace lead, with quieter utility controls. */
+html[data-look='parallel-code'] .icon-btn:not(.sidebar-create-btn):not(:hover):not(:focus-visible) {
+  border-color: transparent !important;
+}
+
+html[data-look='parallel-code'] .task-title-actions {
+  background: transparent;
+}
+
+html[data-look='parallel-code'] .task-branch-info-bar {
+  border-color: var(--border-subtle);
+}
+
+html[data-look='parallel-code'] .task-column.active {
+  box-shadow: none;
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border)) !important;
+}
+
+html[data-look='parallel-code'] .task-notes-body textarea {
+  padding: 12px 14px !important;
+}
+
+html[data-look='parallel-code'] :is(.prompt-textarea, .input-field, .project-select):focus {
+  border-color: var(--border-focus) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent) !important;
+}
+
+html[data-look='parallel-code'] .settings-theme-card.active {
+  background: var(--bg-selected-subtle);
+  box-shadow: none;
+}
+
+/* Color changes are enough feedback for compact controls; avoid lifting or glowing. */
+html[data-look='parallel-code'] :is(.btn-primary, .btn-danger):hover:not(:disabled) {
+  box-shadow: none;
+}
+
+html[data-look='parallel-code'] :is(.btn-primary, .btn-danger):active:not(:disabled),
+html[data-look='parallel-code'] .prompt-send-btn:hover:not(:disabled) {
+  transform: none;
+}
+
 /* Noir: a quiet frame, softly rounded workspaces, and a single focus accent.
    Keep geometry stable when controls appear so parallel tasks never shift. */
 html[data-look='noir'] {
@@ -628,31 +848,12 @@ html[data-look='noir'] .sidebar-panel {
   gap: 20px !important;
 }
 
-html[data-look='noir'] .icon-btn:not(:hover):not(:focus-visible) {
+html[data-look='noir'] .icon-btn:not(.sidebar-create-btn):not(:hover):not(:focus-visible) {
   border-color: transparent !important;
 }
 
 html[data-look='noir'] .sidebar-create-btn {
   padding: 9px 12px !important;
-  background: var(--accent) !important;
-  color: var(--accent-text) !important;
-  border-color: transparent !important;
-  font-weight: 600 !important;
-}
-
-html[data-look='noir'] .sidebar-create-btn:hover {
-  background: var(--accent-hover) !important;
-}
-
-html[data-look='noir'] .app-shell:has(.task-column.active) .sidebar-create-btn {
-  background: var(--bg-input) !important;
-  color: var(--fg) !important;
-  border-color: var(--border) !important;
-  font-weight: 500 !important;
-}
-
-html[data-look='noir'] .app-shell:has(.task-column.active) .sidebar-create-btn:hover {
-  background: var(--bg-hover) !important;
 }
 
 html[data-look='noir'] .task-item {
@@ -686,10 +887,6 @@ html[data-look='noir'] .island-header-active {
 
 html[data-look='noir'] .task-title-actions {
   background: transparent;
-}
-
-html[data-look='noir'] .task-action-group + .task-action-group {
-  border-left-color: var(--border-subtle);
 }
 
 html[data-look='noir'] .task-branch-info-bar {
@@ -739,13 +936,7 @@ html[data-look='noir'] .task-notes-body textarea::placeholder {
   color: var(--fg-muted);
 }
 
-html[data-look='noir'] .task-git-status-badge:not([data-result='pending']) {
-  color: var(--accent-text) !important;
-}
-
 html[data-look='noir'] .prompt-send-btn:not(:disabled) {
-  background: var(--accent) !important;
-  color: var(--accent-text) !important;
   border-radius: var(--radius-sm) !important;
 }
 
@@ -862,21 +1053,13 @@ html[data-look^='obsidian'] .sidebar-panel {
 }
 
 /* Quiet utility controls let the primary action and task names lead. */
-html[data-look^='obsidian'] .icon-btn:not(:hover) {
+html[data-look^='obsidian'] .icon-btn:not(.sidebar-create-btn):not(:hover) {
   border-color: transparent !important;
 }
 
 html[data-look^='obsidian'] .sidebar-create-btn {
   padding: 9px 12px !important;
-  background: var(--accent) !important;
-  color: var(--accent-text) !important;
-  border-color: transparent !important;
-  font-weight: 600 !important;
   box-shadow: none;
-}
-
-html[data-look^='obsidian'] .sidebar-create-btn:hover {
-  background: var(--accent-hover) !important;
 }
 
 html[data-look^='obsidian'] .task-item[aria-current='true'] {
@@ -1423,14 +1606,6 @@ html[data-look^='islands-'] .prompt-input-panel[data-panel-focused='true']::afte
   z-index: 10;
 }
 
-/* Soften the send button so it doesn't punch through the muted theme —
-   matches the notes panel's send-notes button (soft accent tint). */
-html[data-look^='islands-'] .prompt-send-btn:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-input)) !important;
-  color: var(--fg) !important;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)) !important;
-}
-
 html[data-look^='islands-'] .prompt-send-btn:disabled {
   background: transparent !important;
   color: var(--fg-subtle) !important;
@@ -1691,12 +1866,7 @@ html[data-look='workbench'] .prompt-input-panel[data-panel-focused='true']::afte
   z-index: 10;
 }
 
-/* Soft-tinted send button so the cobalt accent doesn't punch through the
-   muted palette (same logic as islands-dark). */
 html[data-look='workbench'] .prompt-send-btn:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-input)) !important;
-  color: var(--fg) !important;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border)) !important;
   border-radius: 0 !important;
 }
 
@@ -2092,6 +2262,37 @@ textarea::placeholder {
   --task-row-indent: 36px;
 }
 
+/* The brief card is routine, so it is filled only when hovered or open. */
+.task-brief-bar {
+  background: transparent;
+}
+.task-brief-bar:hover,
+.task-brief-bar[aria-expanded='true'] {
+  background: var(--bg-elevated);
+}
+
+/* File chips repeat what the changed-files list shows and crowd the text, so
+   they float over the row's right edge on hover or keyboard focus. Taken out of
+   flow so revealing them never reflows the card; transparent rather than
+   display:none so they stay focusable. */
+.brief-item {
+  position: relative;
+}
+.brief-item .brief-item-file {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  background: var(--bg-elevated) !important; /* beats the chip's inline transparent */
+  opacity: 0;
+  pointer-events: none;
+}
+.brief-item:is(:hover, :focus-within) .brief-item-file {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* Task names wrap to two lines rather than being cut mid-word — at sidebar
    widths, similar names are otherwise indistinguishable. */
 .task-item-name {
@@ -2112,7 +2313,7 @@ textarea::placeholder {
    Hovering a row is the signal that its detail is wanted. A mono face sets them
    apart from the name as machine-reported state rather than a second title. */
 .task-item .task-agent-status,
-.task-item .task-current-state-sidebar {
+.task-item .task-brief-line {
   margin-top: 4px;
   padding-left: var(--task-row-indent);
   font-family: var(--font-mono);
@@ -2121,7 +2322,7 @@ textarea::placeholder {
 }
 
 /* The two status lines belong together — only the pair is offset from the title. */
-.task-item .task-agent-status + .task-current-state-sidebar {
+.task-item .task-agent-status + .task-brief-line {
   margin-top: 1px;
 }
 
@@ -2133,7 +2334,7 @@ textarea::placeholder {
     [data-attention='error'],
     [data-attention='review']
   )
-  :is(.task-agent-status, .task-current-state-sidebar) {
+  :is(.task-agent-status, .task-brief-line) {
   opacity: 1;
 }
 
@@ -2184,13 +2385,13 @@ textarea::placeholder {
   backdrop-filter: blur(6px);
 }
 
-.icon-btn:hover {
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg-hover)) !important;
+.icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover) !important;
   color: var(--fg) !important;
-  border-color: color-mix(in srgb, var(--accent) 52%, var(--border)) !important;
+  border-color: var(--border) !important;
 }
 
-.icon-btn:active {
+.icon-btn:active:not(:disabled) {
   transform: translateY(1px);
 }
 
@@ -2278,6 +2479,17 @@ textarea::placeholder {
 .projects-clip {
   min-height: 0;
   overflow: hidden;
+}
+
+/* Hosts the tiling strip beside the sidebar. Must stay in this eager stylesheet:
+   without min-width: 0 the strip grows to its full content width and <main>
+   scrolls instead of the strip. */
+.task-workspace {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
 }
 
 .tiling-layout-shell {
@@ -2400,37 +2612,60 @@ html:is(
   border-right-color: color-mix(in srgb, var(--warning) 82%, white 18%);
 }
 
+/* Leading-icon buttons: centres the glyph against the label whatever the button's width. */
+.btn-with-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .btn-primary {
   position: relative;
   overflow: hidden;
 }
 
-.btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover-bg, var(--accent-hover)) !important;
-  box-shadow: var(--shadow-pop);
+/* Routine actions share a quiet boundary across presets and inline-styled dialogs. */
+.sidebar-create-btn,
+.prompt-send-btn:not(:disabled) {
+  background: transparent !important;
+  border: 1px solid var(--border-subtle) !important;
+  color: var(--fg-muted) !important;
+}
+
+/* Same neutral surface as the secondary buttons beside it; full-strength text
+   is what ranks the primary action above them without an accent fill. */
+.btn-primary {
+  background: var(--bg-input) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--fg) !important;
+}
+
+.btn-primary:hover:not(:disabled),
+.btn-secondary:hover:not(:disabled),
+.sidebar-create-btn:hover:not(:disabled),
+.prompt-send-btn:hover:not(:disabled) {
+  background: var(--bg-hover) !important;
+  border-color: var(--border) !important;
+  color: var(--fg) !important;
 }
 
 .btn-primary:active:not(:disabled) {
   transform: scale(0.98);
 }
 
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
   filter: brightness(1.12);
   box-shadow: 0 0 18px color-mix(in srgb, var(--error) 35%, transparent);
 }
 
-.btn-danger:active {
+.btn-danger:active:not(:disabled) {
   transform: scale(0.98);
 }
 
 .github-item-option:hover,
 .github-item-option:focus-visible {
   background: var(--bg-hover) !important;
-}
-
-.btn-secondary:hover {
-  background: color-mix(in srgb, var(--accent) 8%, var(--bg-hover)) !important;
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border)) !important;
 }
 
 .review-plan-btn:hover {
@@ -3020,6 +3255,28 @@ html:is(
   animation: spinnerSpin 0.9s linear infinite;
 }
 
+/* CI progress: a wedge that fills from 12 o'clock as checks finish, inside a
+   slowly turning dashed ring. Only the ring turns so the wedge stays readable,
+   and the filled wedge keeps it apart from the agent's ring spinner. */
+.status-glyph-ci {
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  border-radius: 999px;
+  /* The padding gap keeps the wedge from merging into the ring as it fills. */
+  padding: 2px;
+  background: conic-gradient(currentColor var(--ci-sweep), transparent 0) content-box;
+}
+
+.status-glyph-ci::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 1px dashed currentColor;
+  animation: spinnerSpin 2.4s linear infinite;
+}
+
 .status-glyph-question {
   display: inline-block;
   box-sizing: border-box;
@@ -3074,6 +3331,11 @@ html:is(
 .resize-handle:hover,
 .resize-handle.dragging {
   background: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.resize-handle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
 }
 
 .resize-handle-h {
@@ -4068,8 +4330,7 @@ html[data-look='islands-light'] .window-title-icon {
   font-variant-numeric: tabular-nums;
 }
 
-.sidebar-footer-stat,
-.sidebar-footer-lines {
+.sidebar-footer-stat {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -4084,19 +4345,6 @@ html[data-look='islands-light'] .window-title-icon {
   font-size: 18px;
   font-weight: 600;
   line-height: 1.2;
-}
-
-.sidebar-footer-lines {
-  color: var(--fg-subtle);
-  font-size: 10px;
-}
-
-.sidebar-footer-line-totals {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  min-width: 0;
-  max-width: 100%;
 }
 
 .sidebar-footer-connection {
@@ -4519,6 +4767,39 @@ html[data-look='islands-light'] .window-title-icon {
   line-height: 1.4;
 }
 
+/* Evidence on demand: a quiet disclosure, not a second body. */
+.understanding-source {
+  margin-top: 14px;
+}
+
+.understanding-source > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--fg-muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+
+.understanding-source > summary:hover {
+  color: var(--fg);
+}
+
+.understanding-source > blockquote {
+  margin: 8px 0 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.understanding-omitted {
+  margin: 22px 0 0;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* The card's tone appears once, as the rule beside the consequence. */
 .understanding-why {
   margin-top: 22px;
@@ -4840,7 +5121,8 @@ html[data-look='islands-light'] .window-title-icon {
   }
 
   /* The hollow ring alone still says "working"; only the rotation goes. */
-  .status-glyph-spinner {
+  .status-glyph-spinner,
+  .status-glyph-ci::before {
     animation: none;
   }
 

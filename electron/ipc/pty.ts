@@ -20,6 +20,8 @@ import {
 import { loadEnvFile } from './env-file.js';
 import {
   createTerminalQueryResponder,
+  MIRROR_SCROLLBACK_LINES,
+  REMOTE_SCROLLBACK_LINES,
   type TerminalQueryResponder,
 } from './terminal-query-responder.js';
 import {
@@ -645,7 +647,9 @@ function attachPtyOutputHandlers(
 
     tailChunks.push(chunk);
     tailSize += chunk.length;
-    if (tailSize > TAIL_CAP) {
+    // Trim only at twice the cap: compacting on every chunk past the cap would
+    // copy the whole tail per chunk. Exit slices it back to TAIL_CAP.
+    if (tailSize > 2 * TAIL_CAP) {
       const combined = Buffer.concat(tailChunks);
       const trimmed = combined.subarray(combined.length - TAIL_CAP);
       tailChunks = [trimmed];
@@ -685,7 +689,7 @@ function attachPtyOutputHandlers(
 
     flush();
 
-    const tailBuf = Buffer.concat(tailChunks);
+    const tailBuf = Buffer.concat(tailChunks).subarray(-TAIL_CAP);
     const tailStr = tailBuf.toString('utf8');
     if (path.basename(command) === 'codex' && exitCode === 0 && !signal) {
       const id = codexResumeId(tailStr);
@@ -867,6 +871,7 @@ export async function spawnAgent(
       cols: args.cols,
       rows: args.rows,
       reply: (data) => proc.write(data),
+      scrollback: mirrorScrollback,
     }),
     containerName: spawnSpec.containerName,
   };
@@ -892,6 +897,20 @@ export function writeToAgent(agentId: string, data: string): void {
     return;
   }
   writeSessionInput(session, data);
+}
+
+/**
+ * Turn the mouse wheel over the agent's screen, as the desktop pane does. A
+ * full-screen TUI keeps its transcript out of the terminal's history, so this
+ * is the only way a phone can scroll it. Does nothing unless the TUI reads the wheel.
+ */
+export function scrollAgent(agentId: string, lines: number, col: number, row: number): void {
+  const session = sessions.get(agentId);
+  // Inside a peer prompt's paste, a report would be typed into the composer.
+  if (!session || session.peerInputQueue || handingOff.has(agentId)) return;
+  const report = session.queries.wheelReport(lines, col, row);
+  // Not through writeSessionInput: a scroll is not a draft that holds back peer prompts.
+  if (report) session.proc.write(report);
 }
 
 function writeSessionInput(session: PtySession, data: string): void {
@@ -1017,6 +1036,20 @@ export async function writeAgentPrompt(
   }
 }
 
+// shortcut: the long history is kept for every PTY while Remote Access is on —
+// per-agent growth if desktops with many long-running agents need the memory.
+let mirrorScrollback = MIRROR_SCROLLBACK_LINES;
+
+/**
+ * Keep the full history in each PTY's mirror while phones can connect, so a
+ * phone opening a terminal sees what the desktop shows; desktop-only use keeps
+ * the short mirror.
+ */
+export function setRemoteHistory(enabled: boolean): void {
+  mirrorScrollback = enabled ? REMOTE_SCROLLBACK_LINES : MIRROR_SCROLLBACK_LINES;
+  for (const session of sessions.values()) session.queries.setScrollback(mirrorScrollback);
+}
+
 function applySize(session: PtySession, cols: number, rows: number): void {
   if (session.proc.cols === cols && session.proc.rows === rows) return;
   session.proc.resize(cols, rows);
@@ -1133,8 +1166,8 @@ export function subscribeToAgent(agentId: string, cb: (encoded: string) => void)
 }
 
 /**
- * Subscribe starting from a rendered snapshot: the screen and up to 10k lines
- * of history from the main-process mirror, as ANSI text, instead of the raw
+ * Subscribe starting from a rendered snapshot: the screen and the history the
+ * main-process mirror keeps (10k lines while Remote Access is on, see setRemoteHistory), as ANSI text, instead of the raw
  * byte replay, which redraw-heavy TUIs fill with repaints of one screen.
  * Output already in the snapshot is not sent again; later output reaches `cb`
  * after `onSnapshot`. The snapshot is null when the mirror is gone (the process
@@ -1180,6 +1213,24 @@ export function getAgentScrollback(agentId: string): string | null {
 /** Return all active agent IDs. */
 export function getActiveAgentIds(): string[] {
   return Array.from(sessions.keys());
+}
+
+/**
+ * The local root process of every live PTY. In Docker mode this is the
+ * `docker run` client; the container's own load is not visible from here.
+ */
+export function getPtyProcessRoots(): {
+  agentId: string;
+  taskId: string;
+  isShell: boolean;
+  pid: number;
+}[] {
+  return Array.from(sessions.values(), (s) => ({
+    agentId: s.agentId,
+    taskId: s.taskId,
+    isShell: s.isShell,
+    pid: s.proc.pid,
+  }));
 }
 
 /** Return metadata for a specific agent, or null if not found. */

@@ -26,7 +26,8 @@ class BackupException(message: String, cause: Throwable? = null) : Exception(mes
 /**
  * Backs up the phone's saved data (computers and their tokens, settings, prompt history): a zip of
  * one JSON file per preferences file. With a password, the zip is encrypted with AES-256-GCM under
- * a PBKDF2 key, behind a header that marks the file as encrypted.
+ * a PBKDF2 key, behind a header that marks the file as encrypted. Without one, paired tokens are
+ * left out: they let whoever holds the file type to the agents.
  */
 object Backup {
     private const val FORMAT = 1
@@ -44,6 +45,7 @@ object Backup {
     const val WRONG_PASSWORD = "Wrong password, or the backup is damaged."
 
     fun create(stores: Map<String, SharedPreferences>, password: String?): ByteArray {
+        val plain = password.isNullOrEmpty()
         val zip = ByteArrayOutputStream()
         ZipOutputStream(zip).use { out ->
             fun entry(name: String, json: String) {
@@ -52,7 +54,10 @@ object Backup {
                 out.closeEntry()
             }
             entry(MANIFEST, JSONObject().put("format", FORMAT).toString(2))
-            stores.forEach { (name, prefs) -> entry("$name.json", encode(prefs.all).toString(2)) }
+            stores.forEach { (name, prefs) ->
+                val values = if (plain && name == CredentialStore.PREFS_NAME) CredentialStore.withoutPairedTokens(prefs.all) else prefs.all
+                entry("$name.json", encode(values).toString(2))
+            }
         }
         return if (password.isNullOrEmpty()) zip.toByteArray() else encrypt(zip.toByteArray(), password)
     }

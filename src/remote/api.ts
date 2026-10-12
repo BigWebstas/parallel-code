@@ -7,9 +7,12 @@ import type { UsageProvider, UsageState } from '../../electron/ipc/shared-types'
 
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** Parsed JSON error body, kept for routes that answer with more than a message. */
+  body: unknown;
+  constructor(message: string, status: number, body?: unknown) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -27,13 +30,15 @@ async function request<T>(
   });
   if (!res.ok) {
     let msg = `Request failed (${res.status})`;
+    let body: unknown;
     try {
-      const j = (await res.json()) as { error?: string };
-      if (j?.error) msg = j.error;
+      body = await res.json();
+      const error = (body as { error?: unknown } | null)?.error;
+      if (typeof error === 'string' && error) msg = error;
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, body);
   }
   return res.json() as Promise<T>;
 }
@@ -134,6 +139,8 @@ export interface MergeReadiness {
   canMerge: boolean;
   baseBranch: string;
   branchName: string;
+  /** Whether closing also deletes the branch; absent from older desktops. */
+  deleteBranchOnClose?: boolean;
 }
 
 /** Fetch read-only merge readiness. Works with the base connection token. */
@@ -177,9 +184,18 @@ export async function closeTask(taskId: string, force = false): Promise<{ warnin
     });
     return { warnings: [] };
   } catch (err) {
-    if (err instanceof ApiError && err.status === 409) return { warnings: [err.message] };
+    if (err instanceof ApiError && err.status === 409) return { warnings: closeWarnings(err) };
     throw err;
   }
+}
+
+/** The desktop's own list of what closing would lose; the message alone names none of it. */
+function closeWarnings(err: ApiError): string[] {
+  const warnings = (err.body as { warnings?: unknown } | null | undefined)?.warnings;
+  const listed = Array.isArray(warnings)
+    ? warnings.filter((w): w is string => typeof w === 'string' && w.length > 0)
+    : [];
+  return listed.length > 0 ? listed : [err.message];
 }
 
 /** Save the notes for a task. Requires a paired token (it is a write). */
@@ -217,4 +233,26 @@ export function removePushSubscription(endpoint: string): Promise<{ ok: true }> 
   const token = getPairedToken();
   if (!token) throw new ApiError('Authorize this phone first', 401);
   return request('/api/mobile/push', { token, method: 'DELETE', body: { endpoint } });
+}
+
+/** The desktop's Fix CI prompt for the task's PR; null when no check failed. Paired only. */
+export async function fetchFixCiPrompt(taskId: string): Promise<string | null> {
+  const token = getPairedToken();
+  if (!token) throw new ApiError('Not paired', 401);
+  const r = await request<{ prompt: string | null }>(
+    `/api/mobile/tasks/${encodeURIComponent(taskId)}/fix-ci`,
+    { token },
+  );
+  return r.prompt;
+}
+
+/** Send the reviewed Fix CI prompt to the task's agent. Paired only. */
+export async function sendFixCiPrompt(taskId: string, prompt: string): Promise<void> {
+  const token = getPairedToken();
+  if (!token) throw new ApiError('Not paired', 401);
+  await request<{ ok: boolean }>(`/api/mobile/tasks/${encodeURIComponent(taskId)}/fix-ci`, {
+    method: 'POST',
+    body: { prompt },
+    token,
+  });
 }

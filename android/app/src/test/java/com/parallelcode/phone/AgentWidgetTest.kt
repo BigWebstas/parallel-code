@@ -10,12 +10,34 @@ class AgentWidgetTest {
         projectName = null, agentName = null, attention = attention, isChat = false, collapsed = collapsed,
     )
 
+    private fun computer(agents: List<RemoteAgent> = emptyList(), usage: List<ProviderUsage> = emptyList(), label: String = "Desk") =
+        ComputerSnapshot(label, agents, usage)
+
+    private fun widgetSummary(
+        agents: List<RemoteAgent>,
+        usage: List<ProviderUsage>,
+        connected: Boolean,
+        others: List<List<RemoteAgent>> = emptyList(),
+    ) = widgetSummary(computer(agents, usage), connected, others.map { computer(it, label = "Other") })
+
     @Test
     fun countsAgentsThatNeedYouAndWorking() {
         val agents = listOf(agent("a", "needs_input"), agent("b", "active"), agent("c", "error", collapsed = true))
         assertEquals("1 need you · 1 working", widgetSummary(agents, emptyList(), connected = true).headline)
         assertEquals("1 needs you", widgetSummary(agents.take(1), emptyList(), connected = true).headline)
         assertEquals("Not connected", widgetSummary(agents, emptyList(), connected = false).headline)
+    }
+
+    @Test
+    fun countsIdleAgentsToo() {
+        val agents = listOf(
+            agent("a", "needs_input"), agent("b", "active"), agent("c", "idle"), agent("d", "review"),
+            agent("e", "idle", collapsed = true),
+        )
+        assertEquals("1 need you · 1 working · 2 idle", widgetSummary(agents, emptyList(), connected = true).headline)
+        assertEquals("1 need you · 2 idle", widgetSummary(agents - agents[1], emptyList(), connected = true).headline)
+        assertEquals("2 idle", widgetSummary(agents.drop(2), emptyList(), connected = true).headline)
+        assertEquals("No agents running", widgetSummary(agents.takeLast(1), emptyList(), connected = true).headline)
     }
 
     @Test
@@ -32,7 +54,7 @@ class AgentWidgetTest {
             widgetSummary(emptyList(), emptyList(), connected = false, others = listOf(other, emptyList())).headline,
         )
         assertEquals(
-            "All quiet · 2 computers",
+            "1 idle · 2 computers",
             widgetSummary(listOf(agent("e", "idle")), emptyList(), connected = true, others = listOf(emptyList())).headline,
         )
     }
@@ -60,7 +82,49 @@ class AgentWidgetTest {
             ProviderUsage("Claude", UsageWindow(22.0, null), UsageWindow(87.0, null), "ok", null),
             ProviderUsage("Codex", null, null, "ok", null),
         )
-        assertEquals("Left:\nClaude      5h 78%  7d 13%", widgetSummary(emptyList(), usage, connected = true).usage)
+        assertEquals(
+            listOf(UsageSection(null, listOf("Claude      5h 78%  7d 13%"))),
+            widgetSummary(emptyList(), usage, connected = true).usage,
+        )
+    }
+
+    @Test
+    fun groupsUsageUnderEachComputersLabel() {
+        val claude = listOf(ProviderUsage("Claude", UsageWindow(22.0, null), UsageWindow(87.0, null), "ok", null))
+        val codex = listOf(ProviderUsage("Codex", UsageWindow(50.0, null), null, "ok", null))
+        val summary = widgetSummary(
+            computer(usage = claude, label = "Desk"),
+            connected = true,
+            others = listOf(computer(usage = codex, label = "Laptop"), computer(label = "Server")),
+        )
+        assertEquals(
+            listOf(
+                UsageSection("Desk", listOf("Claude      5h 78%  7d 13%")),
+                UsageSection("Laptop", listOf("Codex       5h 50%")),
+            ),
+            summary.usage,
+        )
+        // The last snapshot of the computer in use still shows while it is disconnected.
+        assertEquals(
+            listOf(UsageSection("Desk", listOf("Claude      5h 78%  7d 13%"))),
+            widgetSummary(computer(usage = claude), connected = false, others = listOf(computer(label = "Laptop"))).usage,
+        )
+    }
+
+    @Test
+    fun listsCreditsForProvidersBilledPerUse() {
+        val usage = listOf(ProviderUsage("Claude", null, null, "ok", null, CreditUsage(12.34, 50.0, "USD", 24.68)))
+        val line = widgetSummary(emptyList(), usage, connected = true).usage.single().lines.last()
+        assertTrue(line, line.matches(Regex("Claude {6}credits .*12\\.34 / .*50\\.00")))
+    }
+
+    @Test
+    fun storesUsageSectionsForTheWidget() {
+        val sections = listOf(UsageSection("Desk", listOf("a", "b")), UsageSection(null, listOf("c")))
+        assertEquals(sections, decodeUsage(encodeUsage(sections)))
+        // What an earlier build stored, or nothing, draws no meters rather than failing.
+        assertEquals(emptyList<UsageSection>(), decodeUsage("Left:\nClaude      5h 78%"))
+        assertEquals(emptyList<UsageSection>(), decodeUsage(null))
     }
 
     @Test

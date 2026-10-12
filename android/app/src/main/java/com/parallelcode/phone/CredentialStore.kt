@@ -85,18 +85,8 @@ class CredentialStore(private val prefs: SharedPreferences) {
     }
 
     private fun write(list: List<SavedComputer>, active: String?) {
-        val array = JSONArray()
-        list.forEach {
-            array.put(
-                JSONObject()
-                    .put("baseUrl", it.baseUrl)
-                    .put("token", it.token)
-                    .put("pairedToken", it.pairedToken ?: JSONObject.NULL)
-                    .put("alias", it.alias ?: JSONObject.NULL),
-            )
-        }
         prefs.edit {
-            putString(KEY_COMPUTERS, array.toString())
+            putString(KEY_COMPUTERS, serializeComputers(list))
             if (active == null) remove(KEY_ACTIVE) else putString(KEY_ACTIVE, active)
         }
     }
@@ -122,6 +112,30 @@ class CredentialStore(private val prefs: SharedPreferences) {
         private const val LEGACY_BASE_URL = "baseUrl"
         private const val LEGACY_TOKEN = "token"
         private const val LEGACY_PAIRED_TOKEN = "pairedToken"
+
+        private fun serializeComputers(list: List<SavedComputer>): String {
+            val array = JSONArray()
+            list.forEach {
+                array.put(
+                    JSONObject()
+                        .put("baseUrl", it.baseUrl)
+                        .put("token", it.token)
+                        .put("pairedToken", it.pairedToken ?: JSONObject.NULL)
+                        .put("alias", it.alias ?: JSONObject.NULL),
+                )
+            }
+            return array.toString()
+        }
+
+        /**
+         * [values], a whole copy of this store's preferences, with every paired token dropped: what an
+         * unencrypted backup may hold. The view-only tokens stay, so a restore only needs the PINs again.
+         */
+        fun withoutPairedTokens(values: Map<String, *>): Map<String, *> {
+            val json = values[KEY_COMPUTERS] as? String ?: return values
+            val computers = runCatching { parseComputers(json) }.getOrNull() ?: return values - KEY_COMPUTERS
+            return values + (KEY_COMPUTERS to serializeComputers(computers.map { it.copy(pairedToken = null) }))
+        }
 
         private fun parseComputers(json: String): List<SavedComputer> {
             val array = JSONArray(json)

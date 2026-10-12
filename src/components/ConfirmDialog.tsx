@@ -7,6 +7,8 @@ interface ConfirmDialogProps {
   title: string;
   message: string | JSX.Element;
   confirmLabel?: string;
+  /** Shown before the confirm label; the loading spinner takes its place. */
+  confirmIcon?: JSX.Element;
   cancelLabel?: string;
   confirmLoading?: boolean;
   danger?: boolean;
@@ -132,10 +134,10 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           onClick={() => props.onConfirm()}
           style={{
             padding: '9px 20px',
-            background: props.danger ? theme.error : theme.accent,
-            border: 'none',
+            background: props.danger ? theme.error : undefined,
+            border: props.danger ? 'none' : undefined,
             'border-radius': 'var(--radius-md)',
-            color: props.danger ? '#fff' : theme.accentText,
+            color: props.danger ? '#fff' : undefined,
             cursor: props.confirmDisabled ? 'not-allowed' : 'pointer',
             'font-size': '14px',
             'font-weight': '500',
@@ -145,7 +147,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
             gap: '8px',
           }}
         >
-          <Show when={props.confirmLoading}>
+          <Show when={props.confirmLoading} fallback={props.confirmIcon}>
             <span class="inline-spinner" aria-hidden="true" />
           </Show>
           {props.confirmLabel ?? 'Confirm'}

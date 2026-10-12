@@ -75,7 +75,6 @@ export {
   setNewTaskDropUrl,
   setNewTaskPrefillPrompt,
   setPlanContent,
-  setStepsContent,
   toggleAITerminalLayout,
   setTaskLastInputAt,
   markTaskUserActivity,
@@ -156,6 +155,10 @@ export {
   setAutoTrustFolders,
   setShowPlans,
   setShowPromptInput,
+  setModelTaskNames,
+  setTaskNameModel,
+  setTaskBriefs,
+  setConfidencePrompt,
   setShowSidebarTips,
   setShowSidebarProgress,
   setSidebarNeedsInputFirst,
@@ -175,7 +178,6 @@ export {
   setMinimaxApiKey,
   setWindowState,
   setPreferUiMode,
-  setDefaultStepsEnabled,
   setDefaultSkipPermissions,
   setCanvasOwnershipBadges,
   setDefaultPropagateSkipPermissions,
@@ -236,7 +238,7 @@ export {
   getTaskChecks,
   isEvidenceBusy,
 } from './evidence-state';
-export { getMergedTasksTodayCount, getMergedLineTotals } from './completion';
+export { getMergedTasksTodayCount } from './completion';
 export {
   createTerminal,
   closeTerminal,
