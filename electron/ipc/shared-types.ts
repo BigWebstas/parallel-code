@@ -137,7 +137,10 @@ export interface FileDiffResult {
 
 export interface CommitInfo {
   hash: string;
+  /** Subject line. */
   message: string;
+  /** Message after the subject; only filled when requested with `withBody`. */
+  body?: string;
 }
 
 export type PrCheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel';
@@ -323,18 +326,6 @@ export type EslintQualityResult =
   | { status: 'available'; findings: EslintQualityFinding[] }
   | { status: 'not-applicable' }
   | { status: 'unavailable'; message: string };
-
-export interface StepEntry {
-  summary: string;
-  detail?: string;
-  next?: string;
-  status: 'starting' | 'investigating' | 'implementing' | 'testing' | 'awaiting_review' | 'done';
-  files_touched?: string[];
-  /** Optional sub-agent identifier — short label (e.g. "auth-worker") so the UI can
-   *  group entries written on behalf of delegated work. Omit for the top-level agent. */
-  agent_id?: string;
-  timestamp: string;
-}
 
 /** Agents whose subscription rate limits the app can read. */
 export type UsageProvider = 'claude' | 'codex';

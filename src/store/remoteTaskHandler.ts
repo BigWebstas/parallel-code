@@ -5,6 +5,7 @@
 // main-side bridge.
 
 import { publishAgentTour } from './agent-tour';
+import { publishTaskConfidence } from './task-brief';
 import { publishGitHubList } from './github-lists';
 import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } from './canvas';
 import { getEvidenceForAgent, submitEvidence } from './evidence';
@@ -16,21 +17,34 @@ import {
   createTask,
   getCoordinatorCloseWarning,
   mergeTask,
+  sendPrompt,
   updateTaskNotes,
 } from './tasks';
 import { getVerifyCommand } from './verification';
 import { getPrChecks } from './pr-checks-state';
+import { loadFailedChecksPrompt } from './github';
 import { getEvidenceConfidence } from './evidence-state';
 import { buildMergeReadiness, type MergeReadinessCheck } from '../components/merge-readiness';
+import { taskPrUrl } from '../components/pr-actions';
+import { parseGitHubUrl } from '../lib/github-url';
 import { invoke } from '../lib/ipc';
 import { errMessage } from '../lib/log';
 import { getTaskDiffBaseBranch, loadTaskDiff } from '../lib/load-task-diff';
 import { IPC } from '../../electron/ipc/channels';
 import { parseEvidenceSubmission } from '../../electron/shared/evidence';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
+import {
+  ASK_CODE_CLAUDE_MODELS,
+  type CodexModelChoice,
+} from '../../electron/shared/ask-code-models';
+import { reviewerWithModel } from '../lib/agent-handoff';
 import type { AgentDef, GitIgnoredEntry, MergeStatus, WorktreeStatus } from '../ipc/types';
 import type { Task } from './types';
-import type { RemoteCloseResult, RemoteTaskDiff } from '../../electron/remote/protocol';
+import type {
+  RemoteAgentChoice,
+  RemoteCloseResult,
+  RemoteTaskDiff,
+} from '../../electron/remote/protocol';
 
 interface RendererRequest {
   reqId: string;
@@ -40,6 +54,8 @@ interface CreateTaskRequest extends RendererRequest {
   projectId: string;
   name: string;
   prompt: string;
+  agentId?: string;
+  model?: string;
 }
 
 interface GetNotesRequest extends RendererRequest {
@@ -59,6 +75,11 @@ interface GetTaskDiffRequest extends RendererRequest {
   taskId: string;
 }
 
+interface SendFixCiPromptRequest extends RendererRequest {
+  taskId: string;
+  prompt: string;
+}
+
 function reply(reqId: string, ok: boolean, data?: unknown, error?: string): void {
   // Fire-and-forget: main resolves/rejects the pending HTTP response by reqId.
   invoke(IPC.Remote_RendererReply, { reqId, ok, data, error }).catch(() => {});
@@ -71,11 +92,65 @@ function handleGetProjects(req: RendererRequest): void {
     codeProjects().map((p) => ({
       id: p.id,
       name: p.name,
-      agentName:
-        (store.availableAgents.find((a) => a.id === store.lastAgentId) ?? store.availableAgents[0])
-          ?.name ?? '',
+      agentName: defaultAgent()?.name ?? '',
     })),
   );
+}
+
+/** The agent the desktop New Task dialog preselects: the last one used, else the first. */
+function defaultAgent(): AgentDef | undefined {
+  return store.availableAgents.find((a) => a.id === store.lastAgentId) ?? store.availableAgents[0];
+}
+
+/**
+ * Models a phone may pick for an agent: the Claude aliases and the Codex CLI's
+ * cached list, the same choices the desktop model menus offer. Other agents
+ * only run with the model their own arguments configure.
+ */
+async function agentModelChoices(agent: AgentDef): Promise<RemoteAgentChoice['models']> {
+  const command = agent.command.split('/').pop();
+  if (command === 'claude')
+    return ASK_CODE_CLAUDE_MODELS.map((model) => ({ id: model, label: model }));
+  if (command !== 'codex') return [];
+  try {
+    const list = await invoke<CodexModelChoice[]>(IPC.ListCodexModels);
+    return Array.isArray(list) ? list.map((m) => ({ id: m.slug, label: m.displayName })) : [];
+  } catch {
+    // The CLI may not have written its cache yet; the agent still runs with its default.
+    return [];
+  }
+}
+
+async function handleGetAgents(req: RendererRequest): Promise<void> {
+  try {
+    const fallback = defaultAgent();
+    const agents: RemoteAgentChoice[] = await Promise.all(
+      store.availableAgents
+        .filter((agent) => agent.available !== false)
+        .map(async (agent) => ({
+          id: agent.id,
+          name: agent.name,
+          isDefault: agent.id === fallback?.id,
+          models: await agentModelChoices(agent),
+        })),
+    );
+    reply(req.reqId, true, agents);
+  } catch (err) {
+    reply(req.reqId, false, undefined, errMessage(err));
+  }
+}
+
+/** The agent a phone asked for, with its model override applied. Throws on a stale choice. */
+async function resolveMobileAgent(req: CreateTaskRequest): Promise<AgentDef> {
+  const agentDef = req.agentId
+    ? store.availableAgents.find((a) => a.id === req.agentId && a.available !== false)
+    : defaultAgent();
+  if (!agentDef) throw new Error(req.agentId ? 'Agent not available' : 'No agent configured');
+  if (!req.model) return agentDef;
+  const models = await agentModelChoices(agentDef);
+  if (!models.some((m) => m.id === req.model))
+    throw new Error('Model not available for this agent');
+  return reviewerWithModel(agentDef, req.model);
 }
 
 /**
@@ -99,11 +174,8 @@ async function handleCreateTask(req: CreateTaskRequest): Promise<void> {
     const project = store.projects.find((p) => p.id === req.projectId);
     if (!project) throw new Error('Project not found');
 
-    // Default agent: the last one used, else the first available (mirrors the
-    // New Task dialog's initial selection).
-    const agentDef =
-      store.availableAgents.find((a) => a.id === store.lastAgentId) ?? store.availableAgents[0];
-    if (!agentDef) throw new Error('No agent configured');
+    // Without a choice from the phone, the agent the New Task dialog preselects.
+    const agentDef = await resolveMobileAgent(req);
 
     // Non-git projects can't use worktree isolation; fall back to working
     // directly in the project folder.
@@ -355,6 +427,35 @@ async function handleMergeTask(req: MergeTaskRequest): Promise<void> {
   }
 }
 
+/** The desktop's Fix CI prompt for a phone to review; null when nothing failed. */
+async function handleGetFixCiPrompt(req: GetTaskDiffRequest): Promise<void> {
+  try {
+    if (!isKnownTask(store.tasks, req.taskId)) throw new Error('Task not found');
+    const url = taskPrUrl(store.tasks[req.taskId]);
+    const number = url ? Number(parseGitHubUrl(url)?.number) : 0;
+    reply(req.reqId, true, {
+      prompt: url && number ? await loadFailedChecksPrompt({ number, url }) : null,
+    });
+  } catch (err) {
+    reply(req.reqId, false, undefined, errMessage(err));
+  }
+}
+
+/** Sends the Fix CI prompt the phone showed, to the agent its task card follows. */
+async function handleSendFixCiPrompt(req: SendFixCiPromptRequest): Promise<void> {
+  try {
+    if (!isKnownTask(store.tasks, req.taskId)) throw new Error('Task not found');
+    const task = store.tasks[req.taskId];
+    const agentId =
+      task.agentIds.find((id) => store.agents[id]?.status === 'running') ?? task.agentIds[0];
+    if (!agentId) throw new Error('Task has no agent');
+    await sendPrompt(req.taskId, agentId, req.prompt);
+    reply(req.reqId, true, { ok: true });
+  } catch (err) {
+    reply(req.reqId, false, undefined, errMessage(err));
+  }
+}
+
 /** Subscribe to mobile task-creation requests. Returns an unsubscribe fn. */
 export function startRemoteTaskHandlers(): () => void {
   const offReadReasoning = window.electron.ipcRenderer.on(
@@ -385,6 +486,9 @@ export function startRemoteTaskHandlers(): () => void {
       if (data && typeof data === 'object') handleGetProjects(data as RendererRequest);
     },
   );
+  const offAgents = window.electron.ipcRenderer.on(IPC.Remote_GetAgentsRequest, (data: unknown) => {
+    if (data && typeof data === 'object') void handleGetAgents(data as RendererRequest);
+  });
   const offCreate = window.electron.ipcRenderer.on(
     IPC.Remote_CreateTaskRequest,
     (data: unknown) => {
@@ -411,6 +515,19 @@ export function startRemoteTaskHandlers(): () => void {
     (data: unknown) => {
       if (data && typeof data === 'object')
         void handleGetMergeReadiness(data as GetTaskDiffRequest);
+    },
+  );
+  const offFixCiPrompt = window.electron.ipcRenderer.on(
+    IPC.Remote_GetFixCiPromptRequest,
+    (data: unknown) => {
+      if (data && typeof data === 'object') void handleGetFixCiPrompt(data as GetTaskDiffRequest);
+    },
+  );
+  const offSendFixCi = window.electron.ipcRenderer.on(
+    IPC.Remote_SendFixCiPromptRequest,
+    (data: unknown) => {
+      if (data && typeof data === 'object')
+        void handleSendFixCiPrompt(data as SendFixCiPromptRequest);
     },
   );
   const offMerge = window.electron.ipcRenderer.on(IPC.Remote_MergeTaskRequest, (data: unknown) => {
@@ -465,6 +582,19 @@ export function startRemoteTaskHandlers(): () => void {
       }
     },
   );
+  const offPublishConfidence = window.electron.ipcRenderer.on(
+    IPC.MCP_PublishConfidenceRequest,
+    (data: unknown) => {
+      if (!data || typeof data !== 'object') return;
+      const req = data as GetNotesRequest & { payload: unknown };
+      try {
+        publishTaskConfidence(req.taskId, req.payload);
+        reply(req.reqId, true, { ok: true });
+      } catch (error) {
+        reply(req.reqId, false, undefined, errMessage(error));
+      }
+    },
+  );
   const offPublishGitHubList = window.electron.ipcRenderer.on(
     IPC.MCP_PublishGitHubListRequest,
     (data: unknown) => {
@@ -511,14 +641,18 @@ export function startRemoteTaskHandlers(): () => void {
     offUpdateMap();
     offOpenCanvas();
     offPublishTour();
+    offPublishConfidence();
     offPublishGitHubList();
     offProjects();
     offCreate();
+    offAgents();
     offGetNotes();
     offSetNotes();
     offClose();
     offDiff();
     offReadiness();
+    offFixCiPrompt();
+    offSendFixCi();
     offMerge();
   };
 }

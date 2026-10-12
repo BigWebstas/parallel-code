@@ -48,8 +48,7 @@ import { TaskChangedFilesSection } from './TaskChangedFilesSection';
 import { isCommitHashSelection, type CommitSelection } from './CommitNavBar';
 import { TaskShellSection } from './TaskShellSection';
 import { TaskCanvasPanel } from './TaskCanvasPanel';
-import { TaskStepsSection } from './TaskStepsSection';
-import { TaskCurrentStateLine } from './TaskCurrentStateLine';
+import { TaskBriefBar } from './TaskBrief';
 import { TaskAITerminal } from './TaskAITerminal';
 import { isAgentChat } from '../store/agent-chat';
 import { TaskClosingOverlay } from './TaskClosingOverlay';
@@ -72,6 +71,7 @@ import { createEslintQualityFindingProvider } from '../lib/eslint-quality-findin
 import { createChangeTour } from '../lib/create-change-tour';
 import {
   createUnderstandingTour,
+  documentTourKind,
   planTourSubject,
   tourInputSubject,
   type UnderstandingTourInput,
@@ -94,7 +94,6 @@ interface TaskPanelProps {
 // Panels that auto-grow to their content share one ceiling so a long body
 // can't take over the column: never taller than the panel's own px cap, and
 // never taller than 33vh. User drag pins intentionally bypass this.
-const STEPS_PANEL_AUTO_MAX = 'min(240px, 33vh)';
 const CHANGED_FILES_PANEL_AUTO_MAX = 'min(300px, 33vh)';
 const NOTES_PANEL_AUTO_MAX = 'min(400px, 33vh)';
 // Last agent-tour revision shown per task. Collapsing and expanding a task
@@ -126,8 +125,8 @@ export function TaskPanel(props: TaskPanelProps) {
   createEffect(() => {
     const n = props.task.stagedNotification;
     const hasActiveCountdown = Boolean(autoSendChildUpdates() && n && !n.userEdited);
-    if (!props.task.stepsEnabled && !hasActiveCountdown) return;
-    const id = window.setInterval(() => setNowMs(Date.now()), hasActiveCountdown ? 1_000 : 30_000);
+    if (!hasActiveCountdown) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1_000);
     onCleanup(() => clearInterval(id));
   });
   const stagedCountdown = () => {
@@ -292,8 +291,17 @@ export function TaskPanel(props: TaskPanelProps) {
       worktreePath: props.task.worktreePath,
       filePath,
     });
-  /** A document open on the canvas is read fresh, so an edited file gets a new tour. */
+  /**
+   * A document open on the canvas is read fresh, so an edited file gets a new
+   * tour. The task's own plan takes the plan tour with the same text the notes
+   * button sends, so switching between the two never regenerates it.
+   */
   const openDocumentTour = (path: string) => {
+    const kind = documentTourKind(props.task, path);
+    if (kind === 'plan' && props.task.planContent) {
+      openPlanTour();
+      return;
+    }
     const { worktreePath, name: taskName } = props.task;
     void invoke<DocumentSnapshot>(IPC.ReadDocument, {
       projectRoot: worktreePath,
@@ -301,24 +309,17 @@ export function TaskPanel(props: TaskPanelProps) {
     })
       .then((snapshot) => {
         if (snapshot.missing) throw new Error('the file is not in the worktree');
-        startOrOpenTour({
-          kind: 'plan',
-          taskName,
-          worktreePath,
-          planContent: snapshot.content,
-          subject: path,
-        });
+        const content = snapshot.content;
+        startOrOpenTour(
+          kind === 'plan'
+            ? { kind, taskName, worktreePath, planContent: content, subject: path }
+            : { kind, taskName, worktreePath, content, subject: path },
+        );
       })
       .catch((error: unknown) => showNotification(`Could not read ${path}: ${errMessage(error)}`));
   };
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(null);
   const [editingChecks, setEditingChecks] = createSignal(false);
-  // Jump-to-step state is a single signal so ↗ can be hidden entirely before
-  // TerminalView is ready (otherwise firstIndex would default to 0, showing ↗
-  // on every step while `jump` is still undefined and every click no-ops).
-  const [stepNav, setStepNav] = createSignal<
-    { jump: (stepIndex: number) => boolean; firstIndex: number } | undefined
-  >();
   // Per-agent scrollback markers; jumping also brings the terminal into focus.
   const [transcriptMarks, setTranscriptMarks] = createSignal<ReadonlyMap<string, TranscriptMarks>>(
     new Map(),
@@ -357,13 +358,12 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const [emptySupportExpanded, setEmptySupportExpanded] = createSignal(false);
   // Hide only genuinely empty support panels. Plans, tours, commit navigation,
-  // steps and shells are useful content even when the file/notes counts are zero.
+  // and shells are useful content even when the file/notes counts are zero.
   const canCollapseSupport = createMemo(
     () =>
       topStripEmpty() &&
       !(store.showPlans && props.task.planContent) &&
       !props.task.agentTour &&
-      !props.task.stepsEnabled &&
       props.task.shellAgentIds.length === 0 &&
       commitList().length === 0 &&
       selectedCommit() === null &&
@@ -481,9 +481,8 @@ export function TaskPanel(props: TaskPanelProps) {
       case 'close':
         setShowCloseConfirm(true);
         break;
-      case 'merge':
-      case 'push':
-        openFinish(action.type);
+      case 'finish':
+        openFinish('merge');
         break;
     }
   });
@@ -578,10 +577,19 @@ export function TaskPanel(props: TaskPanelProps) {
         selectedAgentId={selectedAgentId()}
         onSelectAgent={setActiveAgent}
         promptHandle={promptHandle}
-        onStepJumpReady={(fn, fromIdx) => {
-          setStepNav(fn ? { jump: fn, firstIndex: fromIdx } : undefined);
-        }}
         onTranscriptMarksReady={handleTranscriptMarks}
+        // Shown with briefs off too, so Rate confidence stays reachable; a task
+        // without agents has no one to ask, unless a rating is already there.
+        brief={
+          <Show when={props.task.agentIds.length > 0 || props.task.confidence}>
+            <TaskBriefBar
+              task={props.task}
+              onFileClick={(file) => setDiffScrollTarget(file)}
+              onWalkThrough={openOrGenerateTour}
+              walkThroughDisabled={changedFileCount() === 0}
+            />
+          </Show>
+        }
       />
     </div>
   );
@@ -672,23 +680,6 @@ export function TaskPanel(props: TaskPanelProps) {
       understanding={understanding}
     />
   );
-  const stepsSectionEl = (
-    <TaskStepsSection
-      task={props.task}
-      isActive={props.isActive}
-      onFileClick={(file) => setDiffScrollTarget(file)}
-      firstJumpableIndex={stepNav()?.firstIndex}
-      onJumpToStep={
-        stepNav()
-          ? (idx) => {
-              const ok = stepNav()?.jump(idx) ?? false;
-              if (ok) setTaskFocusedPanel(props.task.id, 'ai-terminal');
-              return ok;
-            }
-          : undefined
-      }
-    />
-  );
   // Prompt wrapper carries its own intrinsic height so the flex-first panel
   // tree sizes it to 72 px by default and lets a user-drag pin override.
   const promptInputEl = (
@@ -723,14 +714,6 @@ export function TaskPanel(props: TaskPanelProps) {
   // PanelChild wrappers. Flex-first layout means each child declares only
   // what it needs (id, minSize for drag floor); the tree picks one child per
   // ResizablePanel to be the flex absorber via `absorberIds`.
-
-  const stepsSectionChild: PanelChild = {
-    id: 'steps-section',
-    resizeLabel: 'Resize steps panel',
-    minSize: 28,
-    maxAutoSize: STEPS_PANEL_AUTO_MAX,
-    content: () => stepsSectionEl,
-  };
 
   // With no terminals open the shell section collapses to its 35 px toolbar.
   // Mark it noPin so dragging an adjacent handle can't pin it past content
@@ -782,7 +765,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const notesAndFilesChild: PanelChild = {
     id: 'notes-files',
     minSize: 60,
-    absorberWeight: 0.25,
+    absorberWeight: 0.35,
     content: () => (
       <div style={{ height: '100%', 'min-height': topStripEmpty() ? '64px' : '140px' }}>
         {isGitUnavailable() ? (
@@ -849,7 +832,6 @@ export function TaskPanel(props: TaskPanelProps) {
                 ...(supportCollapsed() ? [] : [notesAndFilesChild]),
                 shellSectionChild,
                 aiTerminalChild,
-                ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
                 ...(!isAgentChat(props.task, firstAgentId()) &&
                 (store.showPromptInput || autoSendChildUpdates())
                   ? [promptInputChild]
@@ -891,10 +873,12 @@ export function TaskPanel(props: TaskPanelProps) {
                     direction="vertical"
                     persistKey={`task:${props.task.id}:split-right`}
                     absorberIds={['shell-section']}
+                    // An empty shell is just its toolbar. An auto-height column
+                    // keeps the absorber from claiming the unused column space.
+                    style={{ height: props.task.shellAgentIds.length > 0 ? '100%' : 'auto' }}
                     children={[
                       ...(isGitUnavailable() ? [] : [changedFilesChild]),
                       notesChild,
-                      ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
                       shellSectionChild,
                     ]}
                   />
@@ -952,7 +936,7 @@ export function TaskPanel(props: TaskPanelProps) {
       <div
         class="task-header-stack"
         style={{
-          flex: `0 0 ${props.task.stepsEnabled ? 120 : 96}px`,
+          flex: '0 0 96px',
           display: 'flex',
           'flex-direction': 'column',
           overflow: 'hidden',
@@ -961,8 +945,7 @@ export function TaskPanel(props: TaskPanelProps) {
         {/* Title + branch bars live outside <Show> so they don't remount on layout flips. */}
         {/* 68px fits the title bar's two rows: a 30px icon-button row, the 2px
             row gap, a ~21px badge row, and the bar's 12px vertical padding.
-            The stack totals above are this plus the 28px branch bar (and the
-            24px steps line when enabled). */}
+            The stack total above is this plus the 28px branch bar. */}
         <div style={{ flex: '0 0 68px', overflow: 'hidden' }}>
           <TaskTitleBar
             task={props.task}
@@ -974,14 +957,12 @@ export function TaskPanel(props: TaskPanelProps) {
             onTitleEditRef={(h) => (titleEditHandle = h)}
           />
         </div>
-        <Show when={props.task.stepsEnabled}>
-          <TaskCurrentStateLine task={props.task} nowMs={nowMs()} variant="card" />
-        </Show>
         <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
           <TaskBranchInfoBar
             task={props.task}
             onEditProject={(id) => setEditingProjectId(id)}
             onOpenPullRequest={setOpenPrUrl}
+            onFinish={canFinish() ? () => openFinish('merge') : undefined}
           />
         </div>
       </div>
@@ -1130,6 +1111,10 @@ export function TaskPanel(props: TaskPanelProps) {
           onOpenPullRequest={(url) => {
             setFinishAction(null);
             setOpenPrUrl(url);
+          }}
+          onCloseTask={() => {
+            setFinishAction(null);
+            setShowCloseConfirm(true);
           }}
           onPushStart={() => {
             setPushing(true);

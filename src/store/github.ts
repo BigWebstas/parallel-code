@@ -47,14 +47,34 @@ export function getPullRequestDetails(prUrl: string): Promise<PullRequestDetails
 /** Resolves true when GitHub confirms the merge; false when it is still pending. */
 export async function mergePullRequestForTask(
   taskId: string,
-  merge: { prUrl: string; method: PrMergeMethod; headSha: string },
+  merge: { prUrl: string; method: PrMergeMethod; headSha: string; admin?: boolean },
 ): Promise<boolean> {
   const merged = await invoke<boolean>(IPC.MergePullRequest, merge);
   // Re-poll soon so the watcher sees the merge and drops the PR status.
-  void invoke(IPC.RefreshPrChecksWatcher, { taskId }).catch((err: unknown) =>
-    logWarn('github', 'Failed to refresh PR checks after merge', { err: String(err) }),
-  );
+  refreshPrChecks(taskId);
   return merged;
+}
+
+/** Takes the task's draft PR out of draft so it can be merged. */
+export async function markPullRequestReadyForTask(taskId: string, prUrl: string): Promise<void> {
+  await invoke(IPC.MarkPullRequestReady, { prUrl });
+  // The PR chip shows Draft until the watcher polls again.
+  refreshPrChecks(taskId);
+}
+
+function refreshPrChecks(taskId: string): void {
+  void invoke(IPC.RefreshPrChecksWatcher, { taskId }).catch((err: unknown) =>
+    logWarn('github', 'Failed to refresh PR checks', { err: String(err) }),
+  );
+}
+
+/** The "fix CI" prompt for a PR's failed checks, or null when nothing failed. */
+export async function loadFailedChecksPrompt(pr: {
+  number: number;
+  url: string;
+}): Promise<string | null> {
+  const checks = await invoke<PrFailedCheck[]>(IPC.GetPrFailedChecks, { prUrl: pr.url });
+  return checks.length === 0 ? null : buildFailedChecksPrompt(pr, checks);
 }
 
 /** Stages a "fix CI" prompt in the task's prompt input. Returns false when nothing failed. */
@@ -62,9 +82,9 @@ export async function stageFailedChecksPrompt(
   taskId: string,
   pr: { number: number; url: string },
 ): Promise<boolean> {
-  const checks = await invoke<PrFailedCheck[]>(IPC.GetPrFailedChecks, { prUrl: pr.url });
-  if (checks.length === 0) return false;
-  stagePrompt(taskId, buildFailedChecksPrompt(pr, checks));
+  const prompt = await loadFailedChecksPrompt(pr);
+  if (prompt === null) return false;
+  stagePrompt(taskId, prompt);
   return true;
 }
 

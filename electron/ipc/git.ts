@@ -151,6 +151,7 @@ const DEFAULT_SYMLINK_CANDIDATES = new Set(SYMLINK_CANDIDATES);
  * Entries inside `.claude/` that must NOT be seeded from the main repo's
  * `.claude/` into new worktrees (per-worktree-local state).
  */
+// `steps.json` belonged to the retired Steps panel; old worktrees may still hold one.
 const CLAUDE_DIR_EXCLUDE = new Set(['plans', 'steps.json']);
 
 /**
@@ -2645,6 +2646,34 @@ export async function getBranchCommits(
       });
   } catch (err) {
     logDebug('git', `getBranchCommits failed for ${worktreePath}: ${err}`);
+    return [];
+  }
+}
+
+/** Branch commits, oldest first, with their full messages — for squash commit defaults. */
+export async function getBranchCommitMessages(
+  worktreePath: string,
+  baseBranch?: string,
+): Promise<CommitInfo[]> {
+  if (!fs.existsSync(worktreePath)) return [];
+  const mergeBase = await detectMergeBase(worktreePath, 'HEAD', baseBranch);
+  try {
+    // Record separator between commits: bodies can contain newlines.
+    const { stdout } = await exec(
+      'git',
+      ['log', `${mergeBase}..HEAD`, '--pretty=format:%H%x00%s%x00%b%x1e', '--reverse'],
+      { cwd: worktreePath, maxBuffer: MAX_BUFFER },
+    );
+    return stdout
+      .split('\x1e')
+      .map((record) => record.replace(/^\n/, ''))
+      .filter((record) => record.trim())
+      .map((record) => {
+        const [hash = '', message = '', body = ''] = record.split('\0');
+        return { hash, message, body: body.trim() };
+      });
+  } catch (err) {
+    logDebug('git', `getBranchCommitMessages failed for ${worktreePath}: ${err}`);
     return [];
   }
 }

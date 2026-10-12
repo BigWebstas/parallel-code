@@ -1398,65 +1398,8 @@ describe('UI mode preference persistence', () => {
 describe('new task defaults persistence', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    setStore('defaultStepsEnabled', false);
     setStore('defaultSkipPermissions', false);
     setStore('defaultPropagateSkipPermissions', false);
-  });
-
-  // --- defaultStepsEnabled ---
-
-  it('defaults defaultStepsEnabled to false when absent from saved state', async () => {
-    mockInvoke.mockResolvedValueOnce(basePayload());
-    await loadState();
-    expect(store.defaultStepsEnabled).toBe(false);
-  });
-
-  it('restores defaultStepsEnabled=true from saved state', async () => {
-    mockInvoke.mockResolvedValueOnce(basePayload({ defaultStepsEnabled: true }));
-    await loadState();
-    expect(store.defaultStepsEnabled).toBe(true);
-  });
-
-  it('does not persist defaultStepsEnabled=false', async () => {
-    setStore('defaultStepsEnabled', false);
-    mockInvoke.mockResolvedValueOnce(undefined);
-    await saveState();
-    const saved = JSON.parse(mockInvoke.mock.calls[0][1].json);
-    expect(saved.defaultStepsEnabled).toBeUndefined();
-  });
-
-  it('persists defaultStepsEnabled=true', async () => {
-    setStore('defaultStepsEnabled', true);
-    mockInvoke.mockResolvedValueOnce(undefined);
-    await saveState();
-    const saved = JSON.parse(mockInvoke.mock.calls[0][1].json);
-    expect(saved.defaultStepsEnabled).toBe(true);
-  });
-
-  it.each([
-    ['string', 'yes'],
-    ['number', 1],
-    ['null', null],
-  ])('ignores non-boolean defaultStepsEnabled (%s)', async (_label, value) => {
-    setStore('defaultStepsEnabled', true);
-    mockInvoke.mockResolvedValueOnce(basePayload({ defaultStepsEnabled: value }));
-    await loadState();
-    expect(store.defaultStepsEnabled).toBe(false);
-  });
-
-  it('invalid present defaultStepsEnabled does not fall back to showSteps=true', async () => {
-    mockInvoke.mockResolvedValueOnce(
-      JSON.stringify({
-        projects: [],
-        taskOrder: [],
-        collapsedTaskOrder: [],
-        tasks: {},
-        showSteps: true,
-        defaultStepsEnabled: 'yes',
-      }),
-    );
-    await loadState();
-    expect(store.defaultStepsEnabled).toBe(false);
   });
 
   // --- defaultSkipPermissions ---
@@ -1542,13 +1485,26 @@ describe('new task defaults persistence', () => {
   });
 });
 
-describe('showSteps → defaultStepsEnabled migration', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    setStore('defaultStepsEnabled', false);
-  });
+describe('task brief settings', () => {
+  beforeEach(() => vi.clearAllMocks());
 
-  it('migrates legacy showSteps=true to defaultStepsEnabled=true', async () => {
+  it('keeps task briefs off unless they were turned on', async () => {
+    mockInvoke.mockResolvedValueOnce(basePayload());
+    await loadState();
+    expect(store.taskBriefs).toBe(false);
+    mockInvoke.mockResolvedValueOnce(basePayload({ taskBriefs: true }));
+    await loadState();
+    expect(store.taskBriefs).toBe(true);
+    mockInvoke.mockResolvedValueOnce(basePayload({ taskBriefs: 'yes' }));
+    await loadState();
+    expect(store.taskBriefs).toBe(false);
+  });
+});
+
+describe('retired Steps settings', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('ignores legacy Steps fields and does not write them back', async () => {
     mockInvoke.mockResolvedValueOnce(
       JSON.stringify({
         projects: [],
@@ -1556,68 +1512,16 @@ describe('showSteps → defaultStepsEnabled migration', () => {
         collapsedTaskOrder: [],
         tasks: {},
         showSteps: true,
-      }),
-    );
-    await loadState();
-    expect(store.defaultStepsEnabled).toBe(true);
-  });
-
-  it('defaultStepsEnabled wins when both fields are present', async () => {
-    // If a user saves with the new field but an old showSteps is also present
-    // (e.g. partially migrated state), the explicit new field takes precedence.
-    mockInvoke.mockResolvedValueOnce(
-      JSON.stringify({
-        projects: [],
-        taskOrder: [],
-        collapsedTaskOrder: [],
-        tasks: {},
-        showSteps: false,
         defaultStepsEnabled: true,
       }),
     );
     await loadState();
-    expect(store.defaultStepsEnabled).toBe(true);
-  });
-
-  it('explicit defaultStepsEnabled=false is not overridden by showSteps=true', async () => {
-    // This is the direction the old || logic got wrong — an explicit false was
-    // overridden by a legacy true.  The new presence-check logic must respect
-    // the explicit new field even when the legacy field disagrees.
-    mockInvoke.mockResolvedValueOnce(
-      JSON.stringify({
-        projects: [],
-        taskOrder: [],
-        collapsedTaskOrder: [],
-        tasks: {},
-        showSteps: true,
-        defaultStepsEnabled: false,
-      }),
-    );
-    await loadState();
-    expect(store.defaultStepsEnabled).toBe(false);
-  });
-
-  it('showSteps=false does not set defaultStepsEnabled=true', async () => {
-    mockInvoke.mockResolvedValueOnce(
-      JSON.stringify({
-        projects: [],
-        taskOrder: [],
-        collapsedTaskOrder: [],
-        tasks: {},
-        showSteps: false,
-      }),
-    );
-    await loadState();
-    expect(store.defaultStepsEnabled).toBe(false);
-  });
-
-  it('showSteps is not saved by saveState', async () => {
-    setStore('defaultStepsEnabled', true);
     mockInvoke.mockResolvedValueOnce(undefined);
     await saveState();
-    const saved = JSON.parse(mockInvoke.mock.calls[0][1].json);
+    const saveCall = mockInvoke.mock.calls.findLast((call) => typeof call[1]?.json === 'string');
+    const saved = JSON.parse(saveCall?.[1].json);
     expect(saved.showSteps).toBeUndefined();
-    expect(saved.defaultStepsEnabled).toBe(true);
+    expect(saved.defaultStepsEnabled).toBeUndefined();
   });
 });
 
@@ -2343,3 +2247,89 @@ it.each([false, true])(
     expect(saved.tasks['task-1'].secondOpinionDismissed).toBe(true);
   },
 );
+
+describe('timed snooze persistence', () => {
+  function savedSnooze(snoozedUntil: unknown): string {
+    return JSON.stringify({
+      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'hsl(0, 70%, 75%)' }],
+      taskOrder: ['task-1'],
+      tasks: {
+        'task-1': {
+          ...persistedTask(agentDef()),
+          agentIds: ['agent-1'],
+          agentSessionIds: { 'agent-1': 'fb4f2bc6-62d9-4b29-a795-240caf2fc459' },
+          snoozedUntil,
+        },
+      },
+      activeTaskId: null,
+    });
+  }
+
+  it.each([-60_000, 3_600_000])(
+    'round-trips an overdue or future deadline (%s)',
+    async (offset) => {
+      const deadline = Date.now() + offset;
+      mockInvoke.mockResolvedValueOnce(savedSnooze(deadline));
+      await loadState();
+      expect(store.tasks['task-1'].snoozedUntil).toBe(deadline);
+      expect(store.tasks['task-1'].agentSessionIds).toEqual({
+        'agent-1': 'fb4f2bc6-62d9-4b29-a795-240caf2fc459',
+      });
+      expect(store.agents['agent-1'].resumed).toBe(true);
+      await saveState();
+      const savedCall = mockInvoke.mock.calls.findLast(([channel]) => channel === IPC.SaveAppState);
+      const saved = JSON.parse(savedCall?.[1].json);
+      expect(saved.tasks['task-1'].snoozedUntil).toBe(deadline);
+
+      mockInvoke.mockResolvedValueOnce(JSON.stringify(saved));
+      await loadState();
+      expect(store.tasks['task-1'].snoozedUntil).toBe(deadline);
+    },
+  );
+
+  it('round-trips a stopped snooze without starting agents before its deadline', async () => {
+    const deadline = Date.now() + 3_600_000;
+    const state = JSON.parse(savedSnooze(deadline));
+    state.taskOrder = [];
+    state.collapsedTaskOrder = ['task-1'];
+    state.tasks['task-1'].collapsed = true;
+    state.tasks['task-1'].savedAgentSessionIds = ['fb4f2bc6-62d9-4b29-a795-240caf2fc459'];
+    mockInvoke.mockResolvedValueOnce(JSON.stringify(state));
+    await loadState();
+    expect(store.tasks['task-1'].collapsed).toBe(true);
+    expect(store.tasks['task-1'].snoozedUntil).toBe(deadline);
+    expect(store.tasks['task-1'].agentIds).toEqual([]);
+    expect(store.tasks['task-1'].savedAgentDefs).toHaveLength(1);
+    await saveState();
+    const savedCall = mockInvoke.mock.calls.findLast(([channel]) => channel === IPC.SaveAppState);
+    const saved = JSON.parse(savedCall?.[1].json);
+    expect(saved.tasks['task-1'].snoozedUntil).toBe(deadline);
+    expect(saved.tasks['task-1'].savedAgentSessionIds).toEqual([
+      'fb4f2bc6-62d9-4b29-a795-240caf2fc459',
+    ]);
+    mockInvoke.mockResolvedValueOnce(JSON.stringify(saved));
+    await loadState();
+    expect(store.tasks['task-1'].snoozedUntil).toBe(deadline);
+    expect(store.tasks['task-1'].agentIds).toEqual([]);
+  });
+
+  it.each([
+    [true, true],
+    ['yes', undefined],
+  ])('round-trips a CI snooze flag (%s)', async (value, expected) => {
+    const state = JSON.parse(savedSnooze(undefined));
+    state.tasks['task-1'].snoozedUntilCi = value;
+    mockInvoke.mockResolvedValueOnce(JSON.stringify(state));
+    await loadState();
+    expect(store.tasks['task-1'].snoozedUntilCi).toBe(expected);
+    await saveState();
+    const savedCall = mockInvoke.mock.calls.findLast(([channel]) => channel === IPC.SaveAppState);
+    expect(JSON.parse(savedCall?.[1].json).tasks['task-1'].snoozedUntilCi).toBe(expected);
+  });
+
+  it.each([null, 'tomorrow', -1, 0, 1e20])('ignores invalid saved deadlines: %s', async (value) => {
+    mockInvoke.mockResolvedValueOnce(savedSnooze(value));
+    await loadState();
+    expect(store.tasks['task-1'].snoozedUntil).toBeUndefined();
+  });
+});

@@ -53,7 +53,7 @@ import { SidebarFooter } from './SidebarFooter';
 import { IconButton } from './IconButton';
 import { StatusDot, getDotTooltip } from './StatusDot';
 import { ProjectSwatch } from './ProjectSwatch';
-import { TaskCurrentStateLine } from './TaskCurrentStateLine';
+import { TaskBriefLine } from './TaskBrief';
 import { TaskAgentStatusLine } from './TaskAgentStatusLine';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
@@ -1128,6 +1128,7 @@ function CoordinatorFolder(props: TaskEntryProps) {
             title={`${t().name} — ${getDotTooltip(
               getTaskDotStatus(props.taskId),
               getTaskAttentionState(props.taskId),
+              props.taskId,
             )}`}
             onClick={() => {
               setActiveTask(props.taskId);
@@ -1167,7 +1168,7 @@ function CoordinatorFolder(props: TaskEntryProps) {
               status={getTaskAgentHookStatus(props.taskId)}
               nowMs={props.nowMs}
             />
-            <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <TaskBriefLine task={t()} />
             <Show when={getChildAttentionSummary(props.taskId)}>
               {(summary) => (
                 <div style={{ 'font-size': sf(11), color: theme.fgMuted }}>{summary()}</div>
@@ -1286,7 +1287,7 @@ function CollapsedTaskEntry(props: {
                 </span>
               </Show>
             </div>
-            <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <TaskBriefLine task={t()} />
             <Show when={getChildAttentionSummary(props.taskId)}>
               {(summary) => (
                 <div style={{ 'font-size': sf(11), color: theme.fgMuted }}>{summary()}</div>
@@ -1352,6 +1353,7 @@ function TaskRow(props: TaskRowProps) {
             title={`${t().name} — ${getDotTooltip(
               getTaskDotStatus(props.taskId),
               getTaskAttentionState(props.taskId),
+              props.taskId,
             )}`}
             onClick={() => {
               setActiveTask(props.taskId);
@@ -1401,7 +1403,7 @@ function TaskRow(props: TaskRowProps) {
               status={getTaskAgentHookStatus(props.taskId)}
               nowMs={props.nowMs}
             />
-            <TaskCurrentStateLine task={t()} nowMs={props.nowMs} variant="sidebar" />
+            <TaskBriefLine task={t()} />
           </TaskRowShell>
         </>
       )}
