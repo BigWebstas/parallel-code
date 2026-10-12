@@ -11,7 +11,7 @@ import { getEvidenceForAgent, submitEvidence } from './evidence';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { unwrap } from 'solid-js/store';
 import { store } from './core';
-import { codeProjects, getProjectPath } from './projects';
+import { addProject, codeProjects, getProjectPath } from './projects';
 import {
   closeTask,
   createTask,
@@ -73,6 +73,16 @@ function reply(reqId: string, ok: boolean, data?: unknown, error?: string): void
   invoke(IPC.Remote_RendererReply, { reqId, ok, data, error }).catch(() => {});
 }
 
+interface AddProjectRequest extends RendererRequest {
+  name: string;
+  path: string;
+}
+
+/** Register a folder the main process just created as a git project. */
+function handleAddProject(req: AddProjectRequest): void {
+  reply(req.reqId, true, { id: addProject(req.name, req.path, true), name: req.name });
+}
+
 function handleGetProjects(req: RendererRequest): void {
   reply(
     req.reqId,
@@ -80,6 +90,7 @@ function handleGetProjects(req: RendererRequest): void {
     codeProjects().map((p) => ({
       id: p.id,
       name: p.name,
+      path: p.path,
       agentName:
         (store.availableAgents.find((a) => a.id === store.lastAgentId) ?? store.availableAgents[0])
           ?.name ?? '',
@@ -459,6 +470,12 @@ export function startRemoteTaskHandlers(): () => void {
   const offAgents = window.electron.ipcRenderer.on(IPC.Remote_GetAgentsRequest, (data: unknown) => {
     if (data && typeof data === 'object') void handleGetAgents(data as RendererRequest);
   });
+  const offAddProject = window.electron.ipcRenderer.on(
+    IPC.Remote_AddProjectRequest,
+    (data: unknown) => {
+      if (data && typeof data === 'object') handleAddProject(data as AddProjectRequest);
+    },
+  );
   const offCreate = window.electron.ipcRenderer.on(
     IPC.Remote_CreateTaskRequest,
     (data: unknown) => {
@@ -594,6 +611,7 @@ export function startRemoteTaskHandlers(): () => void {
     offPublishTour();
     offProjects();
     offAgents();
+    offAddProject();
     offCreate();
     offGetNotes();
     offSetNotes();

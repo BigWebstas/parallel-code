@@ -57,6 +57,7 @@ import type { UsageProvider, UsageState } from '../ipc/shared-types.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import type { Coordinator } from '../mcp/coordinator.js';
 import { validateBranchName } from '../mcp/validation.js';
+import { validateProjectFolderName } from './project-create.js';
 import type { ApiTaskDetail, LandSelfInput, SubtaskVerification } from '../mcp/types.js';
 import { parseSignalDoneInput } from '../shared/completion-report.js';
 
@@ -306,6 +307,8 @@ interface RemoteServer {
 export interface RemoteProject {
   id: string;
   name: string;
+  /** Desktop folder, so the phone can suggest where a new project goes. */
+  path?: string;
 }
 
 /** An agent definition the mobile "New Task" screen can select. */
@@ -1000,6 +1003,8 @@ export function startRemoteServer(opts: {
     prompt: string;
     agentId?: string;
   }) => Promise<{ taskId: string }>;
+  /** Create a new git project folder and register it (renderer-backed). */
+  createProjectFromMobile?: (req: { parentDir: string; name: string }) => Promise<RemoteProject>;
   readMindMap?: (taskId: string) => Promise<MindMapDocument>;
   readReasoning?: (taskId: string) => Promise<ReasoningDocument>;
   updateReasoning?: (taskId: string, update: ReasoningUpdate) => Promise<ReasoningDocument>;
@@ -1492,6 +1497,30 @@ export function startRemoteServer(opts: {
             .getAgents()
             .then((agents) => jsonEnd(200, agents))
             .catch((err) => jsonEnd(500, { error: String(err) }));
+          return;
+        }
+
+        if (url.pathname === '/api/mobile/projects' && req.method === 'POST') {
+          const createProject = opts.createProjectFromMobile;
+          if (!createProject) return jsonEnd(503, { error: 'project creation unavailable' });
+          readJsonBody(req)
+            .then(async (body) => {
+              let name: string;
+              try {
+                name = validateProjectFolderName(body.name);
+              } catch (err) {
+                return jsonEnd(400, { error: err instanceof Error ? err.message : String(err) });
+              }
+              const parentDir = typeof body.parentDir === 'string' ? body.parentDir : '';
+              if (!parentDir)
+                return jsonEnd(400, { error: 'parentDir must be a non-empty string' });
+              try {
+                jsonEnd(201, await createProject({ parentDir, name }));
+              } catch (err) {
+                jsonEnd(400, { error: err instanceof Error ? err.message : String(err) });
+              }
+            })
+            .catch(() => jsonEnd(400, { error: 'bad request' }));
           return;
         }
 
