@@ -83,6 +83,7 @@ const NOT_HANDLED_HERE: readonly string[] = [
   IPC.NotificationFailed,
   IPC.PlanContent,
   IPC.PrChecksUpdate,
+  IPC.Remote_AddProjectRequest,
   IPC.Remote_CloseTaskRequest,
   IPC.Remote_CreateTaskRequest,
   IPC.Remote_GetDiffRequest,
