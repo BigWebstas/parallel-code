@@ -1,4 +1,5 @@
 import { Show, For, createSignal, createEffect, onMount, onCleanup, untrack } from 'solid-js';
+import type { JSX } from 'solid-js';
 import type { TranscriptMarks } from '../investigation/transcript';
 
 import {
@@ -24,6 +25,8 @@ import {
 import { markDirty } from '../lib/terminalFitManager';
 import { isAgentAskingQuestion, isAgentSettled } from '../store/taskStatus';
 import { errMessage, warn as logWarn } from '../lib/log';
+import { AgentHandoffComposer } from './AgentHandoffComposer';
+import { isSupportedDelegationAgent } from '../store/delegation';
 import { InfoBar } from './InfoBar';
 import { PromptHistory } from './PromptHistory';
 import { TerminalView } from './TerminalView';
@@ -33,9 +36,21 @@ import { isAgentChat, agentChatProvider, agentChatUnavailableReason } from '../s
 import { agentViewHandsOff, agentViewSwitchCost, switchMainAgentView } from '../store/agent-view';
 import { setStore } from '../store/core';
 import { saveState } from '../store/persistence';
+import { registerAction, unregisterAction } from '../store/focus';
+import { resolvedBindings } from '../store/keybindings';
+import { formatKeyCombo } from '../lib/keybindings';
 import { Dialog } from './Dialog';
 import { ConfirmDialog } from './ConfirmDialog';
-import { CheckIcon, CloseIcon, CommentIcon, CopyIcon, TerminalIcon } from './icons';
+import {
+  CheckIcon,
+  CloseIcon,
+  CommentIcon,
+  EyeIcon,
+  CopyIcon,
+  PlayIcon,
+  SyncIcon,
+  TerminalIcon,
+} from './icons';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { invoke } from '../lib/ipc';
@@ -48,8 +63,6 @@ import type { AgentDef } from '../ipc/types';
 import type { PromptInputHandle } from './PromptInput';
 import { buildTaskAgentArgs, isResumeArgsFailure } from '../lib/agent-args';
 
-type StepNavApi = TranscriptMarks;
-
 interface TaskAITerminalProps {
   task: Task;
   isActive: boolean;
@@ -58,67 +71,53 @@ interface TaskAITerminalProps {
   selectedAgentId: string;
   onSelectAgent?: (agentId: string) => void;
   promptHandle: PromptInputHandle | undefined;
-  /** Receives a function that scrolls the AI terminal to the moment a given step
-   *  index was recorded, along with the first step index that is jumpable — steps
-   *  below that index were written before the current terminal mount and have no
-   *  marker. Called with `undefined` jump when the terminal unmounts. */
-  onStepJumpReady?: (
-    jump: ((stepIndex: number) => boolean) | undefined,
-    firstJumpableIndex: number,
-  ) => void;
   /** Each agent terminal's raw marker API, so other panels can anchor their own keys. */
   onTranscriptMarksReady?: (agentId: string, api: TranscriptMarks | undefined) => void;
   /** First look at a Markdown path the agent printed; returns true when it
    *  took the link. Otherwise the file opens in the Markdown viewer. */
   onFileLink?: (filePath: string) => boolean;
   onReview?: (path?: string) => void;
+  /** Task brief bar, shown between the agent header and its output, where people look first. */
+  brief?: JSX.Element;
 }
 
-/** Marker key of the step at index `i` in the agent's scrollback. */
-const stepKey = (i: number): string => `step:${i}`;
-
 export function TaskAITerminal(props: TaskAITerminalProps) {
-  // Step bookmarks — TerminalView hands us a mark/jump API once the xterm
-  // instance is ready. We only mark steps that arrive while the terminal is live;
-  // historical steps written before this mount aren't jumpable (anchoring them
-  // all at line 0 was the source of the original "jump to" bug).
-  let stepNav: StepNavApi | undefined;
-  let activeStepNavAgentId: string | null = null;
-  let lastMarkedLen = 0;
-  const stepNavByAgent = new Map<string, StepNavApi>();
-  onCleanup(() => props.onStepJumpReady?.(undefined, 0));
-
-  function syncStepNavSource(agentIds = props.task.agentIds) {
-    const agentId = agentIds.length === 1 ? agentIds[0] : null;
-    const api = agentId ? stepNavByAgent.get(agentId) : undefined;
-    if (agentId === activeStepNavAgentId && api === stepNav) return;
-
-    activeStepNavAgentId = agentId;
-    stepNav = api;
-    if (!api) {
-      lastMarkedLen = 0;
-      props.onStepJumpReady?.(undefined, 0);
-      return;
-    }
-
-    const firstJumpable = untrack(() => props.task.stepsContent?.length ?? 0);
-    lastMarkedLen = firstJumpable;
-    props.onStepJumpReady?.((i) => api.jump(stepKey(i)), firstJumpable);
-  }
-
-  createEffect(() => syncStepNavSource(props.task.agentIds));
-
+  const [handoff, setHandoff] = createSignal<{
+    sourceAgentId: string;
+    selection?: string;
+    recipientAgentId?: string;
+  }>();
+  const handoffAgents = () =>
+    props.task.agentIds.filter((id) => {
+      const agent = store.agents[id];
+      return (
+        agent &&
+        agent.status !== 'exited' &&
+        agent.sessionInstanceId &&
+        !isAgentChat(props.task, id) &&
+        isSupportedDelegationAgent(agent.def)
+      );
+    });
+  const canHandoff = (id: string) => store.mcpOrchestrationEnabled && handoffAgents().includes(id);
+  const secondOpinionTitle = () => {
+    const binding = resolvedBindings().find((item) => item.id === 'app.task.second-opinion');
+    return `Ask for a second opinion${binding ? ` (${formatKeyCombo(binding)})` : ''}`;
+  };
   createEffect(() => {
-    const len = props.task.stepsContent?.length ?? 0;
-    if (!stepNav) return; // Don't advance lastMarkedLen until a terminal is ready.
-    if (len <= lastMarkedLen) {
-      lastMarkedLen = len;
-      return;
-    }
-    for (let i = lastMarkedLen; i < len; i++) stepNav.mark(stepKey(i));
-    lastMarkedLen = len;
+    const key = `${props.task.id}:second-opinion`;
+    const open = () => {
+      if (
+        props.isActive &&
+        props.visible !== false &&
+        !handoff() &&
+        canHandoff(props.selectedAgentId)
+      ) {
+        setHandoff({ sourceAgentId: props.selectedAgentId });
+      }
+    };
+    registerAction(key, open);
+    onCleanup(() => unregisterAction(key, open));
   });
-
   // --- Markdown file viewer ---
   const [mdViewerContent, setMdViewerContent] = createSignal('');
   const [mdViewerFileName, setMdViewerFileName] = createSignal('');
@@ -296,18 +295,6 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
       });
   }
 
-  function handleStepNavReady(agentId: string, api: StepNavApi | undefined) {
-    props.onTranscriptMarksReady?.(agentId, api);
-    if (!api) {
-      stepNavByAgent.delete(agentId);
-      syncStepNavSource();
-      return;
-    }
-
-    stepNavByAgent.set(agentId, api);
-    syncStepNavSource();
-  }
-
   return (
     <>
       <div
@@ -343,6 +330,36 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
           >
             <PromptHistory task={props.task} emptyLabel={infoBarStatus().text} />
             <div class="agent-header-controls">
+              <Show
+                when={
+                  canHandoff(props.selectedAgentId) &&
+                  !handoff() &&
+                  !props.task.secondOpinionDismissed
+                }
+              >
+                <div class="terminal-second-opinion">
+                  <button
+                    title={secondOpinionTitle()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setHandoff({ sourceAgentId: props.selectedAgentId });
+                    }}
+                  >
+                    <EyeIcon size={12} /> Second opinion
+                  </button>
+                  <button
+                    aria-label="Dismiss second opinion button for this task"
+                    title="Dismiss for this task; still available on right-click"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStore('tasks', props.task.id, 'secondOpinionDismissed', true);
+                      void saveState();
+                    }}
+                  >
+                    <CloseIcon size={10} />
+                  </button>
+                </div>
+              </Show>
               <div class="agent-header-tabs">
                 <For each={props.task.agentIds}>
                   {(agentId, i) => {
@@ -528,6 +545,21 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
             </div>
           </div>
         </InfoBar>
+        {props.brief}
+        <Show when={handoff()} keyed>
+          {(request) => (
+            <AgentHandoffComposer
+              task={props.task}
+              sourceAgentId={request.sourceAgentId}
+              selection={request.selection}
+              recipientAgentId={request.recipientAgentId}
+              onClose={(recipientAgentId) => {
+                setHandoff(undefined);
+                if (recipientAgentId) selectAgent(recipientAgentId);
+              }}
+            />
+          )}
+        </Show>
         <Show when={viewNotice()}>
           <div class="agent-view-error" role="alert">
             {viewNotice()}
@@ -558,9 +590,26 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
                   if (!props.onFileLink?.(filePath)) handleFileLink(filePath);
                 }}
                 onReview={props.onReview}
+                onSendSelection={
+                  canHandoff(agentId) && !handoff()
+                    ? (selection, recipientAgentId) =>
+                        setHandoff({ sourceAgentId: agentId, selection, recipientAgentId })
+                    : undefined
+                }
+                onSecondOpinion={
+                  canHandoff(agentId) && !handoff()
+                    ? () => setHandoff({ sourceAgentId: agentId })
+                    : undefined
+                }
+                handoffRecipients={handoffAgents()
+                  .filter((id) => id !== agentId)
+                  .map((id) => ({
+                    id,
+                    label: `${store.agents[id].def.name} · ${props.task.agentIds.indexOf(id) + 1}`,
+                  }))}
                 onReady={registerAgentFocus}
                 onUnmount={unregisterAgentFocus}
-                onStepNavReady={(api) => handleStepNavReady(agentId, api)}
+                onTranscriptMarksReady={(api) => props.onTranscriptMarksReady?.(agentId, api)}
               />
             )}
           </For>
@@ -714,6 +763,9 @@ function AddAgentMenu(props: { taskId: string }) {
 }
 
 function AgentTerminalPane(props: {
+  onSendSelection?: (text: string, recipientAgentId?: string) => void;
+  onSecondOpinion?: () => void;
+  handoffRecipients: { id: string; label: string }[];
   task: Task;
   onReview?: (path?: string) => void;
   agentId: string;
@@ -725,9 +777,7 @@ function AgentTerminalPane(props: {
   onFileLink: (filePath: string) => void;
   onReady: (agentId: string, focusFn: () => void) => void;
   onUnmount: (agentId: string) => void;
-  onStepNavReady?: (
-    api: { mark: (key: string) => void; jump: (key: string) => boolean } | undefined,
-  ) => void;
+  onTranscriptMarksReady?: (api: TranscriptMarks | undefined) => void;
 }) {
   onCleanup(() => props.onUnmount(props.agentId));
 
@@ -829,6 +879,7 @@ function AgentTerminalPane(props: {
                 <AgentRestartMenu agentId={a().id} agentDefId={a().def.id} />
                 <Show when={a().def.resume_args?.length}>
                   <button
+                    class="btn-with-icon"
                     onClick={(e) => {
                       e.stopPropagation();
                       restartAgent(a().id, true);
@@ -843,6 +894,7 @@ function AgentTerminalPane(props: {
                       'font-size': sf(11),
                     }}
                   >
+                    <PlayIcon size={12} />
                     Resume
                   </button>
                 </Show>
@@ -861,7 +913,9 @@ function AgentTerminalPane(props: {
                 agentId={props.agentId}
                 active={
                   props.visible &&
-                  isPanelFocusedOrDefault(props.task.id, aiTerminalPanelId(props.agentId))
+                  (isPanelFocusedOrDefault(props.task.id, aiTerminalPanelId(props.agentId)) ||
+                    // Chat mode hides the prompt panel, so its focus key lands in this composer.
+                    isPanelFocused(props.task.id, 'prompt'))
                 }
                 onReady={(focus) => {
                   chatFocus = focus;
@@ -876,6 +930,9 @@ function AgentTerminalPane(props: {
                 <Show when={`${a().id}:${a().generation}`} keyed>
                   <TerminalView
                     taskId={props.task.id}
+                    onSendSelection={props.onSendSelection}
+                    onSecondOpinion={props.onSecondOpinion}
+                    handoffRecipients={props.handoffRecipients}
                     agentId={a().id}
                     visible={props.visible && !isAgentChat(props.task, props.agentId)}
                     isFocused={
@@ -892,7 +949,6 @@ function AgentTerminalPane(props: {
                     )}
                     cwd={props.task.worktreePath}
                     envFile={store.agentEnvFiles[a().def.id]}
-                    stepsEnabled={props.task.stepsEnabled}
                     dockerMode={
                       props.task.dockerMode ||
                       Boolean(
@@ -967,7 +1023,7 @@ function AgentTerminalPane(props: {
                       terminalFocus = focusFn;
                       props.onReady(a().id, focusCurrentView);
                     }}
-                    onStepNavReady={props.onStepNavReady}
+                    onTranscriptMarksReady={props.onTranscriptMarksReady}
                     fontSize={13}
                   />
                 </Show>
@@ -1131,6 +1187,7 @@ function AgentRestartMenu(props: { agentId: string; agentDefId: string }) {
   return (
     <span style={{ position: 'relative', display: 'inline-flex' }} ref={(el) => (menuRef = el)}>
       <button
+        class="btn-with-icon"
         onClick={(e) => {
           e.stopPropagation();
           restartAgent(props.agentId, false);
@@ -1146,6 +1203,7 @@ function AgentRestartMenu(props: { agentId: string; agentDefId: string }) {
           'font-size': sf(11),
         }}
       >
+        <SyncIcon size={12} />
         Restart
       </button>
       <button

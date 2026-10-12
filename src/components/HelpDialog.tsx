@@ -14,6 +14,7 @@ import {
   resetAllBindings,
   checkConflict,
 } from '../store/keybindings';
+import { UndoIcon } from './icons';
 
 interface HelpDialogProps {
   open: boolean;
@@ -258,7 +259,6 @@ export function HelpDialog(props: HelpDialogProps) {
             padding: '4px 8px',
             'font-size': '12px',
             cursor: 'pointer',
-            outline: 'none',
             flex: '1',
           }}
         >
@@ -272,6 +272,7 @@ export function HelpDialog(props: HelpDialogProps) {
           </For>
         </select>
         <button
+          class="btn-with-icon"
           onClick={handleResetAll}
           style={{
             background: 'transparent',
@@ -284,6 +285,7 @@ export function HelpDialog(props: HelpDialogProps) {
             'white-space': 'nowrap',
           }}
         >
+          <UndoIcon size={12} />
           Reset All
         </button>
       </div>

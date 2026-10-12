@@ -14,10 +14,13 @@ import {
   CANVAS_VIEW_TOOLS,
   CANVAS_INSTRUCTIONS,
   TOUR_TOOLS,
+  CONFIDENCE_TOOLS,
+  GITHUB_LIST_TOOLS,
   EVIDENCE_TOOLS,
   hasCanvasTools,
   APP_TASK_INSTRUCTIONS,
   serverInstructions,
+  GITHUB_AGENT_INSTRUCTIONS,
   sessionInstructions,
   type ToolDef,
 } from './mcp-tool-list.js';
@@ -31,6 +34,7 @@ describe('selectTools — role-based tool list', () => {
       ...REASONING_TOOLS,
       ...CANVAS_VIEW_TOOLS,
       ...TOUR_TOOLS,
+      ...CONFIDENCE_TOOLS,
       ...EVIDENCE_TOOLS,
     ]);
     expect(tools.map((t: ToolDef) => t.name)).toStrictEqual([
@@ -42,6 +46,7 @@ describe('selectTools — role-based tool list', () => {
       'reasoning_update',
       'canvas_open',
       'tour_publish',
+      'confidence_publish',
       'submit_evidence',
       'get_evidence',
     ]);
@@ -55,6 +60,7 @@ describe('selectTools — role-based tool list', () => {
       ...REASONING_TOOLS,
       ...CANVAS_VIEW_TOOLS,
       ...TOUR_TOOLS,
+      ...CONFIDENCE_TOOLS,
       ...EVIDENCE_TOOLS,
     ]);
   });
@@ -99,14 +105,12 @@ describe('selectTools — role-based tool list', () => {
     expect(byName.get('get_task_output')).toContain('Improve documentation in @filename');
   });
 
-  it('create_task documents the coordinator branch as the default base branch', () => {
+  it('create_task documents the main branch as the default base branch', () => {
     const createTask = COORDINATOR_TOOLS.find((tool) => tool.name === 'create_task');
     const properties = createTask?.inputSchema.properties as
       | Record<string, { description?: string }>
       | undefined;
-    expect(properties?.baseBranch?.description).toContain(
-      'Defaults to the coordinator task branch',
-    );
+    expect(properties?.baseBranch?.description).toContain('Defaults to the main branch');
   });
 
   it('create_task requires an initial prompt', () => {
@@ -155,6 +159,19 @@ it('ordinary canvas sessions advertise only map tools', () => {
     ...REASONING_TOOLS,
     ...CANVAS_VIEW_TOOLS,
     ...TOUR_TOOLS,
+    ...CONFIDENCE_TOOLS,
+    ...EVIDENCE_TOOLS,
+  ]);
+});
+
+it('offers github_list_publish only to the GitHub page agent', () => {
+  expect(selectTools('gh-agent-p1', '', true)).toEqual([
+    ...MINDMAP_TOOLS,
+    ...REASONING_TOOLS,
+    ...CANVAS_VIEW_TOOLS,
+    ...TOUR_TOOLS,
+    ...CONFIDENCE_TOOLS,
+    ...GITHUB_LIST_TOOLS,
     ...EVIDENCE_TOOLS,
   ]);
 });
@@ -230,6 +247,7 @@ describe('session capability tool sets', () => {
     'reasoning_update',
     'canvas_open',
     'tour_publish',
+    'confidence_publish',
     'submit_evidence',
     'get_evidence',
   ];
@@ -322,6 +340,19 @@ describe('serverInstructions', () => {
       const text = serverInstructions({ taskId, coordinatorId, canvasOnly });
       expect(text.startsWith(APP_TASK_INSTRUCTIONS)).toBe(true);
     }
+  });
+
+  it('tells the GitHub page agent to publish lists there, first and within the client limit', () => {
+    // Hidden agents are never delegation tasks, so they launch canvas-only without capabilities.
+    const text = serverInstructions({ taskId: 'gh-agent-p1', coordinatorId: '', canvasOnly: true });
+    expect(text.startsWith(GITHUB_AGENT_INSTRUCTIONS)).toBe(true);
+    expect(GITHUB_AGENT_INSTRUCTIONS).toContain('github_list_publish');
+    const essential = `${GITHUB_AGENT_INSTRUCTIONS}\n\n${APP_TASK_INSTRUCTIONS}`;
+    expect(text.startsWith(essential)).toBe(true);
+    expect(essential.length).toBeLessThanOrEqual(CLIENT_LIMIT);
+    expect(
+      serverInstructions({ taskId: 'task', coordinatorId: '', canvasOnly: true }),
+    ).not.toContain(GITHUB_AGENT_INSTRUCTIONS);
   });
 
   it('still includes app and canvas guidance', () => {

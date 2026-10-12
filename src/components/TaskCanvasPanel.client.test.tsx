@@ -1,7 +1,7 @@
 import { render } from 'solid-js/web';
 import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EditorView } from '@codemirror/view';
 import { undo } from '@codemirror/commands';
 import { IPC } from '../../electron/ipc/channels';
@@ -74,6 +74,12 @@ beforeEach(() => {
       },
     },
   });
+});
+
+// The panel lazy-loads the document editor; transform it up front so the
+// first test's polling budget is not spent compiling CodeMirror.
+beforeAll(async () => {
+  await import('./TaskCanvasDocument');
 });
 
 afterEach(() => {
@@ -568,6 +574,21 @@ describe('TaskCanvasPanel', () => {
     // Only file-backed tabs have something to tour.
     setTask({ canvasTabs: [{ kind: 'reasoning' }], canvasActiveTab: 'reasoning' });
     expect(container.querySelector('.canvas-tour-btn')).toBeNull();
+  });
+
+  it('gives the task plan a plan tour and any other document a document tour', async () => {
+    mockIpc(LONG_SOURCE);
+    const { container, setTask } = mount('docs/design.md', { onTakeTour: vi.fn() });
+    await editorLine(container, 'Keep state in one store.');
+    const hintFor = () => {
+      const button = container.querySelector<HTMLButtonElement>('.canvas-tour-btn');
+      button?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      button?.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+      return document.querySelector('[role="tooltip"]')?.textContent ?? '';
+    };
+    expect(hintFor()).toContain('Guided tour of this document');
+    setTask({ planPath: 'docs/design.md' });
+    expect(hintFor()).toContain('Guided tour of this plan');
   });
 
   it('shows no tour button without a handler', async () => {

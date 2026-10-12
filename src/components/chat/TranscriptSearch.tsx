@@ -1,7 +1,8 @@
 import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
 import type { ChatItem } from '../../../electron/shared/agent-chat-types';
+import { SearchIcon } from '../icons';
 
-const speakers = { user: 'You', tool: 'Activity', assistant: 'Assistant' };
+const speakers = { user: 'You', shell: 'Shell', tool: 'Activity', assistant: 'Assistant' };
 
 /** Everything an entry shows, including what a collapsed row hides: a command
  *  and its output, the files it touched and the lines an edit changed. */
@@ -71,7 +72,8 @@ export function TranscriptSearch(props: {
       }}
     >
       <Show when={!props.floating}>
-        <button aria-expanded={open()} onClick={() => setOpen(!open())}>
+        <button class="btn-with-icon" aria-expanded={open()} onClick={() => setOpen(!open())}>
+          <SearchIcon size={12} />
           Search conversation
         </button>
       </Show>

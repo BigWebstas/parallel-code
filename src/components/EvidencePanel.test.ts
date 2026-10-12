@@ -163,7 +163,7 @@ describe('EvidencePanel', () => {
       EvidencePanel({ task: task(pkg({ scan: { ...pkg().scan, flags: [flag] } })), headSha: HEAD }),
     );
     expect(html).toContain('Low confidence');
-    expect(html).toContain('1 decision needed');
+    expect(html).toContain('1 test weakened');
     expect(html).toContain('src/a.test.ts:4');
     expect(html).toContain('Accept…');
   });
@@ -204,7 +204,7 @@ describe('EvidencePanel', () => {
       EvidencePanel({ task: task(failed), agentId: 'a1', headSha: HEAD }),
     );
     expect(html).toContain('Ask agent to fix');
-    expect(html).toContain('1 check failed');
+    expect(html).toContain('Checks: 1 failed');
   });
 });
 

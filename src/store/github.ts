@@ -6,12 +6,22 @@ import {
   buildFailedChecksPrompt,
   buildReviewFeedbackPrompt,
   hasReviewFeedback,
+  buildIssuePrompt,
+  buildPrTaskPrompt,
+  buildIssueTriagePrompt,
+  workItemTaskName,
 } from '../lib/github-prompts';
 import { setStore, store } from './core';
 import { setPrefillPrompt, setTaskPromptDraftActive } from './tasks';
+import { toggleNewTaskPanel } from './navigation';
 import { setTaskFocusedPanel } from './focused-panel';
 import type {
   GitHubIssueDetails,
+  GitHubIssueSummary,
+  GitHubIssueQuery,
+  GitHubIssuePage,
+  GitHubIssueActivityPage,
+  GitHubIssueChange,
   GitHubWorkItem,
   PrFailedCheck,
   PrMergeMethod,
@@ -37,14 +47,34 @@ export function getPullRequestDetails(prUrl: string): Promise<PullRequestDetails
 /** Resolves true when GitHub confirms the merge; false when it is still pending. */
 export async function mergePullRequestForTask(
   taskId: string,
-  merge: { prUrl: string; method: PrMergeMethod; headSha: string },
+  merge: { prUrl: string; method: PrMergeMethod; headSha: string; admin?: boolean },
 ): Promise<boolean> {
   const merged = await invoke<boolean>(IPC.MergePullRequest, merge);
   // Re-poll soon so the watcher sees the merge and drops the PR status.
-  void invoke(IPC.RefreshPrChecksWatcher, { taskId }).catch((err: unknown) =>
-    logWarn('github', 'Failed to refresh PR checks after merge', { err: String(err) }),
-  );
+  refreshPrChecks(taskId);
   return merged;
+}
+
+/** Takes the task's draft PR out of draft so it can be merged. */
+export async function markPullRequestReadyForTask(taskId: string, prUrl: string): Promise<void> {
+  await invoke(IPC.MarkPullRequestReady, { prUrl });
+  // The PR chip shows Draft until the watcher polls again.
+  refreshPrChecks(taskId);
+}
+
+function refreshPrChecks(taskId: string): void {
+  void invoke(IPC.RefreshPrChecksWatcher, { taskId }).catch((err: unknown) =>
+    logWarn('github', 'Failed to refresh PR checks', { err: String(err) }),
+  );
+}
+
+/** The "fix CI" prompt for a PR's failed checks, or null when nothing failed. */
+export async function loadFailedChecksPrompt(pr: {
+  number: number;
+  url: string;
+}): Promise<string | null> {
+  const checks = await invoke<PrFailedCheck[]>(IPC.GetPrFailedChecks, { prUrl: pr.url });
+  return checks.length === 0 ? null : buildFailedChecksPrompt(pr, checks);
 }
 
 /** Stages a "fix CI" prompt in the task's prompt input. Returns false when nothing failed. */
@@ -52,9 +82,9 @@ export async function stageFailedChecksPrompt(
   taskId: string,
   pr: { number: number; url: string },
 ): Promise<boolean> {
-  const checks = await invoke<PrFailedCheck[]>(IPC.GetPrFailedChecks, { prUrl: pr.url });
-  if (checks.length === 0) return false;
-  stagePrompt(taskId, buildFailedChecksPrompt(pr, checks));
+  const prompt = await loadFailedChecksPrompt(pr);
+  if (prompt === null) return false;
+  stagePrompt(taskId, prompt);
   return true;
 }
 
@@ -81,4 +111,70 @@ function stagePrompt(taskId: string, text: string): void {
   queueMicrotask(() => {
     if (store.tasks[taskId]) setTaskFocusedPanel(taskId, 'prompt');
   });
+}
+
+/** Browser state is separate from the task composer and survives task handoff. */
+export function openGitHubIssues(projectId: string | null): void {
+  setStore('githubIssuesProjectId', projectId);
+}
+
+/** The project's github.com repository (`owner/name`) as the GitHub CLI resolves it. */
+export function resolveGitHubRepository(projectRoot: string): Promise<string> {
+  return invoke<string>(IPC.ResolveGitHubRepository, { projectRoot });
+}
+
+export function browseGitHubIssues(
+  projectRoot: string,
+  query: GitHubIssueQuery,
+): Promise<GitHubIssuePage> {
+  return invoke(IPC.BrowseGitHubIssues, { projectRoot, ...query });
+}
+
+export function readGitHubIssue(url: string): Promise<GitHubIssueSummary> {
+  return invoke(IPC.ReadGitHubIssue, { url });
+}
+
+export function readGitHubIssueActivity(
+  url: string,
+  page: number,
+): Promise<GitHubIssueActivityPage> {
+  return invoke(IPC.ReadGitHubIssueActivity, { url, page });
+}
+
+export function updateGitHubIssue(
+  url: string,
+  change: GitHubIssueChange,
+): Promise<GitHubIssueSummary> {
+  return invoke(IPC.UpdateGitHubIssue, { url, ...change });
+}
+
+/** Never replace an already open composer or its unsent draft. */
+export function startGitHubIssueTask(projectId: string, issue: GitHubIssueSummary): boolean {
+  if (store.showNewTaskPanel) return false;
+  setStore('newTaskPrefillPrompt', {
+    projectId,
+    name: workItemTaskName(issue),
+    prompt: issue.kind === 'pr' ? buildPrTaskPrompt(issue) : buildIssuePrompt(issue),
+    githubPr: issue.kind === 'pr' ? { ...issue, kind: 'pr' } : undefined,
+    githubUrl: issue.url,
+  });
+  openGitHubIssues(null);
+  toggleNewTaskPanel(true);
+  return true;
+}
+
+/** Most items one triage or agent-list batch may hold. */
+export const GITHUB_BATCH_LIMIT = 25;
+
+export function startGitHubTriageTask(projectId: string, issues: GitHubIssueSummary[]): boolean {
+  if (store.showNewTaskPanel || !issues.length || issues.length > GITHUB_BATCH_LIMIT) return false;
+  setStore('newTaskPrefillPrompt', {
+    projectId,
+    name: `Triage ${issues.length} GitHub items`,
+    prompt: buildIssueTriagePrompt(issues),
+    githubUrl: null,
+  });
+  openGitHubIssues(null);
+  toggleNewTaskPanel(true);
+  return true;
 }

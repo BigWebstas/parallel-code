@@ -146,3 +146,49 @@ it('combines search with status filters and restores them when returning from a 
   expect(restoredSearch.value).toBe('');
   expect(document.activeElement).toBe(restoredSearch);
 });
+
+it('points Android browsers to the app and leaves other phones alone', () => {
+  const userAgent = vi.spyOn(navigator, 'userAgent', 'get');
+  userAgent.mockReturnValue('Mozilla/5.0 (Linux; Android 15; Pixel 9)');
+  dispose = render(
+    () => <AgentList onSelect={() => {}} onNewTask={() => {}} onPair={() => {}} />,
+    host,
+  );
+  const link = host.querySelector<HTMLAnchorElement>('.mobile-notifications a');
+  expect(link?.href).toBe('https://github.com/johannesjo/parallel-code#android-app');
+  dispose();
+
+  userAgent.mockReturnValue('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+  dispose = render(
+    () => <AgentList onSelect={() => {}} onNewTask={() => {}} onPair={() => {}} />,
+    host,
+  );
+  expect(host.textContent).not.toContain('Android app');
+  userAgent.mockRestore();
+});
+
+it('files failed CI under Needs you and names a ready task by its checks', () => {
+  const base = { status: 'running', exitCode: null, lastLine: '' } as const;
+  const list: RemoteAgent[] = [
+    { ...base, agentId: 'a1', taskId: 't1', taskName: 'Red PR', attention: 'idle', ci: 'failure' },
+    {
+      ...base,
+      agentId: 'a2',
+      taskId: 't2',
+      taskName: 'Green PR',
+      attention: 'ready',
+      ci: 'success',
+    },
+  ];
+  Socket.current.onmessage?.({ data: JSON.stringify({ type: 'agents', list }) });
+  dispose = render(
+    () => <AgentList onSelect={() => {}} onNewTask={() => {}} onPair={() => {}} />,
+    host,
+  );
+  const group = (name: string) => host.querySelector(`section[aria-label="${name}"]`);
+  expect(group('Needs you')?.textContent).toContain('Red PR');
+  expect(group('Needs you')?.textContent).toContain('CI failed');
+  expect(group('Ready to review')?.textContent).toContain('Green PR');
+  expect(group('Ready to review')?.textContent).toContain('Ready to merge');
+  expect(host.textContent).toContain('1 task needs your attention');
+});

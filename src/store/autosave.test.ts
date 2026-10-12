@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { store, setStore } from './core';
+import { setStore } from './core';
 import { persistedSnapshot } from './autosave';
 import type { Task } from './types';
 
@@ -23,15 +23,6 @@ describe('autosave snapshot includes new-task-default fields', () => {
     setStore('mcpOrchestrationEnabled', true);
   });
 
-  it('defaultStepsEnabled changes the snapshot', () => {
-    setStore('defaultStepsEnabled', false);
-    const before = persistedSnapshot();
-    setStore('defaultStepsEnabled', true);
-    const after = persistedSnapshot();
-    expect(before).not.toBe(after);
-    setStore('defaultStepsEnabled', false);
-  });
-
   it('defaultSkipPermissions changes the snapshot', () => {
     setStore('defaultSkipPermissions', false);
     const before = persistedSnapshot();
@@ -47,6 +38,14 @@ describe('autosave snapshot includes new-task-default fields', () => {
     setStore('canvasOwnershipBadges', false);
     expect(persistedSnapshot()).not.toBe(before);
     setStore('canvasOwnershipBadges', true);
+  });
+
+  it('modelTaskNames changes the snapshot', () => {
+    setStore('modelTaskNames', false);
+    const before = persistedSnapshot();
+    setStore('modelTaskNames', true);
+    expect(persistedSnapshot()).not.toBe(before);
+    setStore('modelTaskNames', false);
   });
 
   it('defaultPropagateSkipPermissions changes the snapshot', () => {
@@ -65,10 +64,6 @@ describe('autosave snapshot includes new-task-default fields', () => {
     const after = persistedSnapshot();
     expect(before).not.toBe(after);
     setStore('terminalScreenReaderMode', false);
-  });
-
-  it('showSteps is not tracked separately (migrated to defaultStepsEnabled)', () => {
-    expect('showSteps' in store).toBe(false);
   });
 
   it('a Super Productivity link changes the snapshot', () => {
@@ -146,6 +141,8 @@ describe('autosave snapshot includes new-task-default fields', () => {
     'autoSendChildUpdates',
     'propagateSkipPermissions',
     'maxConcurrentTasks',
+    'snoozedUntil',
+    'snoozedUntilCi',
   ] as const)('%s changes the snapshot', (field) => {
     const taskId = 'autosave-draft-task';
     const task: Task = {
@@ -166,12 +163,13 @@ describe('autosave snapshot includes new-task-default fields', () => {
       const before = persistedSnapshot();
       if (field === 'promptHistory') {
         setStore('tasks', taskId, 'promptHistory', [{ text: 'Repeated prompt', sentAt: 1 }]);
-      } else if (field === 'maxConcurrentTasks') {
+      } else if (field === 'maxConcurrentTasks' || field === 'snoozedUntil') {
         setStore('tasks', taskId, field, 5);
       } else if (
         field === 'autoMergeChildren' ||
         field === 'autoSendChildUpdates' ||
-        field === 'propagateSkipPermissions'
+        field === 'propagateSkipPermissions' ||
+        field === 'snoozedUntilCi'
       ) {
         setStore('tasks', taskId, field, true);
       } else {

@@ -6,10 +6,15 @@ import { IPC } from '../../electron/ipc/channels';
 import { invoke } from '../lib/ipc';
 import { setStore, store } from './core';
 import { startRemoteTaskHandlers } from './remoteTaskHandler';
+import { sendPrompt } from './tasks';
 import type { Task } from './types';
 
 vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
 vi.mock('./persistence', () => ({ saveState: vi.fn(async () => undefined) }));
+vi.mock('./tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tasks')>()),
+  sendPrompt: vi.fn(async () => undefined),
+}));
 
 const tourCard = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
 const tourPayload = { subject: 'the retry bug', gist: tourCard, cards: [tourCard] };
@@ -187,4 +192,310 @@ it('adds a task created from a phone without taking focus from the active task',
   expect(store.taskOrder).toContain('phone-task');
   expect(store.activeTaskId).toBe('task');
   expect(store.activeAgentId).toBe('agent');
+});
+
+const phoneAgents = [
+  {
+    id: 'claude',
+    name: 'Claude',
+    command: 'claude',
+    args: ['--model', 'sonnet'],
+    resume_args: ['--continue'],
+    skip_permissions_args: [],
+    description: '',
+  },
+  {
+    id: 'codex',
+    name: 'Codex',
+    command: '/usr/bin/codex',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: '',
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini',
+    command: 'gemini',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: '',
+  },
+  {
+    id: 'missing',
+    name: 'Missing',
+    command: 'missing',
+    args: [],
+    resume_args: [],
+    skip_permissions_args: [],
+    description: '',
+    available: false,
+  },
+];
+
+function mockPhoneTaskIpc() {
+  setStore('projects', [
+    { id: 'project', name: 'Project', path: '/tmp/project', color: '', defaultBaseBranch: 'main' },
+  ]);
+  setStore('availableAgents', phoneAgents);
+  setStore('lastAgentId', 'codex');
+  vi.mocked(invoke).mockImplementation(async (channel: string) => {
+    if (channel === IPC.ListCodexModels) return [{ slug: 'gpt-5', displayName: 'GPT-5' }];
+    if (channel === IPC.GetGitignoredDirs) return [];
+    if (channel === IPC.CreateTask)
+      return { id: 'phone-task', branch_name: 'task/phone', worktree_path: '/tmp/phone' };
+    return undefined;
+  });
+}
+
+/** Sends a phone request and waits for the reply the main process would forward. */
+async function phoneRequest(channel: string, payload: Record<string, unknown>) {
+  listeners.get(channel)?.({ reqId: 'req', ...payload });
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(IPC.Remote_RendererReply, expect.anything()),
+  );
+  const reply = vi.mocked(invoke).mock.calls.find(([c]) => c === IPC.Remote_RendererReply);
+  return reply?.[1] as { ok: boolean; data?: unknown; error?: string };
+}
+
+it('lists available agents with the models a phone may pick', async () => {
+  mockPhoneTaskIpc();
+  const reply = await phoneRequest(IPC.Remote_GetAgentsRequest, {});
+  expect(reply.data).toEqual([
+    {
+      id: 'claude',
+      name: 'Claude',
+      isDefault: false,
+      models: ['fable', 'opus', 'sonnet', 'haiku'].map((id) => ({ id, label: id })),
+    },
+    { id: 'codex', name: 'Codex', isDefault: true, models: [{ id: 'gpt-5', label: 'GPT-5' }] },
+    { id: 'gemini', name: 'Gemini', isDefault: false, models: [] },
+  ]);
+});
+
+it('launches a phone task with the chosen agent and model', async () => {
+  mockPhoneTaskIpc();
+  const reply = await phoneRequest(IPC.Remote_CreateTaskRequest, {
+    projectId: 'project',
+    name: 'From phone',
+    prompt: 'Do it',
+    agentId: 'claude',
+    model: 'opus',
+  });
+  expect(reply).toMatchObject({ ok: true, data: { taskId: 'phone-task' } });
+  const agentId = store.tasks['phone-task']?.agentIds[0] ?? '';
+  // The chosen model replaces the configured one rather than adding a second flag.
+  expect(store.agents[agentId]?.def).toMatchObject({ id: 'claude', args: ['--model', 'opus'] });
+});
+
+it.each([
+  { agentId: 'missing', error: 'Agent not available' },
+  { agentId: 'unknown', error: 'Agent not available' },
+  { agentId: 'gemini', model: 'opus', error: 'Model not available for this agent' },
+  { agentId: 'claude', model: 'gpt-5', error: 'Model not available for this agent' },
+])('rejects a stale agent or model choice: $agentId $model', async (choice) => {
+  mockPhoneTaskIpc();
+  const reply = await phoneRequest(IPC.Remote_CreateTaskRequest, {
+    projectId: 'project',
+    name: 'From phone',
+    prompt: 'Do it',
+    agentId: choice.agentId,
+    model: choice.model,
+  });
+  expect(reply).toMatchObject({ ok: false, error: choice.error });
+  expect(vi.mocked(invoke)).not.toHaveBeenCalledWith(IPC.CreateTask, expect.anything());
+});
+
+/** Replies to the close request once the handler has finished. */
+async function closeRequest(force: boolean) {
+  listeners.get(IPC.Remote_CloseTaskRequest)?.({ reqId: 'req', taskId: 'task', force });
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(IPC.Remote_RendererReply, expect.anything()),
+  );
+  const reply = vi.mocked(invoke).mock.calls.find(([c]) => c === IPC.Remote_RendererReply);
+  return reply?.[1] as { ok: boolean; data?: unknown; error?: string };
+}
+
+it('refuses to close a task with unsaved work unless forced', async () => {
+  vi.mocked(invoke).mockImplementation(async (channel: string) =>
+    channel === IPC.GetWorktreeStatus
+      ? { has_uncommitted_changes: true, has_committed_changes: false }
+      : undefined,
+  );
+
+  const reply = await closeRequest(false);
+
+  expect(reply).toMatchObject({
+    ok: true,
+    data: {
+      closed: false,
+      warnings: ['There are uncommitted changes that will be permanently lost.'],
+    },
+  });
+  expect(vi.mocked(invoke)).not.toHaveBeenCalledWith(IPC.DeleteTask, expect.anything());
+  expect(store.tasks.task.closingStatus).toBeUndefined();
+});
+
+it('closes a clean task without forcing', async () => {
+  vi.mocked(invoke).mockImplementation(async (channel: string) =>
+    channel === IPC.GetWorktreeStatus
+      ? { has_uncommitted_changes: false, has_committed_changes: false }
+      : undefined,
+  );
+
+  const reply = await closeRequest(false);
+
+  expect(reply).toMatchObject({ ok: true, data: { closed: true } });
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith(IPC.DeleteTask, expect.anything());
+});
+
+it('force-closes without checking the worktree', async () => {
+  const reply = await closeRequest(true);
+
+  expect(reply).toMatchObject({ ok: true, data: { closed: true } });
+  expect(vi.mocked(invoke)).not.toHaveBeenCalledWith(IPC.GetWorktreeStatus, expect.anything());
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith(IPC.DeleteTask, expect.anything());
+});
+
+it('reports an unknown task instead of closing', async () => {
+  listeners.get(IPC.Remote_CloseTaskRequest)?.({ reqId: 'req', taskId: 'missing', force: true });
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      IPC.Remote_RendererReply,
+      expect.objectContaining({ ok: false, error: 'Task not found' }),
+    ),
+  );
+});
+
+it('answers a phone diff request with the task diff against its base', async () => {
+  setStore('tasks', 'task', 'baseBranch', 'main');
+  vi.mocked(invoke).mockImplementation(async (channel: string) =>
+    channel === IPC.GetAllFileDiffs ? 'diff --git a/x b/x' : undefined,
+  );
+
+  listeners.get(IPC.Remote_GetDiffRequest)?.({ reqId: 'req', taskId: 'task' });
+
+  await vi.waitFor(() =>
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      IPC.Remote_RendererReply,
+      expect.objectContaining({
+        ok: true,
+        data: { diff: 'diff --git a/x b/x', truncated: false },
+      }),
+    ),
+  );
+  expect(vi.mocked(invoke)).toHaveBeenCalledWith(IPC.GetAllFileDiffs, {
+    worktreePath: '/tmp/task',
+    baseBranch: 'main',
+  });
+});
+
+it.each([
+  [undefined, true],
+  [false, false],
+])(
+  'reports merge readiness with a headline and the branch close rule (deleteBranchOnClose=%s)',
+  async (deleteBranchOnClose, expected) => {
+    setStore('projects', [
+      {
+        id: 'project',
+        name: 'Project',
+        path: '/tmp/project',
+        color: '',
+        ...(deleteBranchOnClose === undefined ? {} : { deleteBranchOnClose }),
+      },
+    ]);
+    vi.mocked(invoke).mockImplementation(async (channel: string) => {
+      if (channel === IPC.CheckMergeStatus)
+        return { main_ahead_count: 0, conflicting_files: [], base_branch: 'main' };
+      if (channel === IPC.GetWorktreeStatus)
+        return {
+          has_committed_changes: true,
+          has_uncommitted_changes: false,
+          current_branch: 'task/test',
+          base_branch: 'main',
+        };
+      return undefined;
+    });
+
+    listeners.get(IPC.Remote_GetMergeReadinessRequest)?.({ reqId: 'req', taskId: 'task' });
+    await vi.waitFor(() =>
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith(IPC.Remote_RendererReply, expect.anything()),
+    );
+    const reply = vi
+      .mocked(invoke)
+      .mock.calls.find(([c]) => c === IPC.Remote_RendererReply)?.[1] as {
+      ok: boolean;
+      data: {
+        readiness: { overall: string; checks: Array<{ label: string }> };
+        canMerge: boolean;
+        deleteBranchOnClose: boolean;
+      };
+    };
+
+    expect(reply.ok).toBe(true);
+    expect(['ready', 'attention']).toContain(reply.data.readiness.overall);
+    expect(reply.data.canMerge).toBe(true);
+    expect(reply.data.readiness.checks.map((c) => c.label)).toContain('Evidence');
+    expect(reply.data.deleteBranchOnClose).toBe(expected);
+  },
+);
+
+/** Like `request`, for handlers that await IPC before replying. */
+async function settledRequest(channel: string, payload: Record<string, unknown>) {
+  vi.mocked(invoke).mockClear();
+  listeners.get(channel)?.({ reqId: 'req', ...payload });
+  let reply: { ok: boolean; data?: unknown; error?: string } | undefined;
+  await vi.waitFor(() => {
+    const call = vi.mocked(invoke).mock.calls.find(([c]) => c === IPC.Remote_RendererReply);
+    expect(call).toBeDefined();
+    reply = call?.[1] as typeof reply;
+  });
+  return reply;
+}
+
+it('builds the Fix CI prompt from the PR failed checks', async () => {
+  setStore('tasks', 'task', 'prUrl', 'https://github.com/o/r/pull/7');
+  vi.mocked(invoke).mockImplementation(async (channel) =>
+    channel === IPC.GetPrFailedChecks ? [{ name: 'lint', url: null, logTail: 'boom' }] : undefined,
+  );
+  const reply = await settledRequest(IPC.Remote_GetFixCiPromptRequest, { taskId: 'task' });
+  expect(invoke).toHaveBeenCalledWith(IPC.GetPrFailedChecks, {
+    prUrl: 'https://github.com/o/r/pull/7',
+  });
+  const prompt = (reply?.data as { prompt: string }).prompt;
+  expect(prompt).toContain('CI failed on pull request #7');
+  expect(prompt).toContain('### lint');
+});
+
+it('answers a null Fix CI prompt without a PR or failed checks', async () => {
+  let reply = await settledRequest(IPC.Remote_GetFixCiPromptRequest, { taskId: 'task' });
+  expect(reply).toMatchObject({ ok: true, data: { prompt: null } });
+  expect(invoke).not.toHaveBeenCalledWith(IPC.GetPrFailedChecks, expect.anything());
+
+  setStore('tasks', 'task', 'prUrl', 'https://github.com/o/r/pull/7');
+  vi.mocked(invoke).mockImplementation(async (channel) =>
+    channel === IPC.GetPrFailedChecks ? [] : undefined,
+  );
+  reply = await settledRequest(IPC.Remote_GetFixCiPromptRequest, { taskId: 'task' });
+  expect(reply).toMatchObject({ ok: true, data: { prompt: null } });
+});
+
+it('sends the phone-reviewed Fix CI prompt to the task agent', async () => {
+  const reply = await settledRequest(IPC.Remote_SendFixCiPromptRequest, {
+    taskId: 'task',
+    prompt: 'Fix lint',
+  });
+  expect(reply).toMatchObject({ ok: true });
+  expect(sendPrompt).toHaveBeenCalledWith('task', 'agent', 'Fix lint');
+});
+
+it('rejects Fix CI requests for unknown tasks', async () => {
+  vi.mocked(sendPrompt).mockClear();
+  for (const channel of [IPC.Remote_GetFixCiPromptRequest, IPC.Remote_SendFixCiPromptRequest]) {
+    const reply = await settledRequest(channel, { taskId: 'missing', prompt: 'x' });
+    expect(reply).toMatchObject({ ok: false, error: 'Task not found' });
+  }
+  expect(sendPrompt).not.toHaveBeenCalled();
 });
