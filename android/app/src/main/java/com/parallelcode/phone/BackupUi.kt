@@ -40,7 +40,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val NO_PASSWORD_WARNING =
-    "Without a password, anyone who gets the file can connect to your computers and, if replies are enabled, type to your agents."
+    "Without a password, the backup leaves out pairing, so you enter each computer's PIN again after restoring. " +
+        "Anyone who gets the file can still watch your agents."
 
 /**
  * Settings card: save a backup now, restore one, and back up automatically into a folder.
@@ -100,9 +101,11 @@ fun BackupSettings() {
         )
     }
     pickedFolder?.let { folder ->
+        // Required here: the files pile up in a folder that is often synced off the phone.
         BackupPasswordDialog(
             title = "Back up automatically",
             confirmLabel = "Turn on",
+            passwordRequired = true,
             onDismiss = { pickedFolder = null },
             onConfirm = { password ->
                 pickedFolder = null
@@ -161,7 +164,7 @@ fun BackupSettings() {
         }
         if (folder != null) {
             Text(
-                "Folder: ${folderLabel(folder)}" + if (encrypted) " · encrypted" else " · no password",
+                "Folder: ${folderLabel(folder)}" + if (encrypted) " · encrypted" else " · no password, pairing left out",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppTheme.extra.textMuted,
             )
@@ -291,9 +294,15 @@ fun RestoreBackupButton(modifier: Modifier = Modifier) {
     }
 }
 
-/** Asks for an optional backup password, typed twice; [onConfirm] gets null for none. */
+/** Asks for a backup password, typed twice; unless [passwordRequired], [onConfirm] gets null for none. */
 @Composable
-private fun BackupPasswordDialog(title: String, confirmLabel: String, onDismiss: () -> Unit, onConfirm: (String?) -> Unit) {
+private fun BackupPasswordDialog(
+    title: String,
+    confirmLabel: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String?) -> Unit,
+    passwordRequired: Boolean = false,
+) {
     var password by remember { mutableStateOf("") }
     var repeat by remember { mutableStateOf("") }
     val mismatch = repeat.isNotEmpty() && repeat != password
@@ -302,22 +311,23 @@ private fun BackupPasswordDialog(title: String, confirmLabel: String, onDismiss:
         title = { Text(title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                PasswordField(password, { password = it }, "Password (optional)")
+                PasswordField(password, { password = it }, if (passwordRequired) "Password" else "Password (optional)")
                 if (password.isNotEmpty()) PasswordField(repeat, { repeat = it }, "Repeat password")
                 Text(
                     when {
                         mismatch -> "The passwords don't match."
+                        password.isEmpty() && passwordRequired -> "Automatic backups are always encrypted."
                         password.isEmpty() -> NO_PASSWORD_WARNING
                         else -> "Keep the password safe: a backup can't be restored without it."
                     },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (mismatch || password.isEmpty()) MaterialTheme.colorScheme.error else AppTheme.extra.textMuted,
+                    color = if (mismatch || (password.isEmpty() && !passwordRequired)) MaterialTheme.colorScheme.error else AppTheme.extra.textMuted,
                 )
             }
         },
         confirmButton = {
             TextButton(
-                enabled = password.isEmpty() || repeat == password,
+                enabled = if (password.isEmpty()) !passwordRequired else repeat == password,
                 onClick = { onConfirm(password.ifEmpty { null }) },
             ) { Text(confirmLabel) }
         },

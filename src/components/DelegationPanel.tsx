@@ -23,6 +23,7 @@ import {
 } from '../store/delegation';
 import type { Task } from '../store/types';
 import { getCoordinatorChildren } from '../store/sidebar-order';
+import { CheckIcon, CloseIcon, CommentIcon, CopyIcon, PlayIcon, StopIcon, SyncIcon } from './icons';
 
 export function DelegationPanel(props: {
   task: Task;
@@ -41,6 +42,11 @@ export function DelegationPanel(props: {
   };
   const attempts = () => state()?.attempts.filter((a) => a.status !== 'created') ?? [];
   const messages = () => state()?.messages.filter((m) => m.state === 'waiting') ?? [];
+  const handoffs = () =>
+    state()
+      ?.messages.filter((m) => m.origin === 'user' && m.state !== 'waiting' && !m.deliveryFailed)
+      .slice(-5) ?? [];
+  const agentLabel = (id: string, fallback: string) => store.agents[id]?.def.name ?? fallback;
   const failures = () => state()?.messages.filter((m) => m.deliveryFailed) ?? [];
   const coordinating = () =>
     props.task.delegationParent ||
@@ -100,6 +106,9 @@ export function DelegationPanel(props: {
       state: 'handled',
     });
   }
+  // Chat mode registers only canvas tools, so no restart can give its pane delegation tools.
+  const isChatPane = (agentId: string) =>
+    props.task.mainAgentView === 'chat' && props.task.agentIds[0] === agentId;
   const rolloutAgents = () => {
     if (
       !store.mcpOrchestrationEnabled ||
@@ -109,6 +118,7 @@ export function DelegationPanel(props: {
     )
       return [];
     return props.task.agentIds
+      .filter((id) => !isChatPane(id))
       .map((id) => store.agents[id])
       .filter(
         (agent) => agent && !agent.capabilities?.canCreate && isSupportedDelegationAgent(agent.def),
@@ -121,8 +131,7 @@ export function DelegationPanel(props: {
       !!props.task.agentSessionIds?.[agentId] &&
       canResumeSessionId(agent.def.command) &&
       !hasUserMcpConfiguration(agent.def.args) &&
-      !hasUserMcpConfiguration(agent.def.resume_args ?? []) &&
-      !(props.task.mainAgentView === 'chat' && props.task.agentIds[0] === agentId)
+      !hasUserMcpConfiguration(agent.def.resume_args ?? [])
     );
   };
   async function restartForTools(agentId: string) {
@@ -137,6 +146,7 @@ export function DelegationPanel(props: {
         props.task.coordinatedBy ||
         props.task.stagedNotification ||
         messages().length > 0 ||
+        handoffs().length > 0 ||
         failures().length > 0 ||
         rolloutAgents().length > 0
       }
@@ -155,10 +165,12 @@ export function DelegationPanel(props: {
             <div role="alert" style={{ 'overflow-wrap': 'anywhere', 'margin-bottom': '8px' }}>
               <strong style={{ color: theme.error }}>Message delivery failed</strong>
               <div>
-                From {message.sender.name} to {message.recipient.agentLabel}
+                From {message.origin === 'user' ? 'you' : message.sender.name} to{' '}
+                {agentLabel(message.recipient.agentId, message.recipient.agentLabel)}
               </div>
               <p>{message.reason}</p>
               <button
+                class="btn-with-icon"
                 disabled={busy()}
                 onClick={() =>
                   void act(() =>
@@ -169,6 +181,7 @@ export function DelegationPanel(props: {
                   )
                 }
               >
+                <CloseIcon size={12} />
                 Dismiss failure
               </button>
             </div>
@@ -200,6 +213,7 @@ export function DelegationPanel(props: {
                 when={props.task.delegationPaused || state()?.paused}
                 fallback={
                   <button
+                    class="btn-with-icon"
                     disabled={busy()}
                     onClick={() =>
                       // eslint-disable-next-line solid/reactivity -- act invokes this callback immediately within the click handler.
@@ -208,12 +222,14 @@ export function DelegationPanel(props: {
                       )
                     }
                   >
+                    <StopIcon size={12} />
                     Stop all subtasks
                   </button>
                 }
               >
                 <span>Subtask launches paused; worktrees are preserved.</span>
                 <button
+                  class="btn-with-icon"
                   disabled={busy()}
                   onClick={() =>
                     // eslint-disable-next-line solid/reactivity -- act invokes this callback immediately within the click handler.
@@ -222,6 +238,7 @@ export function DelegationPanel(props: {
                     )
                   }
                 >
+                  <PlayIcon size={12} />
                   Resume subtask launches
                 </button>
               </Show>
@@ -237,6 +254,7 @@ export function DelegationPanel(props: {
                 : `Failed — ${attempt.error ?? 'Unknown startup error'}`}
               <Show when={attempt.status === 'failed'}>
                 <button
+                  class="btn-with-icon"
                   disabled={busy()}
                   onClick={() =>
                     // eslint-disable-next-line solid/reactivity -- act invokes this callback immediately within the click handler.
@@ -249,6 +267,7 @@ export function DelegationPanel(props: {
                     )
                   }
                 >
+                  <CloseIcon size={12} />
                   Dismiss attempt
                 </button>
               </Show>
@@ -264,6 +283,7 @@ export function DelegationPanel(props: {
               {props.task.stagedNotification?.text}
             </pre>
             <button
+              class="btn-with-icon"
               disabled={busy()}
               onClick={() =>
                 // eslint-disable-next-line solid/reactivity -- act invokes this callback immediately within the click handler.
@@ -278,11 +298,34 @@ export function DelegationPanel(props: {
                 })
               }
             >
+              <CheckIcon size={12} />
               Mark read
             </button>
             <small> Marks these updates as read without merging changes.</small>
           </details>
         </Show>
+        <For each={handoffs()}>
+          {(message) => (
+            <details>
+              <summary>
+                {message.state === 'delivered'
+                  ? 'Delivered to '
+                  : message.state === 'handled'
+                    ? 'Moved to composer for '
+                    : 'Canceled for '}
+                {agentLabel(message.recipient.agentId, message.recipient.agentLabel)}
+              </summary>
+              <p>
+                {message.state === 'delivered'
+                  ? 'Prompt submitted; this does not mean the review is complete.'
+                  : (message.reason ?? 'The user took responsibility for this message.')}
+              </p>
+              <pre style={{ 'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere' }}>
+                {message.prompt}
+              </pre>
+            </details>
+          )}
+        </For>
         <Show when={messages().length > 0}>
           <details>
             <summary>Queued messages ({messages().length})</summary>
@@ -302,10 +345,12 @@ export function DelegationPanel(props: {
                   }}
                 >
                   <strong>
-                    {message.sender.name} · {message.sender.agentLabel}
+                    {message.origin === 'user' ? 'You' : message.sender.name} ·{' '}
+                    {agentLabel(message.sender.agentId, message.sender.agentLabel)}
                   </strong>
                   <div class="delegation-message-meta">
-                    To {message.recipient.name} · {message.recipient.agentLabel} ·{' '}
+                    To {message.recipient.name} ·{' '}
+                    {agentLabel(message.recipient.agentId, message.recipient.agentLabel)} ·{' '}
                     {new Date(message.createdAt).toLocaleTimeString()}
                   </div>
                   <p style={{ 'white-space': 'pre-wrap', 'overflow-wrap': 'anywhere' }}>
@@ -328,16 +373,27 @@ export function DelegationPanel(props: {
                     </Show>
                     <Show when={props.canUseComposer?.(message)}>
                       <button
+                        class="btn-with-icon"
                         disabled={busy()}
                         onClick={() =>
                           // eslint-disable-next-line solid/reactivity -- act invokes the callback synchronously in this click handler.
                           void act(() => useComposer(message))
                         }
                       >
+                        <CommentIcon size={12} />
                         Use in composer
                       </button>
                     </Show>
-                    <button disabled={busy()} onClick={() => void act(() => copyMessage(message))}>
+                    <button
+                      class="btn-with-icon"
+                      disabled={busy()}
+                      onClick={() => void act(() => copyMessage(message))}
+                    >
+                      {copied() === message.deliveryId ? (
+                        <CheckIcon size={12} />
+                      ) : (
+                        <CopyIcon size={12} />
+                      )}
                       {copied() === message.deliveryId ? 'Copied' : 'Copy text'}
                     </button>
                     <button
@@ -387,9 +443,11 @@ export function DelegationPanel(props: {
                   }
                 >
                   <button
+                    class="btn-with-icon"
                     disabled={busy()}
                     onClick={() => void act(() => restartForTools(agent.id))}
                   >
+                    <SyncIcon size={12} />
                     Restart and resume {agent.def.name} to enable delegation tools
                   </button>
                 </Show>

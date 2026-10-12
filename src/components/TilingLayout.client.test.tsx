@@ -4,14 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IPC } from '../../electron/ipc/channels';
 import { invoke } from '../lib/ipc';
 import { store, setStore } from '../store/core';
-import { setActiveTask, toggleNewTaskPanel } from '../store/navigation';
+import {
+  openPanelOrder,
+  setTaskProjectFilter,
+  setActiveTask,
+  toggleNewTaskPanel,
+} from '../store/navigation';
 import { setTaskFocusedPanel } from '../store/focused-panel';
 import {
   bringTaskToFront,
   sendTaskToBack,
   startBackgroundTaskWatcher,
 } from '../store/background-tasks';
-import { createTask } from '../store/tasks';
+import { collapseTask, createTask } from '../store/tasks';
 import { deletePanelUserSize, getPanelUserSize, setPanelUserSize } from '../store/ui';
 import { TilingLayout } from './TilingLayout';
 
@@ -51,6 +56,7 @@ beforeEach(() => {
         description: '',
       },
     ],
+    taskProjectFilter: null,
     taskOrder: [],
     collapsedTaskOrder: [],
     tasks: {},
@@ -62,7 +68,6 @@ beforeEach(() => {
     focusMode: false,
     newTaskDropUrl: null,
     newTaskPrefillPrompt: null,
-    defaultStepsEnabled: false,
     defaultSkipPermissions: false,
   });
   container = document.createElement('div');
@@ -254,7 +259,6 @@ describe('inline task creation', () => {
     assert(name);
     name.value = 'Custom task name';
     name.dispatchEvent(new Event('input', { bubbles: true }));
-    container.querySelector<HTMLInputElement>('[data-nav-field="steps-enabled"] input')?.click();
     toggle.click();
     expect(container.querySelector('[data-nav-field="task-name"]')).toBeNull();
     vi.mocked(createTask).mockResolvedValueOnce('created-task');
@@ -263,7 +267,7 @@ describe('inline task creation', () => {
       ?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(store.showNewTaskPanel).toBe(false));
     expect(createTask).toHaveBeenLastCalledWith(
-      expect.objectContaining({ name: 'Custom task name', stepsEnabled: true }),
+      expect.objectContaining({ name: 'Custom task name' }),
     );
   });
 
@@ -657,4 +661,59 @@ describe('task column resizing', () => {
     expect(getPanelUserSize('tiling:terminal')).toBeUndefined();
     expect(container.querySelector('.resize-handle.dragging')).toBeNull();
   });
+});
+
+it('filters projects without unmounting panels and keeps navigation in the selected project', async () => {
+  setStore('projects', [
+    { id: 'one', name: 'One', path: '/one', color: '#abc' },
+    { id: 'two', name: 'Two', path: '/two', color: '#def' },
+  ]);
+  for (const id of ['one', 'two']) {
+    setStore('tasks', id, {
+      id,
+      name: id,
+      projectId: id,
+      branchName: id,
+      worktreePath: `/${id}`,
+      gitIsolation: 'worktree',
+      agentIds: [],
+      shellAgentIds: [],
+      notes: '',
+      lastPrompt: '',
+    });
+  }
+  setStore('taskOrder', ['one', 'two']);
+  setActiveTask('one');
+  const one = container.querySelector('[data-task-id="one"]');
+  const two = container.querySelector('[data-task-id="two"]');
+  assert(one && two);
+  const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+  const scrollTo = vi.spyOn(Element.prototype, 'scrollTo');
+  setTaskProjectFilter('two');
+  await new Promise(requestAnimationFrame);
+  const scrollOptions = [...scrollIntoView.mock.calls, ...scrollTo.mock.calls].map(
+    (call) => call[0] as ScrollToOptions | undefined,
+  );
+  expect(scrollOptions.length).toBeGreaterThan(0);
+  expect(scrollOptions.every((options) => options?.behavior === 'instant')).toBe(true);
+  scrollIntoView.mockRestore();
+  scrollTo.mockRestore();
+  expect(one.parentElement?.style.display).toBe('none');
+  expect(two.parentElement?.style.display).not.toBe('none');
+  expect(store.activeTaskId).toBe('two');
+  expect(openPanelOrder()).toEqual(['two']);
+  setTaskProjectFilter(null);
+  expect(container.querySelector('[data-task-id="one"]')).toBe(one);
+  expect(one.parentElement?.style.display).not.toBe('none');
+  expect(openPanelOrder()).toEqual(['one', 'two']);
+  setTaskProjectFilter('two');
+  setActiveTask('one');
+  expect(store.taskProjectFilter).toBeNull();
+  setTaskProjectFilter('two');
+  await collapseTask('two');
+  expect(store.activeTaskId).toBeNull();
+  expect(store.taskProjectFilter).toBe('two');
+  expect(openPanelOrder()).toEqual([]);
+  setTaskProjectFilter('one');
+  expect(store.activeTaskId).toBe('one');
 });

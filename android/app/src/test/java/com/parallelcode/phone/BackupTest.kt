@@ -42,20 +42,42 @@ class BackupTest {
     }
 
     @Test
-    fun `a backup without a password is a plain zip that restores every value`() {
+    fun `a backup without a password is a plain zip that restores everything but pairing`() {
         val source = phone()
         val bytes = Backup.create(source, null)
         assertFalse(Backup.isEncrypted(bytes))
         assertEquals('P'.code.toByte(), bytes[0]) // zip local file header "PK"
+        assertFalse(unzipped(bytes).contains("paired-token"))
 
         val target = emptyPhone()
         target.getValue(SettingsStore.PREFS_NAME).edit().putBoolean("stale", true).apply()
         Backup.restore(bytes, null, target)
 
-        assertSameData(source, target)
+        assertSameData(source - CredentialStore.PREFS_NAME, target)
         val credentials = CredentialStore(target.getValue(CredentialStore.PREFS_NAME))
-        assertEquals("paired-token", credentials.pairedToken)
+        assertEquals(null, credentials.pairedToken)
+        assertEquals("http://192.168.1.20:7777", credentials.link?.baseUrl)
+        assertEquals("view-token", credentials.link?.token)
         assertEquals("Desk", credentials.computers.single().alias)
+    }
+
+    @Test
+    fun `a backup with a password keeps pairing`() {
+        val source = phone()
+        val target = emptyPhone()
+        Backup.restore(Backup.create(source, "correct horse"), "correct horse", target)
+
+        assertSameData(source, target)
+        assertEquals("paired-token", CredentialStore(target.getValue(CredentialStore.PREFS_NAME)).pairedToken)
+    }
+
+    /** Every entry of a plain backup, as one string. */
+    private fun unzipped(bytes: ByteArray): String {
+        val out = StringBuilder()
+        java.util.zip.ZipInputStream(bytes.inputStream()).use { zip ->
+            while (zip.nextEntry != null) out.append(zip.readBytes().toString(Charsets.UTF_8))
+        }
+        return out.toString()
     }
 
     @Test

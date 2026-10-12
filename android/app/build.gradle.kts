@@ -64,6 +64,9 @@ dependencies {
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     // Scanner UI comes from Google Play services, so the app needs no camera permission.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    // The scanner pulls in play-services-base 18.1.0, which registers a broadcast receiver
+    // without an export flag; Android 14+ kills apps targeting SDK 34+ for that on Scan.
+    implementation("com.google.android.gms:play-services-base:18.5.0")
 
     testImplementation("junit:junit:4.13.2")
     // android.jar only has stubs for org.json; unit tests need the real implementation.

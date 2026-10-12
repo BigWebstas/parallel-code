@@ -1,3 +1,5 @@
+import { createProjectFilterTransition } from '../lib/projectFilterTransition';
+import { matchesTaskProjectFilter, taskProjectFilter } from '../store/task-project-filter';
 import {
   batch,
   Show,
@@ -9,6 +11,7 @@ import {
   onMount,
   onCleanup,
   ErrorBoundary,
+  lazy,
   type JSX,
 } from 'solid-js';
 import {
@@ -24,7 +27,6 @@ import {
   toggleNewTaskPanel,
   armSpCompletion,
 } from '../store/store';
-import { DocumentWorkspacePanel } from '../documents/DocumentWorkspacePanel';
 import { documentAgentTaskId } from '../documents/task-id';
 import { scrollTaskIntoView } from '../store/focused-panel';
 import { codeProjects } from '../store/projects';
@@ -39,6 +41,14 @@ import { mod } from '../lib/platform';
 import { createCtrlShiftWheelResizeHandler } from '../lib/wheelZoom';
 import { shouldAnimateTaskAppearance } from '../lib/reducedMotion';
 import { TASK_TILE_DEFAULT_WIDTH, TASK_TILE_MIN_WIDTH } from '../lib/layout-sizes';
+import { SyncIcon } from './icons';
+
+// Lazy: the document workspace (CodeMirror, parse5) loads when its panel opens.
+const DocumentWorkspacePanel = lazy(() =>
+  import('../documents/DocumentWorkspacePanel').then((m) => ({
+    default: m.DocumentWorkspacePanel,
+  })),
+);
 
 const VIEWPORT_EPSILON_PX = 4;
 
@@ -58,9 +68,11 @@ interface TileChild {
 export function TilingLayout() {
   const documentTaskId = () =>
     store.activeDocumentProjectId ? documentAgentTaskId(store.activeDocumentProjectId) : null;
-  const hasPanels = () => store.taskOrder.length > 0 || !!documentTaskId();
+  const hasPanels = () => store.taskOrder.some(matchesTaskProjectFilter) || !!documentTaskId();
   const focusMode = () => store.focusMode && hasPanels() && !store.showNewTaskPanel;
   let containerRef: HTMLDivElement | undefined;
+  createProjectFilterTransition(taskProjectFilter, () => containerRef);
+  let previousProjectFilter = taskProjectFilter();
   const [hasOverflowLeft, setHasOverflowLeft] = createSignal(false);
   const [hasOverflowRight, setHasOverflowRight] = createSignal(false);
   const [dragging, setDragging] = createSignal<number | null>(null);
@@ -116,6 +128,7 @@ export function TilingLayout() {
     for (const el of taskEls) {
       const taskId = el.dataset.taskId;
       if (!taskId || (!store.tasks[taskId] && taskId !== documentTaskId())) continue;
+      if (store.tasks[taskId] && !matchesTaskProjectFilter(taskId)) continue;
       const rect = el.getBoundingClientRect();
       if (rect.right <= containerRect.left + VIEWPORT_EPSILON_PX) {
         nextVisibility[taskId] = 'offscreen-left';
@@ -198,6 +211,7 @@ export function TilingLayout() {
   // Recompute viewport state when panel order/structure changes.
   createEffect(() => {
     void store.taskOrder.join('|');
+    void taskProjectFilter();
     void documentTaskId();
     requestAnimationFrame(() => updateViewportState());
   });
@@ -206,6 +220,9 @@ export function TilingLayout() {
   // No-op in focus mode: panels are absolute-positioned, scrolling is meaningless.
   createEffect(() => {
     const activeId = store.activeTaskId;
+    const projectFilter = taskProjectFilter();
+    const filterChanged = projectFilter !== previousProjectFilter;
+    previousProjectFilter = projectFilter;
     const newTaskPanelOpen = store.showNewTaskPanel;
     const returningFromNewTask = wasNewTaskPanelOpen && !newTaskPanelOpen;
     const openingNewTask = !wasNewTaskPanelOpen && newTaskPanelOpen;
@@ -226,7 +243,12 @@ export function TilingLayout() {
       // The draft is opened at the far end of the strip. Returning across a
       // long task list must not turn a synchronous Cancel into a long pan.
       const behavior: ScrollBehavior =
-        isFirstActiveTaskScroll || returningFromNewTask ? 'instant' : 'smooth';
+        isFirstActiveTaskScroll ||
+        returningFromNewTask ||
+        filterChanged ||
+        !shouldAnimateTaskAppearance()
+          ? 'instant'
+          : 'smooth';
       isFirstActiveTaskScroll = false;
       scrollTaskIntoView(activeId, behavior);
     }
@@ -344,6 +366,7 @@ export function TilingLayout() {
                       </div>
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button
+                          class="btn-with-icon"
                           onClick={reset}
                           style={{
                             background: theme.bgElevated,
@@ -354,6 +377,7 @@ export function TilingLayout() {
                             cursor: 'pointer',
                           }}
                         >
+                          <SyncIcon size={12} />
                           Retry
                         </button>
                         <button
@@ -468,7 +492,7 @@ export function TilingLayout() {
 
   createEffect(
     on(
-      () => [focusMode(), ...panelChildren().map((child) => child.id)],
+      () => [focusMode(), taskProjectFilter(), ...panelChildren().map((child) => child.id)],
       () => cancelDrag?.(),
     ),
   );
@@ -670,7 +694,10 @@ export function TilingLayout() {
           </Show>
           <For each={panelChildren()}>
             {(child, i) => {
+              const filteredOut = () =>
+                store.taskOrder.includes(child.id) && !matchesTaskProjectFilter(child.id);
               const wrapperStyle = createMemo((): JSX.CSSProperties => {
+                if (filteredOut()) return { display: 'none' };
                 const isPlaceholder = child.id === '__placeholder';
                 if (focusMode()) {
                   if (isPlaceholder) return { display: 'none' };
@@ -702,7 +729,7 @@ export function TilingLayout() {
                 };
               });
               const showHandle = () =>
-                !focusMode() && !child.fixed && i() < panelChildren().length - 1;
+                !filteredOut() && !focusMode() && !child.fixed && i() < panelChildren().length - 1;
               return (
                 <>
                   <div
@@ -723,7 +750,13 @@ export function TilingLayout() {
                         if (dragging() !== null) return;
                         const panels = panelChildren();
                         const left = panels[i()];
-                        const right = panels[i() + 1];
+                        const right = panels
+                          .slice(i() + 1)
+                          .find(
+                            (panel) =>
+                              !store.taskOrder.includes(panel.id) ||
+                              matchesTaskProjectFilter(panel.id),
+                          );
                         if (!left || !right) return;
                         deletePanelUserSize([`tiling:${left.id}`, `tiling:${right.id}`]);
                         requestAnimationFrame(() => updateViewportState());

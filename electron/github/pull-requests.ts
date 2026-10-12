@@ -35,7 +35,7 @@ export async function getPullRequestDetails(prUrl: string): Promise<PullRequestD
     runGhJson([
       'repo',
       'view',
-      `${ref.owner}/${ref.repo}`,
+      `${ref.host}/${ref.owner}/${ref.repo}`,
       '--json',
       'squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod',
     ]),
@@ -69,6 +69,13 @@ export function parseMergeMethods(raw: unknown): PrMergeMethod[] {
   return methods;
 }
 
+export interface MergePullRequestOptions {
+  method: PrMergeMethod;
+  headSha: string;
+  /** Bypass branch protection (`gh pr merge --admin`); GitHub decides who may. */
+  admin?: boolean;
+}
+
 /**
  * Merges only if the PR head is still `headSha`, the commit the user saw.
  * Resolves true once GitHub reports the PR merged; false when gh accepted the
@@ -76,13 +83,13 @@ export function parseMergeMethods(raw: unknown): PrMergeMethod[] {
  */
 export async function mergePullRequest(
   prUrl: string,
-  method: PrMergeMethod,
-  headSha: string,
+  { method, headSha, admin = false }: MergePullRequestOptions,
 ): Promise<boolean> {
   requirePrRef(prUrl);
   // No --delete-branch: gh would try to delete the local branch, which fails
   // while the task worktree has it checked out. Closing the task cleans up.
-  await runGh(['pr', 'merge', prUrl, `--${method}`, '--match-head-commit', headSha]);
+  const args = ['pr', 'merge', prUrl, `--${method}`, '--match-head-commit', headSha];
+  await runGh(admin ? [...args, '--admin'] : args);
   try {
     const raw = asRecord(await runGhJson(['pr', 'view', prUrl, '--json', 'state']));
     return asString(raw?.['state']) === 'MERGED';
@@ -91,6 +98,12 @@ export async function mergePullRequest(
     logWarn('github', 'PR state check after merge failed', { err: errMessage(err) });
     return false;
   }
+}
+
+/** Takes a draft PR out of draft (`gh pr ready`); GitHub refuses drafts a merge. */
+export async function markPullRequestReady(prUrl: string): Promise<void> {
+  requirePrRef(prUrl);
+  await runGh(['pr', 'ready', prUrl]);
 }
 
 /** Failed checks of the PR head, with job log tails for GitHub Actions jobs. */
@@ -113,7 +126,12 @@ async function withLogTail(
   ref: PrRef,
   jobId: string,
 ): Promise<PrFailedCheck> {
-  const args = ['api', `repos/${ref.owner}/${ref.repo}/actions/jobs/${jobId}/logs`];
+  const args = [
+    'api',
+    `repos/${ref.owner}/${ref.repo}/actions/jobs/${jobId}/logs`,
+    '--hostname',
+    ref.host,
+  ];
   try {
     const log = await runGh(args).catch((err: unknown) => {
       // Newer gh refuses colored output unless asked; older gh lacks the flag,
@@ -153,9 +171,25 @@ export function parseFailedChecks(rollup: unknown): PrFailedCheck[] {
 }
 
 /** Job id from an Actions details URL of the PR's own repository. */
-export function actionsJobId(url: string, ref: { owner: string; repo: string }): string | null {
-  const match = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/actions\/runs\/\d+\/job\/(\d+)/.exec(
-    url,
+export function actionsJobId(
+  url: string,
+  ref: Pick<PrRef, 'host' | 'owner' | 'repo'>,
+): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.host !== ref.host ||
+    parsed.username ||
+    parsed.password
+  )
+    return null;
+  const match = /^\/([\w.-]+)\/([\w.-]+)\/actions\/runs\/\d+\/job\/(\d+)(?:\/|$)/.exec(
+    parsed.pathname,
   );
   if (!match) return null;
   const sameRepo =
@@ -190,6 +224,8 @@ export async function getReviewFeedback(prUrl: string): Promise<PrReviewFeedback
   const raw = await runGhJson([
     'api',
     'graphql',
+    '--hostname',
+    ref.host,
     '-f',
     `query=${REVIEW_QUERY}`,
     '-f',

@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { RingBuffer } from './ring-buffer.js';
 
 describe('RingBuffer', () => {
-  it('defaults to 2 MB capacity', () => {
+  it('defaults to 64 KB capacity', () => {
+    // Every PTY allocates one up front; phones get history from the mirror instead.
     const rb = new RingBuffer();
-    // Default capacity should be 2 MB
     expect(rb.length).toBe(0);
-    const chunk = Buffer.alloc(1024 * 1024, 'a');
-    rb.write(chunk);
-    expect(rb.length).toBe(1024 * 1024);
+    rb.write(Buffer.alloc(1024 * 1024, 'a'));
+    expect(rb.length).toBe(64 * 1024);
   });
 
   it('reads back appended data in order', () => {

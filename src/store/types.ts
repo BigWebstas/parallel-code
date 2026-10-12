@@ -14,7 +14,6 @@ import type { AgentTourPayload } from '../../electron/shared/agent-tour';
 import type { CanvasTaskLink, CanvasTaskSource } from '../lib/canvas-task-links';
 import type {
   AgentDef,
-  StepEntry,
   UsageProvider,
   UsageState,
   VerificationRun,
@@ -23,6 +22,9 @@ import type {
 export type { UsageState } from '../ipc/types';
 import type { ChatPermissionMode, ChatSession } from '../../electron/shared/agent-chat-types';
 import type { AskCodeProvider } from '../../electron/shared/ask-code-models';
+import type { TaskNameModelId } from '../../electron/shared/task-name-model';
+import type { TaskBriefRecord } from '../lib/task-brief';
+import type { TaskConfidence } from '../lib/task-confidence';
 import type {
   EvidenceModelSettings,
   EvidencePackage,
@@ -231,6 +233,7 @@ export interface Task {
   promptedAgentIds?: string[];
   initialPrompt?: string; // auto-sends when agent is ready
   savedInitialPrompt?: string;
+  secondOpinionDismissed?: boolean;
   prefillPrompt?: string; // fills prompt input without sending
   closingStatus?: 'closing' | 'removing' | 'error';
   closingError?: string;
@@ -254,6 +257,10 @@ export interface Task {
   githubUrl?: string;
   prUrl?: string;
   superProductivity?: SuperProductivityLink;
+  /** Absolute return time for a timed snooze, retained across app restarts. */
+  snoozedUntil?: number;
+  /** Backgrounded until the PR checks stop pending, retained across app restarts. */
+  snoozedUntilCi?: boolean;
   collapsed?: boolean;
   savedAgentDef?: AgentDef;
   savedAgentDefs?: AgentDef[];
@@ -290,8 +297,6 @@ export interface Task {
   reasoningWorkspaces?: Record<string, ReasoningWorkspace>;
   /** Column shown without a tab (the user asked for it). Not persisted. */
   canvasOpen?: boolean;
-  stepsEnabled?: boolean;
-  stepsContent?: StepEntry[];
   lastInputAt?: string;
   stagedNotification?: StagedNotification;
   userActivityHoldUntil?: number;
@@ -329,6 +334,14 @@ export interface Task {
   verificationRun?: VerificationRun;
   /** Latest evidence package: what the app observed, the agent claimed and a model thought. */
   evidence?: EvidencePackage;
+  /** Snapshot of the work so far, rewritten by a cheap model after each agent turn. */
+  brief?: TaskBriefRecord;
+  /** Runtime-only: a brief is being written, or the last attempt failed. */
+  briefStatus?: { state: 'generating' } | { state: 'failed'; message: string };
+  /** Runtime-only: newest diff fingerprint read, which ratings are compared against. */
+  codeFingerprint?: { fingerprint: string; at: number };
+  /** Latest rating the agent published through `confidence_publish`. */
+  confidence?: TaskConfidence;
   landingState?: LandingState;
   landingReason?: string;
   landingSummary?: string;
@@ -386,6 +399,11 @@ export interface PersistedTask {
   /** Validated on load. */
   superProductivity?: unknown;
   savedInitialPrompt?: string;
+  secondOpinionDismissed?: boolean;
+  /** Absolute return time for a timed snooze, retained across app restarts. */
+  snoozedUntil?: number;
+  /** Backgrounded until the PR checks stop pending, retained across app restarts. */
+  snoozedUntilCi?: boolean;
   collapsed?: boolean;
   savedAgentSessionIds?: (string | null)[];
   savedSelectedAgentIndex?: number;
@@ -401,7 +419,6 @@ export interface PersistedTask {
   mindMap?: unknown;
   reasoningProfile?: ReasoningProfile;
   reasoningWorkspaces?: Record<string, ReasoningWorkspace>;
-  stepsEnabled?: boolean;
   branchAdoptedFrom?: string;
   branchOfferDismissed?: string;
   delegationParent?: boolean;
@@ -427,6 +444,10 @@ export interface PersistedTask {
   verificationRun?: VerificationRun;
   /** Validated on load. */
   evidence?: unknown;
+  /** Validated on load. */
+  brief?: unknown;
+  /** Validated on load. */
+  confidence?: unknown;
   landingState?: LandingState;
   landingReason?: string;
   landingSummary?: string;
@@ -463,6 +484,7 @@ export interface PersistedState {
   globalScale?: number;
   completedTaskDate?: string;
   completedTaskCount?: number;
+  countedMergedPrs?: string[];
   mergedLinesAdded?: number;
   mergedLinesRemoved?: number;
   terminalFont?: string;
@@ -473,6 +495,10 @@ export interface PersistedState {
   windowState?: PersistedWindowState;
   autoTrustFolders?: boolean;
   showPlans?: boolean;
+  modelTaskNames?: boolean;
+  taskNameModel?: TaskNameModelId;
+  taskBriefs?: boolean;
+  confidencePrompt?: string;
   showSidebarTips?: boolean;
   showSidebarProgress?: boolean;
   sidebarNeedsInputFirst?: boolean;
@@ -501,7 +527,6 @@ export interface PersistedState {
   coordinatorNotificationDelayMs?: number;
   coordinatorControlHintDismissed?: boolean;
   preferUiMode?: boolean;
-  defaultStepsEnabled?: boolean;
   defaultSkipPermissions?: boolean;
   defaultPropagateSkipPermissions?: boolean;
   /** Show which canvas nodes the user owns (agents cannot edit them without override). */
@@ -521,7 +546,7 @@ export interface MCPStatus {
 export type PanelId = string;
 
 export interface PendingAction {
-  type: 'close' | 'merge' | 'push';
+  type: 'close' | 'finish';
   taskId: string;
 }
 
@@ -573,6 +598,7 @@ export interface AppStore {
   notification: string | null;
   completedTaskDate: string;
   completedTaskCount: number;
+  countedMergedPrs: string[];
   mergedLinesAdded: number;
   mergedLinesRemoved: number;
   terminalFont: string;
@@ -583,11 +609,20 @@ export interface AppStore {
   windowState: PersistedWindowState | null;
   autoTrustFolders: boolean;
   showPlans: boolean;
+  /** Opt-in: ask a cheap model for a short title when a task is named from its prompt. */
+  modelTaskNames: boolean;
+  taskNameModel: TaskNameModelId;
+  /** Opt-in: write a task brief with the naming model after each agent turn. */
+  taskBriefs: boolean;
+  /** Prompt "Rate confidence" sends; empty uses the built-in audit. */
+  confidencePrompt: string;
   showSidebarTips: boolean;
   showSidebarProgress: boolean;
   /** Pin tasks that are waiting on an answer to the top of the sidebar task
    *  list, newest question first. */
   sidebarNeedsInputFirst: boolean;
+  /** Session-only project filter for task navigation and panels. */
+  taskProjectFilter: string | null;
   projectsCollapsed: boolean;
   desktopNotificationsEnabled: boolean;
   inactiveColumnOpacity: number;
@@ -606,6 +641,9 @@ export interface AppStore {
     notes?: string;
     baseBranch?: string;
     canvasSource?: CanvasTaskSource;
+    /** null marks a batch without a single issue association. */
+    githubUrl?: string | null;
+    githubPr?: import('../ipc/types').GitHubWorkItem;
     /** Set when the form was opened from a Super Productivity task. */
     superProductivity?: SpNewTaskSource;
   } | null;
@@ -613,6 +651,7 @@ export interface AppStore {
   remoteAccess: RemoteAccess;
   /** Persisted: start the remote (Connect Phone) server automatically on launch. */
   autoStartRemoteAccess: boolean;
+  githubIssuesProjectId: string | null;
   showArena: boolean;
   keybindingPreset: string;
   /** Per-preset user overrides. Outer key = preset ID, inner = binding ID → override. */
@@ -638,7 +677,6 @@ export interface AppStore {
   coordinatorNotificationDelayMs: number;
   coordinatorControlHintDismissed: boolean;
   preferUiMode: boolean;
-  defaultStepsEnabled: boolean;
   defaultSkipPermissions: boolean;
   defaultPropagateSkipPermissions: boolean;
   canvasOwnershipBadges: boolean;
