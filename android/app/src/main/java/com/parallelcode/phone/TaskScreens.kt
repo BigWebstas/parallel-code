@@ -77,6 +77,9 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
     var prompt by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var addingProject by rememberSaveable { mutableStateOf(false) }
+    var newProjectName by rememberSaveable { mutableStateOf("") }
+    var newProjectParent by rememberSaveable { mutableStateOf("") }
     // Same default title as the phone web UI: the start of the prompt.
     val title = name.trim().ifEmpty { prompt.trim().replace(Regex("\\s+"), " ").take(80) }
 
@@ -202,6 +205,61 @@ fun NewTaskScreen(client: RemoteClient, onDone: () -> Unit, onNeedsPairing: () -
                         }
                     }
                 }
+            }
+            if (addingProject) {
+                OutlinedTextField(
+                    value = newProjectName,
+                    onValueChange = { newProjectName = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("New project name") },
+                    singleLine = true,
+                    enabled = !busy,
+                    shape = MaterialTheme.shapes.large,
+                )
+                OutlinedTextField(
+                    value = newProjectParent,
+                    onValueChange = { newProjectParent = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Folder on your computer") },
+                    supportingText = { Text("A new git repository is created inside it.") },
+                    singleLine = true,
+                    enabled = !busy,
+                    shape = MaterialTheme.shapes.large,
+                )
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !busy && newProjectName.isNotBlank() && newProjectParent.isNotBlank(),
+                    shape = MaterialTheme.shapes.large,
+                    onClick = {
+                        busy = true
+                        error = null
+                        scope.launch {
+                            try {
+                                val created = client.createProject(newProjectName.trim(), newProjectParent.trim())
+                                projects = (projects ?: emptyList()) + created
+                                projectId = created.id
+                                newProjectName = ""
+                                addingProject = false
+                            } catch (e: ApiException) {
+                                failed(e)
+                            } finally {
+                                busy = false
+                            }
+                        }
+                    },
+                ) { Text(if (busy) "Creating…" else "Create project", fontWeight = FontWeight.Bold) }
+            } else if (projects != null) {
+                TextButton(
+                    onClick = {
+                        if (newProjectParent.isEmpty()) {
+                            // Suggest the folder the existing projects already live in.
+                            newProjectParent = projects?.firstNotNullOfOrNull { it.path }
+                                ?.substringBeforeLast('/', "").orEmpty()
+                        }
+                        addingProject = true
+                    },
+                    enabled = !busy,
+                ) { Text("New project…") }
             }
             val loadedAgents = agents
             if (loadedAgents != null && loadedAgents.isNotEmpty()) {

@@ -9,7 +9,7 @@ import { getTaskMindMap, openCanvasViewFromAgent, updateTaskMindMapFromAgent } f
 import { getEvidenceForAgent, submitEvidence } from './evidence';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
 import { store } from './core';
-import { codeProjects, getProject, getProjectPath } from './projects';
+import { addProject, codeProjects, getProject, getProjectPath } from './projects';
 import {
   closeTask,
   createTask,
@@ -70,11 +70,22 @@ function handleGetProjects(req: RendererRequest): void {
     codeProjects().map((p) => ({
       id: p.id,
       name: p.name,
+      path: p.path,
       agentName:
         (store.availableAgents.find((a) => a.id === store.lastAgentId) ?? store.availableAgents[0])
           ?.name ?? '',
     })),
   );
+}
+
+interface AddProjectRequest extends RendererRequest {
+  name: string;
+  path: string;
+}
+
+/** Register a folder the main process just created as a git project. */
+function handleAddProject(req: AddProjectRequest): void {
+  reply(req.reqId, true, { id: addProject(req.name, req.path, true), name: req.name });
 }
 
 /**
@@ -384,6 +395,12 @@ export function startRemoteTaskHandlers(): () => void {
       if (data && typeof data === 'object') handleGetProjects(data as RendererRequest);
     },
   );
+  const offAddProject = window.electron.ipcRenderer.on(
+    IPC.Remote_AddProjectRequest,
+    (data: unknown) => {
+      if (data && typeof data === 'object') handleAddProject(data as AddProjectRequest);
+    },
+  );
   const offCreate = window.electron.ipcRenderer.on(
     IPC.Remote_CreateTaskRequest,
     (data: unknown) => {
@@ -499,6 +516,7 @@ export function startRemoteTaskHandlers(): () => void {
     offOpenCanvas();
     offPublishTour();
     offProjects();
+    offAddProject();
     offCreate();
     offGetNotes();
     offSetNotes();

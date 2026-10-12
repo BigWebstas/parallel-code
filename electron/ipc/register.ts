@@ -70,6 +70,7 @@ import { readCoverageSummary } from './coverage.js';
 import { loadEslintQualityFindings } from './eslint-quality-findings.js';
 import { buildVerifyEnv, validateVerifyCommand, verificationRunner } from './verify.js';
 import { scanEvidence } from './evidence-scan.js';
+import { createProjectFolder } from '../remote/project-create.js';
 import { startRemoteServer, getMCPLogs, type RemoteProject } from '../remote/server.js';
 import type {
   RemoteAttentionState,
@@ -1769,6 +1770,13 @@ export function registerAllHandlers(win: BrowserWindow): void {
     getProjects: () => callRenderer<RemoteProject[]>(IPC.Remote_GetProjectsRequest, {}),
     createTaskFromMobile: (req: { projectId: string; name: string; prompt: string }) =>
       callRenderer<{ taskId: string }>(IPC.Remote_CreateTaskRequest, req),
+    createProjectFromMobile: async (req: { parentDir: string; name: string }) => {
+      const projectPath = await createProjectFolder(req.parentDir, req.name);
+      return callRenderer<RemoteProject>(IPC.Remote_AddProjectRequest, {
+        name: path.basename(projectPath),
+        path: projectPath,
+      });
+    },
     getTaskNotes: (taskId: string) =>
       callRenderer<{ notes: string }>(IPC.Remote_GetNotesRequest, { taskId }).then((r) => r.notes),
     setTaskNotes: (taskId: string, notes: string) =>

@@ -56,7 +56,7 @@ interface TerminalListener {
 /** [json] is the error reply's body, for routes that explain a refusal (e.g. close warnings). */
 class ApiException(message: String, val status: Int = 0, val json: JSONObject? = null) : IOException(message)
 
-data class MobileProject(val id: String, val name: String, val agentName: String?)
+data class MobileProject(val id: String, val name: String, val agentName: String?, val path: String? = null)
 
 data class MobileAgent(
     val id: String,
@@ -315,8 +315,20 @@ class RemoteClient(
         val list = JSONArray(apiRaw("GET", "/api/mobile/projects", null, pairedTokenOrThrow()))
         return List(list.length()) { i ->
             val p = list.getJSONObject(i)
-            MobileProject(p.getString("id"), p.getString("name"), p.optString("agentName").ifEmpty { null })
+            MobileProject(
+                p.getString("id"),
+                p.getString("name"),
+                p.optString("agentName").ifEmpty { null },
+                p.optString("path").ifEmpty { null },
+            )
         }
+    }
+
+    /** Create a new git project folder on the desktop and add it; returns the project. */
+    suspend fun createProject(name: String, parentDir: String): MobileProject {
+        val body = JSONObject().put("name", name).put("parentDir", parentDir)
+        val p = api("POST", "/api/mobile/projects", body, pairedTokenOrThrow())
+        return MobileProject(p.getString("id"), p.getString("name"), null, p.optString("path").ifEmpty { null })
     }
 
     /** Agents a paired phone may choose from when starting tasks. */
