@@ -23,8 +23,6 @@ import {
 } from './tasks';
 import { getVerifyCommand } from './verification';
 import { getPrChecks } from './pr-checks-state';
-import { refreshTaskStatus } from './taskStatus';
-import { isLandedTaskState } from './landing';
 import { loadFailedChecksPrompt } from './github';
 import { getEvidenceConfidence } from './evidence-state';
 import { buildMergeReadiness, type MergeReadinessCheck } from '../components/merge-readiness';
@@ -33,7 +31,6 @@ import { parseGitHubUrl } from '../lib/github-url';
 import { invoke } from '../lib/ipc';
 import { errMessage } from '../lib/log';
 import { getTaskDiffBaseBranch, loadTaskDiff } from '../lib/load-task-diff';
-import { loadCommitFiles } from '../lib/commit-status';
 import { IPC } from '../../electron/ipc/channels';
 import { parseEvidenceSubmission } from '../../electron/shared/evidence';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
@@ -47,8 +44,6 @@ import type { Task } from './types';
 import type {
   RemoteAgentChoice,
   RemoteCloseResult,
-  RemoteCommitAction,
-  RemoteCommitStatus,
   RemoteTaskDiff,
 } from '../../electron/remote/protocol';
 
@@ -443,55 +438,6 @@ async function handleMergeTask(req: MergeTaskRequest): Promise<void> {
   }
 }
 
-interface CommitActionRequest extends RendererRequest {
-  taskId: string;
-  action: RemoteCommitAction;
-  message?: string;
-}
-
-/**
- * The worktree a phone may commit in, or null when the task has none. Matches
- * the desktop, which only offers its commit dialog on unlanded worktree tasks.
- */
-function commitWorktreePath(taskId: string): string | null {
-  if (!isKnownTask(store.tasks, taskId)) throw new Error('Task not found');
-  const task = store.tasks[taskId];
-  if (task.gitIsolation !== 'worktree' || isLandedTaskState(task.landingState)) return null;
-  return task.worktreePath;
-}
-
-async function commitStatus(worktreePath: string | null): Promise<RemoteCommitStatus> {
-  if (!worktreePath) return { files: [], unsupported: true };
-  return { files: await loadCommitFiles(worktreePath) };
-}
-
-/** The phone's commit dialog: uncommitted files and what is staged. */
-async function handleGetCommitStatus(req: GetTaskDiffRequest): Promise<void> {
-  try {
-    reply(req.reqId, true, await commitStatus(commitWorktreePath(req.taskId)));
-  } catch (err) {
-    reply(req.reqId, false, undefined, errMessage(err));
-  }
-}
-
-/** Stage all, unstage all or commit from a paired phone; replies with the new status. */
-async function handleCommitAction(req: CommitActionRequest): Promise<void> {
-  try {
-    const worktreePath = commitWorktreePath(req.taskId);
-    if (!worktreePath) throw new Error('Only worktree tasks can be committed from the phone.');
-    try {
-      if (req.action === 'stage-all') await invoke(IPC.StageAll, { worktreePath });
-      else if (req.action === 'unstage-all') await invoke(IPC.UnstageAll, { worktreePath });
-      else await invoke(IPC.CommitStaged, { worktreePath, message: req.message ?? '' });
-    } finally {
-      refreshTaskStatus(req.taskId);
-    }
-    reply(req.reqId, true, await commitStatus(worktreePath));
-  } catch (err) {
-    reply(req.reqId, false, undefined, errMessage(err));
-  }
-}
-
 /** The desktop's Fix CI prompt for a phone to review; null when nothing failed. */
 async function handleGetFixCiPrompt(req: GetTaskDiffRequest): Promise<void> {
   try {
@@ -611,18 +557,6 @@ export function startRemoteTaskHandlers(): () => void {
   const offMerge = window.electron.ipcRenderer.on(IPC.Remote_MergeTaskRequest, (data: unknown) => {
     if (data && typeof data === 'object') void handleMergeTask(data as MergeTaskRequest);
   });
-  const offCommitStatus = window.electron.ipcRenderer.on(
-    IPC.Remote_GetCommitStatusRequest,
-    (data: unknown) => {
-      if (data && typeof data === 'object') void handleGetCommitStatus(data as GetTaskDiffRequest);
-    },
-  );
-  const offCommitAction = window.electron.ipcRenderer.on(
-    IPC.Remote_CommitActionRequest,
-    (data: unknown) => {
-      if (data && typeof data === 'object') void handleCommitAction(data as CommitActionRequest);
-    },
-  );
   const offClose = window.electron.ipcRenderer.on(IPC.Remote_CloseTaskRequest, (data: unknown) => {
     if (data && typeof data === 'object') void handleCloseTask(data as CloseTaskRequest);
   });
@@ -745,8 +679,6 @@ export function startRemoteTaskHandlers(): () => void {
     offFixCiPrompt();
     offSendFixCi();
     offMerge();
-    offCommitStatus();
-    offCommitAction();
     offGetUsage();
   };
 }
