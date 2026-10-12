@@ -1,3 +1,4 @@
+import { GitHubIssuesPage } from './components/GitHubIssuesPage';
 import '@xterm/xterm/css/xterm.css';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -11,7 +12,15 @@ import '@fontsource/space-grotesk/700.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
 import './styles.css';
-import { onMount, onCleanup, createEffect, Show, ErrorBoundary, createSignal } from 'solid-js';
+import {
+  onMount,
+  onCleanup,
+  createEffect,
+  Show,
+  ErrorBoundary,
+  createSignal,
+  lazy,
+} from 'solid-js';
 import { invoke } from './lib/ipc';
 import { IPC } from '../electron/ipc/channels';
 import { appWindow } from './lib/window';
@@ -61,7 +70,6 @@ import {
   setNewTaskDropUrl,
   validateProjectPaths,
   setPlanContent,
-  setStepsContent,
   setDockerAvailable,
   toggleTaskFocusMode,
   initMCPListeners,
@@ -89,8 +97,8 @@ import { applyAppearanceMode, markCustomThemesReady, loadCustomThemes } from './
 import { isMac } from './lib/platform';
 import { createCtrlWheelZoomHandler } from './lib/wheelZoom';
 import { redrawAllTerminals } from './lib/terminalFitManager';
-import { ArenaOverlay } from './arena/ArenaOverlay';
 import { isDocumentAgentTaskId } from './documents/agent-task';
+import { isHiddenAgentTaskId } from './documents/task-id';
 import {
   closeDocumentWorkspace,
   documentStore,
@@ -103,6 +111,7 @@ import { resetForNewMatch } from './arena/store';
 import { startDesktopNotificationWatcher } from './store/desktopNotifications';
 import { startSuperProductivitySync, startSpOpenListener } from './store/store';
 import { startBackgroundTaskWatcher } from './store/background-tasks';
+import { startTaskBriefWatcher } from './store/task-brief';
 import { startPrChecksSubscription } from './store/pr-checks';
 import { startUpdateSubscription } from './store/updates';
 import { startRemoteTaskHandlers } from './store/remoteTaskHandler';
@@ -111,6 +120,11 @@ import { startAgentHookStatusListener } from './store/agentHookStatus';
 import { applyPlanContent, startCanvasAutoOpen } from './store/canvas';
 import { startEvidenceAutoBuild } from './store/evidence-auto';
 import type { PlanContentMessage } from './store/canvas';
+import { SyncIcon } from './components/icons';
+
+const ArenaOverlay = lazy(() =>
+  import('./arena/ArenaOverlay').then((m) => ({ default: m.ArenaOverlay })),
+);
 
 const MIN_WINDOW_DIMENSION = 100;
 
@@ -547,21 +561,6 @@ function App() {
         });
     }
 
-    // Restore steps content for tasks that had steps before restart
-    for (const taskId of [...store.taskOrder, ...store.collapsedTaskOrder]) {
-      const task = store.tasks[taskId];
-      if (!task?.worktreePath || !task.stepsEnabled) continue;
-      invoke<unknown[] | null>(IPC.ReadStepsContent, {
-        worktreePath: task.worktreePath,
-      })
-        .then((result) => {
-          if (result) setStepsContent(taskId, result);
-        })
-        .catch((err) => {
-          console.warn(`Failed to restore steps for task ${taskId}:`, err);
-        });
-    }
-
     await validateProjectPaths();
     await restoreWindowState();
     await captureWindowState();
@@ -573,20 +572,11 @@ function App() {
     const stopSuperProductivitySync = startSuperProductivitySync(windowFocused);
     const stopSpOpenListener = startSpOpenListener();
     const stopBackgroundTaskWatcher = startBackgroundTaskWatcher();
+    const stopTaskBriefWatcher = startTaskBriefWatcher();
     const stopPrChecksSubscription = startPrChecksSubscription();
     const stopUpdateSubscription = startUpdateSubscription();
     const stopRemoteTaskHandlers = startRemoteTaskHandlers();
     const stopRemoteStatusSync = startRemoteStatusSync();
-
-    // Listen for steps content pushed from backend steps watcher
-    const offStepsContent = window.electron.ipcRenderer.on(IPC.StepsContent, (data: unknown) => {
-      if (!data || typeof data !== 'object') return;
-      const msg = data as { taskId: string; steps: unknown[] | null };
-      log.debug('steps', 'recv', { taskId: msg.taskId, len: msg.steps?.length ?? null });
-      if (msg.taskId && store.tasks[msg.taskId]) {
-        setStepsContent(msg.taskId, msg.steps);
-      }
-    });
 
     const handlePaste = (e: ClipboardEvent) => {
       if (store.showNewTaskPanel || store.showHelpDialog || store.showSettingsDialog) return;
@@ -669,7 +659,8 @@ function App() {
 
     // A document workspace's hidden agent task can be the active one; it has
     // no worktree to close, merge or push and no panel a shell could show in.
-    const listedTask = (id: string) => store.tasks[id] !== undefined && !isDocumentAgentTaskId(id);
+    const listedTask = (id: string) =>
+      !store.githubIssuesProjectId && store.tasks[id] !== undefined && !isHiddenAgentTaskId(id);
 
     const actionHandlers: Record<string, (e: KeyboardEvent) => void> = {
       'navigateRow:up': () => navigateRow('up'),
@@ -684,6 +675,7 @@ function App() {
         Array.from({ length: 9 }, (_, i) => [`jumpToTask:${i + 1}`, () => jumpToTask(i)]),
       ),
       closeShell: (e) => {
+        if (store.githubIssuesProjectId) return;
         // Auto-repeat would walk through adjacent terminals or canvas tabs.
         if (e.repeat) return;
         const target = resolvePanelCloseTarget(store);
@@ -693,6 +685,7 @@ function App() {
         else triggerAction(`${target.taskId}:close-canvas-active-tab`);
       },
       closeTask: () => {
+        if (store.githubIssuesProjectId) return;
         const id = store.activeTaskId;
         if (!id) return;
         if (store.terminals[id]) {
@@ -705,19 +698,21 @@ function App() {
         }
         if (listedTask(id)) setPendingAction({ type: 'close', taskId: id });
       },
-      mergeTask: () => {
+      finishTask: () => {
         const id = store.activeTaskId;
-        if (id && listedTask(id)) setPendingAction({ type: 'merge', taskId: id });
-      },
-      pushTask: () => {
-        const id = store.activeTaskId;
-        if (id && listedTask(id)) setPendingAction({ type: 'push', taskId: id });
+        if (id && listedTask(id)) setPendingAction({ type: 'finish', taskId: id });
       },
       spawnShell: () => {
         const id = store.activeTaskId;
         if (id && listedTask(id)) spawnShellForTask(id);
       },
-      sendPrompt: () => sendActivePrompt(),
+      secondOpinion: (e) => {
+        const id = store.activeTaskId;
+        if (!e.repeat && id && listedTask(id)) triggerAction(`${id}:second-opinion`);
+      },
+      sendPrompt: () => {
+        if (!store.githubIssuesProjectId) sendActivePrompt();
+      },
       createTerminal: (e) => {
         if (!e.repeat) createTerminal();
       },
@@ -783,6 +778,7 @@ function App() {
       stopSuperProductivitySync();
       stopSpOpenListener();
       stopBackgroundTaskWatcher();
+      stopTaskBriefWatcher();
       stopPrChecksSubscription();
       stopUpdateSubscription();
       stopRemoteTaskHandlers();
@@ -793,7 +789,6 @@ function App() {
       stopDocumentListeners();
       stopWindowVisibilityTracking();
       offPlanContent();
-      offStepsContent();
       unlistenFocusChanged?.();
       unlistenResized?.();
       unlistenMoved?.();
@@ -833,6 +828,7 @@ function App() {
             {String(err)}
           </div>
           <button
+            class="btn-with-icon"
             onClick={reset}
             style={{
               background: theme.bgElevated,
@@ -844,6 +840,7 @@ function App() {
               'font-size': '15px',
             }}
           >
+            <SyncIcon size={14} />
             Reload
           </button>
         </div>
@@ -925,9 +922,18 @@ function App() {
           <Show when={store.sidebarVisible}>
             <Sidebar />
           </Show>
-          <div class="task-workspace">
+          {/* Keep terminals mounted while the issue page occupies the workspace. */}
+          <div
+            class="task-workspace"
+            style={{
+              display: store.projects.some((p) => p.id === store.githubIssuesProjectId)
+                ? 'none'
+                : undefined,
+            }}
+          >
             <TilingLayout />
           </div>
+          <GitHubIssuesPage />
         </main>
         <UsageStatusBar />
         <HelpDialog open={store.showHelpDialog} onClose={() => toggleHelpDialog(false)} />

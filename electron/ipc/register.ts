@@ -23,6 +23,7 @@ import {
   handoffClaudeTerminal,
 } from './pty.js';
 import { loadEnvFile } from './env-file.js';
+import { getResourceSnapshot } from './resources.js';
 import { editorGotoArgs, spawnDetached, validateEditorCommand } from './open-file.js';
 import { appendGitInfoExcludeBlock } from './git-exclude.js';
 import {
@@ -48,7 +49,6 @@ import {
   stopPlanWatcher,
   readPlanForWorktree,
 } from './plans.js';
-import { startStepsWatcher, stopStepsWatcher, readStepsForWorktree } from './steps.js';
 import { readFileTourContext } from './understanding-context.js';
 import {
   prepareReasoningFeed,
@@ -70,8 +70,21 @@ import { readCoverageSummary } from './coverage.js';
 import { loadEslintQualityFindings } from './eslint-quality-findings.js';
 import { buildVerifyEnv, validateVerifyCommand, verificationRunner } from './verify.js';
 import { scanEvidence } from './evidence-scan.js';
-import { startRemoteServer, getMCPLogs, type RemoteProject } from '../remote/server.js';
-import type { RemoteAttentionState, RemoteAgent } from '../remote/protocol.js';
+import {
+  startRemoteServer,
+  getMCPLogs,
+  type MobileTaskRequest,
+  type RemoteProject,
+} from '../remote/server.js';
+import type {
+  RemoteAgentChoice,
+  RemoteAttentionState,
+  RemoteCiStatus,
+  RemoteCloseResult,
+  RemoteMergeReadiness,
+  RemoteTaskContext,
+  RemoteTaskDiff,
+} from '../remote/protocol.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { getUserDataDir } from '../user-data-dir.js';
 import {
@@ -82,6 +95,8 @@ import {
 import type { MindMapDocument, MindMapUpdate } from '../shared/mindmap.js';
 import type { CanvasView } from '../shared/canvas-view.js';
 import type { AgentTourPayload } from '../shared/agent-tour.js';
+import type { ConfidencePayload } from '../shared/task-confidence.js';
+import type { GitHubCustomList } from '../shared/github-list.js';
 import type { EvidenceSubmission } from '../shared/evidence.js';
 import {
   buildMcpLaunchArgs,
@@ -106,6 +121,7 @@ import {
   checkMergeStatus,
   mergeTask,
   getBranchLog,
+  getBranchCommitMessages,
   pushTask,
   rebaseTask,
   mergeBaseIntoTask,
@@ -514,7 +530,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
           'Switch from Terminal to Chat after Codex is idle to hand off this conversation.',
         );
       assertString(args.taskId, 'taskId');
-      assertOptionalBoolean(args.stepsEnabled, 'stepsEnabled');
       assertString(args.command, 'command');
       validateCommand(args.command);
       validatePath(args.cwd, 'cwd');
@@ -590,9 +605,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       try {
         ensurePlansDirectory(args.cwd as string);
         startPlanWatcher(notify, args.taskId, args.cwd as string);
-        if (args.stepsEnabled) startStepsWatcher(notify, args.taskId, args.cwd as string);
       } catch (err) {
-        console.warn('Failed to start chat plan/steps watchers:', err);
+        console.warn('Failed to start chat plan watcher:', err);
       }
       return result;
     }
@@ -607,6 +621,14 @@ export function registerAllHandlers(win: BrowserWindow): void {
       if (!isChatPermissionMode(args.permissionMode)) throw new Error('Invalid permission mode.');
       if (!chat.setPermissionMode) throw new Error('This agent cannot change its permission mode.');
       return chat.setPermissionMode(args.permissionMode);
+    }
+    // Desktop only: phones reach chats through their own action list, which omits it.
+    if (args.action === 'shell') {
+      assertString(args.command, 'command');
+      if (!args.command.trim() || args.command.length > 100_000)
+        throw new Error('Enter a command of at most 100,000 characters.');
+      if (!chat.runShell) throw new Error('This agent cannot run shell commands from Chat.');
+      return chat.runShell(args.command);
     }
     return runChatAction(chat, args);
   });
@@ -627,10 +649,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   // the same richer status as the desktop. The renderer owns this computation
   // (it depends on reactive terminal/git/steps state), so main just caches it.
   const taskAttention = new Map<string, RemoteAttentionState>();
-  const taskContext = new Map<
-    string,
-    Pick<RemoteAgent, 'projectName' | 'projectColor' | 'agentName' | 'lastLine'>
-  >();
+  const taskContext = new Map<string, RemoteTaskContext>();
 
   // --- MCP coordinator (lazy — only loaded when coordinator mode is enabled) ---
   let coordinatorHandlersRegistered = false;
@@ -652,7 +671,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertOptionalBoolean(args.canvasMcp, 'canvasMcp');
     if (args.managedMcpLaunchArgs !== undefined)
       assertStringArray(args.managedMcpLaunchArgs, 'managedMcpLaunchArgs');
-    assertOptionalBoolean(args.stepsEnabled, 'stepsEnabled');
     assertOptionalString(args.envFile, 'envFile');
     if (args.cwd) validatePath(args.cwd, 'cwd');
     const attaching = args.attachExisting && getAgentMeta(args.agentId);
@@ -829,13 +847,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
           startPlanWatcher(notify, args.taskId, args.cwd);
         } catch (err) {
           console.warn('Failed to start plan watcher:', err);
-        }
-        if (args.stepsEnabled) {
-          try {
-            startStepsWatcher(notify, args.taskId, args.cwd);
-          } catch (err) {
-            console.warn('Failed to start steps watcher:', err);
-          }
         }
       }
       const session = transport
@@ -1071,7 +1082,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     await delegation.assertDirectMergeAllowed(projectRoot, branchName, args.cleanup ?? false);
     const baseBranch = optionalBaseBranch(args);
     const worktreePath = optionalWorktreePath(args);
-    return mergeTask(
+    const result = await mergeTask(
       projectRoot,
       branchName,
       args.squash,
@@ -1080,6 +1091,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
       baseBranch,
       worktreePath,
     );
+    // The merge already happened; failing to tell the parent must not report it as failed.
+    await delegation
+      .recordDirectMerge(projectRoot, branchName)
+      .catch((err: unknown) => logWarn('mcp', `Could not record merge: ${errMessage(err)}`));
+    return result;
   });
   ipcMain.handle(IPC.GetBranchLog, (_e, args) => {
     const worktreePath = worktreePathArg(args);
@@ -1087,6 +1103,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
   });
   ipcMain.handle(IPC.GetBranchCommits, (_e, args) => {
     const worktreePath = worktreePathArg(args);
+    if (args.withBody === true)
+      return getBranchCommitMessages(worktreePath, optionalBaseBranch(args));
     const recentFallback =
       typeof args.recentFallback === 'number' && args.recentFallback > 0
         ? args.recentFallback
@@ -1272,12 +1290,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
     return readPlanForWorktree(args.worktreePath, fileName);
   });
 
-  // --- Steps watcher cleanup ---
-  ipcMain.handle(IPC.StopStepsWatcher, (_e, args) => {
-    assertString(args.taskId, 'taskId');
-    stopStepsWatcher(args.taskId);
-  });
-
   // --- PR CI status watcher ---
   initPrChecks(win);
   ipcMain.handle(IPC.StartPrChecksWatcher, (_e, args) => {
@@ -1391,12 +1403,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
   });
   ipcMain.handle(IPC.CommitReasoningEdit, (_e, args) => {
     return appendReasoningUpdate(...reasoningArgs(args), args.update, 'user');
-  });
-
-  // --- Steps content (one-shot read) ---
-  ipcMain.handle(IPC.ReadStepsContent, (_e, args) => {
-    validatePath(args.worktreePath, 'worktreePath');
-    return readStepsForWorktree(args.worktreePath);
   });
 
   // --- Ask about code ---
@@ -1760,18 +1766,46 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<{ ok: boolean }>(IPC.MCP_OpenCanvasRequest, { taskId, view }).then(() => {}),
     publishTour: (taskId: string, payload: AgentTourPayload) =>
       callRenderer<{ ok: boolean }>(IPC.MCP_PublishTourRequest, { taskId, payload }),
+    publishConfidence: (taskId: string, payload: ConfidencePayload) =>
+      callRenderer<{ ok: boolean }>(IPC.MCP_PublishConfidenceRequest, { taskId, payload }),
+    publishGitHubList: (taskId: string, list: GitHubCustomList) =>
+      callRenderer<{ ok: boolean }>(IPC.MCP_PublishGitHubListRequest, { taskId, list }),
     submitEvidence: (taskId: string, payload: EvidenceSubmission) =>
       callRenderer<unknown>(IPC.MCP_SubmitEvidenceRequest, { taskId, payload }),
     getEvidence: (taskId: string) => callRenderer<unknown>(IPC.MCP_GetEvidenceRequest, { taskId }),
     getProjects: () => callRenderer<RemoteProject[]>(IPC.Remote_GetProjectsRequest, {}),
-    createTaskFromMobile: (req: { projectId: string; name: string; prompt: string }) =>
+    getAgentChoices: () => callRenderer<RemoteAgentChoice[]>(IPC.Remote_GetAgentsRequest, {}),
+    createTaskFromMobile: (req: MobileTaskRequest) =>
       callRenderer<{ taskId: string }>(IPC.Remote_CreateTaskRequest, req),
     getTaskNotes: (taskId: string) =>
       callRenderer<{ notes: string }>(IPC.Remote_GetNotesRequest, { taskId }).then((r) => r.notes),
     setTaskNotes: (taskId: string, notes: string) =>
       callRenderer<{ ok: boolean }>(IPC.Remote_SetNotesRequest, { taskId, notes }).then(() => {}),
+    closeTaskFromMobile: (taskId: string, force: boolean) =>
+      callRenderer<RemoteCloseResult>(IPC.Remote_CloseTaskRequest, { taskId, force }),
+    getTaskDiff: (taskId: string) =>
+      callRenderer<RemoteTaskDiff>(IPC.Remote_GetDiffRequest, { taskId }),
+    getMergeReadiness: (taskId: string) =>
+      callRenderer<RemoteMergeReadiness>(IPC.Remote_GetMergeReadinessRequest, { taskId }),
+    getFixCiPrompt: (taskId: string) =>
+      callRenderer<{ prompt: string | null }>(IPC.Remote_GetFixCiPromptRequest, { taskId }).then(
+        (r) => r.prompt,
+      ),
+    sendFixCiPrompt: (taskId: string, prompt: string) =>
+      callRenderer<{ ok: boolean }>(IPC.Remote_SendFixCiPromptRequest, { taskId, prompt }).then(
+        () => {},
+      ),
+    mergeTaskFromMobile: (req: { taskId: string; squash: boolean; cleanup: boolean }) =>
+      callRenderer<{ ok: boolean }>(IPC.Remote_MergeTaskRequest, req).then(() => {}),
     getTaskAttention: (taskId: string): RemoteAttentionState => taskAttention.get(taskId) ?? 'idle',
     getTaskContext: (taskId: string) => taskContext.get(taskId),
+    getCollapsedTaskIds: (): string[] => {
+      const result: string[] = [];
+      for (const [taskId, ctx] of taskContext.entries()) {
+        if (ctx.collapsed) result.push(taskId);
+      }
+      return result;
+    },
   };
 
   const remoteServerOptions = (): Omit<
@@ -1803,6 +1837,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     'ready',
     'review',
   ]);
+  const VALID_CI: ReadonlySet<RemoteCiStatus> = new Set(['pending', 'failure', 'success']);
 
   // Renderer pushes the full per-task attention snapshot whenever it changes.
   // We replace the cache and re-broadcast the agent list so connected phones
@@ -1815,7 +1850,15 @@ export function registerAllHandlers(win: BrowserWindow): void {
         statuses?: Record<string, string>;
         contexts?: Record<
           string,
-          { projectName?: unknown; projectColor?: unknown; agentName?: unknown; lastLine?: unknown }
+          {
+            projectName?: unknown;
+            projectColor?: unknown;
+            agentName?: unknown;
+            lastLine?: unknown;
+            taskName?: unknown;
+            collapsed?: unknown;
+            ci?: unknown;
+          }
         >;
       },
     ) => {
@@ -1826,13 +1869,21 @@ export function registerAllHandlers(win: BrowserWindow): void {
       if (args.contexts && typeof args.contexts === 'object') {
         for (const [taskId, context] of Object.entries(args.contexts)) {
           if (!context || typeof context !== 'object') continue;
+          const taskName =
+            typeof context.taskName === 'string' ? context.taskName.slice(0, 200) : undefined;
+          if (taskName) taskNames.set(taskId, taskName);
           taskContext.set(taskId, {
+            taskName,
+            collapsed: Boolean(context.collapsed),
             projectName:
               typeof context.projectName === 'string' ? context.projectName.slice(0, 200) : '',
             projectColor:
               typeof context.projectColor === 'string' ? context.projectColor.slice(0, 200) : '',
             agentName: typeof context.agentName === 'string' ? context.agentName.slice(0, 200) : '',
             lastLine: typeof context.lastLine === 'string' ? context.lastLine.slice(0, 300) : '',
+            ci: VALID_CI.has(context.ci as RemoteCiStatus)
+              ? (context.ci as RemoteCiStatus)
+              : undefined,
           });
         }
       }
@@ -2032,6 +2083,12 @@ export function registerAllHandlers(win: BrowserWindow): void {
         validateUUID(args.coordinatorTaskId, 'coordinatorTaskId');
         const coordinator = mcp.coordinator();
         if (!coordinator) throw new Error('Task coordination is not initialized');
+        // Startup authority restore fails for a task whose worktree was removed
+        // (e.g. an interrupted merge); name that instead of the generic authority error.
+        if (!fs.existsSync(args.worktreePath))
+          throw new Error(
+            `Task worktree is missing (${args.worktreePath}). Close the task to remove it.`,
+          );
         const authority = delegation.getTask(args.id);
         if (
           !authority ||
@@ -2321,6 +2378,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   ipcMain.handle(IPC.GetClaudeUsage, () => fetchClaudeUsage());
   ipcMain.handle(IPC.GetCodexUsage, () => fetchCodexUsage());
+  ipcMain.handle(IPC.GetResourceUsage, () => getResourceSnapshot());
 
   // --- Forward window events to renderer ---
   win.on('focus', () => {

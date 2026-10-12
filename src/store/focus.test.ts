@@ -21,7 +21,7 @@ type MockStore = {
   showPromptInput: boolean;
   sidebarVisible: boolean;
   taskSplitMode: Record<string, boolean>;
-  pendingAction: { type: 'close' | 'merge' | 'push'; taskId: string } | null;
+  pendingAction: { type: 'close' | 'finish'; taskId: string } | null;
 };
 
 type MockTask = {
@@ -30,8 +30,6 @@ type MockTask = {
   projectId: string;
   agentIds: string[];
   shellAgentIds: string[];
-  stepsEnabled: boolean;
-  stepsContent: Array<{ id: string }>;
   collapsed?: boolean;
   [key: string]: unknown;
 };
@@ -98,8 +96,6 @@ function setTask(id: string, overrides: Record<string, unknown> = {}): void {
     projectId: 'project-1',
     agentIds: ['agent-1'],
     shellAgentIds: [],
-    stepsEnabled: false,
-    stepsContent: [],
     ...overrides,
   };
 }
@@ -297,10 +293,7 @@ describe('focus navigation neighbor map', () => {
   });
 
   it('always enters the top-right panel when moving right from ai-terminal in split mode', () => {
-    setTask('task-1', {
-      stepsEnabled: true,
-      stepsContent: [{ id: 'step-1' }],
-    });
+    setTask('task-1');
     mockStore.taskSplitMode['task-1'] = true;
     mockStore.focusedPanel['task-1'] = 'ai-terminal';
 
@@ -323,11 +316,8 @@ describe('focus navigation neighbor map', () => {
   });
 
   it('falls back from vanished focused panels before navigating', () => {
-    setTask('task-1', {
-      stepsEnabled: false,
-      stepsContent: [],
-    });
-    mockStore.focusedPanel['task-1'] = 'steps';
+    setTask('task-1');
+    mockStore.focusedPanel['task-1'] = 'removed-panel';
 
     navigateRow('down');
 
@@ -380,29 +370,43 @@ describe('focus navigation neighbor map', () => {
 });
 
 describe('setPendingAction', () => {
-  it.each([
-    ['merge', 'Merge'],
-    ['push', 'Push'],
-  ] as const)('shows feedback instead of queuing %s for a direct task', (type, label) => {
+  it('shows feedback instead of queuing finish for a direct task', () => {
     setTask('task-1', { gitIsolation: 'direct' });
 
-    setPendingAction({ type, taskId: 'task-1' });
+    setPendingAction({ type: 'finish', taskId: 'task-1' });
 
-    expect(showNotification).toHaveBeenCalledWith(`${label} is only available for worktree tasks`);
+    expect(showNotification).toHaveBeenCalledWith('Finish is only available for worktree tasks');
     expect(mockStore.pendingAction).toBeNull();
   });
 
   it('queues git actions for worktree tasks', () => {
     setTask('task-1', { gitIsolation: 'worktree' });
 
-    setPendingAction({ type: 'merge', taskId: 'task-1' });
+    setPendingAction({ type: 'finish', taskId: 'task-1' });
 
     expect(showNotification).not.toHaveBeenCalled();
-    expect(mockStore.pendingAction).toEqual({ type: 'merge', taskId: 'task-1' });
+    expect(mockStore.pendingAction).toEqual({ type: 'finish', taskId: 'task-1' });
   });
 });
 
 describe('scrollTaskElementIntoView', () => {
+  it('reveals the focused canvas instead of aligning the whole task to its left edge', () => {
+    setTask('task-1');
+    const canvas = { scrollIntoView: vi.fn() };
+    const task = { querySelector: vi.fn(() => canvas), scrollIntoView: vi.fn() };
+    vi.stubGlobal('document', { querySelector: () => task });
+
+    setTaskFocusedPanel('task-1', 'canvas');
+
+    expect(task.querySelector).toHaveBeenCalledWith('.task-canvas-panel');
+    expect(canvas.scrollIntoView).toHaveBeenCalledWith({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: 'smooth',
+    });
+    expect(task.scrollIntoView).not.toHaveBeenCalled();
+  });
+
   function createScroller(
     overrides: Partial<HTMLElement> & { taskEls?: HTMLElement[] } = {},
   ): HTMLElement {

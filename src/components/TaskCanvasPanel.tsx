@@ -1,4 +1,13 @@
-import { For, Show, createEffect, createSignal, onCleanup, onMount, type JSX } from 'solid-js';
+import {
+  For,
+  Show,
+  createEffect,
+  createSignal,
+  lazy,
+  onCleanup,
+  onMount,
+  type JSX,
+} from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
   setTaskFocusedPanel,
@@ -21,13 +30,20 @@ import { useFocusRegistration } from '../lib/focus-registration';
 import { openFileInEditor } from '../lib/shell';
 import { errMessage } from '../lib/log';
 import type { CanvasTab, Task } from '../store/types';
-import type { UnderstandingTourController } from '../lib/create-understanding-tour';
+import {
+  documentTourKind,
+  type UnderstandingTourController,
+} from '../lib/create-understanding-tour';
 import { TOUR_MIN_DOCUMENT_CHARS } from '../../electron/shared/understanding-limits';
 import { ConfirmDialog } from './ConfirmDialog';
 import { CanvasFilePicker } from './CanvasFilePicker';
 import { CanvasTabStrip } from './CanvasTabStrip';
-import { TaskCanvasDocument } from './TaskCanvasDocument';
 import { TaskBrowserPanel } from './TaskBrowserPanel';
+
+// Lazy: CodeMirror only loads once a document tab is opened.
+const TaskCanvasDocument = lazy(() =>
+  import('./TaskCanvasDocument').then((m) => ({ default: m.TaskCanvasDocument })),
+);
 
 type DocumentTab = Extract<CanvasTab, { path: string }>;
 const isDocumentTab = (tab: CanvasTab): tab is DocumentTab => 'path' in tab;
@@ -262,6 +278,7 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
           onOpenInDefaultEditor={openDefaultEditor}
           understanding={props.understanding}
           onTakeTour={activeDocumentIsLong() ? props.onTakeTour : undefined}
+          tourKind={(path) => documentTourKind(props.task, path)}
         />
         <Show when={pickerOpen()}>
           <CanvasFilePicker

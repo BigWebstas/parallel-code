@@ -3,15 +3,20 @@ import { Terminal } from '@xterm/xterm';
 import { TERMINAL_SCROLL_OPTIONS, base64ToUint8Array } from '../lib/terminalConstants';
 import { createTerminalHttpLinkHandler } from '../lib/terminalLinks';
 import { fetchNotes, saveNotes, ApiError } from './api';
+import { TaskDiffView } from './TaskDiffView';
+import { TaskActionsDialog } from './TaskActionsDialog';
 import { clearPairedToken } from './auth';
 import { readLocal, writeLocal } from './storage';
 import { messageForTerminal } from './terminalText';
 import { TaskHeader } from './TaskHeader';
+import { needsYou } from './attention';
+import { MAX_SCROLL_LINES } from '../../electron/remote/protocol';
 import {
   subscribeAgent,
   unsubscribeAgent,
   onOutput,
   onScrollback,
+  scrollAgent,
   sendInput,
   agents,
   status,
@@ -53,7 +58,10 @@ export function AgentDetail(props: AgentDetailProps) {
   const [sending, setSending] = createSignal(false);
   const [sendError, setSendError] = createSignal('');
   const [sent, setSent] = createSignal(false);
-  const [view, setView] = createSignal<'terminal' | 'notes'>('terminal');
+  const [view, setView] = createSignal<'terminal' | 'notes' | 'diff'>('terminal');
+  // Bumped to force the diff tab to refetch; the resource keys on it.
+  const [diffToken, setDiffToken] = createSignal(0);
+  const [showActions, setShowActions] = createSignal(false);
   const [multilinePaste, setMultilinePaste] = createSignal(false);
   const [terminalBottom, setTerminalBottom] = createSignal(true);
   const [zoom, setZoom] = createSignal(1);
@@ -67,11 +75,7 @@ export function AgentDetail(props: AgentDetailProps) {
   const [notesSaved, setNotesSaved] = createSignal(false);
   const agent = () => agents().find((a) => a.agentId === props.agentId);
   const taskId = () => agent()?.taskId;
-  const nextAttentionTask = () =>
-    agents().find(
-      (a) =>
-        a.agentId !== props.agentId && (a.attention === 'needs_input' || a.attention === 'error'),
-    );
+  const nextAttentionTask = () => agents().find((a) => a.agentId !== props.agentId && needsYou(a));
   const nextTask = () => {
     const list = agents();
     if (list.length < 2) return undefined;
@@ -206,7 +210,23 @@ export function AgentDetail(props: AgentDetailProps) {
     let touchY = 0;
     let touchId: number | undefined;
     let historyPixels = 0;
-    const scrollTerminal = (dx: number, dy: number) => {
+    // A full-screen agent UI keeps its transcript out of the terminal history:
+    // turn the wheel over the cell under the finger, as the desktop pane does.
+    const scrollFullScreen = (lines: number, x: number, y: number) => {
+      if (!term) return;
+      const rect = term.element?.querySelector('.xterm-screen')?.getBoundingClientRect();
+      const cell = (offset: number, size: number | undefined, cells: number) =>
+        size
+          ? Math.min(cells, Math.max(1, Math.floor((offset / size) * cells) + 1))
+          : Math.ceil(cells / 2);
+      scrollAgent(
+        props.agentId,
+        Math.max(-MAX_SCROLL_LINES, Math.min(MAX_SCROLL_LINES, lines)),
+        cell(x - (rect?.left ?? 0), rect?.width, term.cols),
+        cell(y - (rect?.top ?? 0), rect?.height, term.rows),
+      );
+    };
+    const scrollTerminal = (dx: number, dy: number, x: number, y: number) => {
       if (!term || !terminalScroller) return;
       terminalScroller.scrollLeft += dx;
       const previousTop = terminalScroller.scrollTop;
@@ -218,7 +238,8 @@ export function AgentDetail(props: AgentDetailProps) {
         historyPixels += dy - (terminalScroller.scrollTop - previousTop);
         const lines = Math.trunc(historyPixels / terminalLineHeight);
         if (lines) {
-          term.scrollLines(lines);
+          if (term.buffer.active.type === 'alternate') scrollFullScreen(lines, x, y);
+          else term.scrollLines(lines);
           historyPixels -= lines * terminalLineHeight;
         }
       }
@@ -247,7 +268,7 @@ export function AgentDetail(props: AgentDetailProps) {
         return;
       }
       e.preventDefault();
-      scrollTerminal(touchX - touch.clientX, touchY - touch.clientY);
+      scrollTerminal(touchX - touch.clientX, touchY - touch.clientY, touch.clientX, touch.clientY);
       touchX = touch.clientX;
       touchY = touch.clientY;
     };
@@ -266,7 +287,7 @@ export function AgentDetail(props: AgentDetailProps) {
           : e.deltaMode === WheelEvent.DOM_DELTA_PAGE
             ? (terminalScroller?.clientHeight ?? terminalLineHeight)
             : 1;
-      scrollTerminal(e.deltaX * scale, e.deltaY * scale);
+      scrollTerminal(e.deltaX * scale, e.deltaY * scale, e.clientX, e.clientY);
     };
     terminalScroller.addEventListener('touchstart', touchStart, { passive: true });
     terminalScroller.addEventListener('touchmove', touchMove, { passive: false });
@@ -372,6 +393,8 @@ export function AgentDetail(props: AgentDetailProps) {
         if (inputText() === text) setInputText('');
         setBashMode(false);
         setSent(true);
+        // Whoever sends a message wants to see it land, even from scrolled-back history.
+        jumpToLatest();
       }
     } catch (err) {
       if (!disposed)
@@ -412,8 +435,12 @@ export function AgentDetail(props: AgentDetailProps) {
     setSent(false);
   }
 
-  function selectView(next: 'terminal' | 'notes') {
+  function selectView(next: 'terminal' | 'notes' | 'diff') {
+    const wasDiff = view() === 'diff';
     setView(next);
+    // Re-entering the diff tab refetches, so returning to it always shows the
+    // agent's newest work rather than a snapshot from the first visit.
+    if (next === 'diff' && wasDiff) setDiffToken((n) => n + 1);
     requestAnimationFrame(() => {
       if (!disposed) {
         fitTerminal();
@@ -449,6 +476,7 @@ export function AgentDetail(props: AgentDetailProps) {
             each={[
               { id: 'terminal' as const, label: 'Terminal' },
               { id: 'notes' as const, label: 'Notes' },
+              { id: 'diff' as const, label: 'Diff' },
             ]}
           >
             {(tab) => (
@@ -521,6 +549,19 @@ export function AgentDetail(props: AgentDetailProps) {
             />
           </div>
         </Show>
+        <Show when={view() === 'diff'}>
+          <div class="mobile-scroll">
+            <TaskDiffView taskId={taskId()} reloadToken={diffToken()} />
+            <Show when={taskId()}>
+              <button
+                class="mobile-button mobile-diff-actions"
+                onClick={() => setShowActions(true)}
+              >
+                Review &amp; merge
+              </button>
+            </Show>
+          </div>
+        </Show>
         <Show when={view() === 'terminal'}>
           <div class="mobile-output-actions">
             <Show when={nextAttentionTask()}>
@@ -542,98 +583,103 @@ export function AgentDetail(props: AgentDetailProps) {
           </div>
         </Show>
       </div>
+      {/* The composer types into the agent's terminal, so it belongs to the
+          terminal view only. The notes footer belongs to Notes alone, and the
+          read-only Diff tab gets neither. */}
       <Show
         when={view() === 'notes'}
         fallback={
-          <div class="mobile-composer">
-            <Show when={inputText().includes('\n') && !multilinePaste()}>
-              <p class="muted">This terminal sends line breaks as spaces.</p>
-            </Show>
-            <Show when={sendError()}>
-              <p class="mobile-error" role="alert">
-                {sendError()}
-              </p>
-            </Show>
-            <div class="mobile-composer-row">
-              <Show when={bashMode()}>
-                <button
-                  class="mobile-button mobile-bash"
-                  aria-label="Shell command mode"
-                  aria-pressed="true"
-                  disabled={sending()}
-                  onClick={() => {
-                    setBashMode(false);
-                    inputRef?.focus();
-                  }}
-                >
-                  !
-                </button>
+          <Show when={view() === 'terminal'}>
+            <div class="mobile-composer">
+              <Show when={inputText().includes('\n') && !multilinePaste()}>
+                <p class="muted">This terminal sends line breaks as spaces.</p>
               </Show>
-              <textarea
-                ref={(element) => {
-                  inputRef = element;
-                  queueMicrotask(() => {
-                    if (!disposed) resizeComposer();
-                  });
-                }}
-                class="mobile-input"
-                rows={1}
-                maxlength={4000}
-                aria-label="Message agent"
-                placeholder={composerPlaceholder()}
-                value={inputText()}
-                onInput={(e) => composerInput(e.currentTarget)}
-                disabled={sending()}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) {
-                    e.preventDefault();
-                    void handleSend();
-                  }
-                }}
-              />
-              <button
-                class="mobile-button primary"
-                disabled={!inputText().trim() || sending() || status() !== 'connected'}
-                onClick={() => void handleSend()}
-              >
-                {sending() ? 'Sending…' : canControl() ? 'Send' : 'Authorize'}
-              </button>
-            </div>
-            <Show when={inputText().length >= 3600}>
-              <p class="muted" role="status">
-                {4000 - inputText().length} characters remaining
-              </p>
-            </Show>
-            <Show when={sent()}>
-              <p class="muted mobile-success" role="status">
-                Accepted by terminal
-              </p>
-            </Show>
-            <div id="terminal-keys" class="mobile-keys" role="group" aria-label="Terminal keys">
-              <For
-                each={[
-                  { label: 'Enter', name: 'Enter', data: '\r' },
-                  { label: '/', name: 'Slash', data: '/' },
-                  { label: 'Tab', name: 'Tab', data: '\t' },
-                  { label: '↑', name: 'Arrow up', data: '\x1b[A' },
-                  { label: '↓', name: 'Arrow down', data: '\x1b[B' },
-                  { label: 'Esc', name: 'Escape', data: '\x1b' },
-                  { label: 'Ctrl+C', name: 'Interrupt agent (Control C)', data: '\x03' },
-                ]}
-              >
-                {(key) => (
+              <Show when={sendError()}>
+                <p class="mobile-error" role="alert">
+                  {sendError()}
+                </p>
+              </Show>
+              <div class="mobile-composer-row">
+                <Show when={bashMode()}>
                   <button
-                    class="mobile-button"
-                    aria-label={key.name}
-                    disabled={!canControl() || sending()}
-                    onClick={() => void quickKey(key.data)}
+                    class="mobile-button mobile-bash"
+                    aria-label="Shell command mode"
+                    aria-pressed="true"
+                    disabled={sending()}
+                    onClick={() => {
+                      setBashMode(false);
+                      inputRef?.focus();
+                    }}
                   >
-                    {key.label}
+                    !
                   </button>
-                )}
-              </For>
+                </Show>
+                <textarea
+                  ref={(element) => {
+                    inputRef = element;
+                    queueMicrotask(() => {
+                      if (!disposed) resizeComposer();
+                    });
+                  }}
+                  class="mobile-input"
+                  rows={1}
+                  maxlength={4000}
+                  aria-label="Message agent"
+                  placeholder={composerPlaceholder()}
+                  value={inputText()}
+                  onInput={(e) => composerInput(e.currentTarget)}
+                  disabled={sending()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) {
+                      e.preventDefault();
+                      void handleSend();
+                    }
+                  }}
+                />
+                <button
+                  class="mobile-button primary"
+                  disabled={!inputText().trim() || sending() || status() !== 'connected'}
+                  onClick={() => void handleSend()}
+                >
+                  {sending() ? 'Sending…' : canControl() ? 'Send' : 'Authorize'}
+                </button>
+              </div>
+              <Show when={inputText().length >= 3600}>
+                <p class="muted" role="status">
+                  {4000 - inputText().length} characters remaining
+                </p>
+              </Show>
+              <Show when={sent()}>
+                <p class="muted mobile-success" role="status">
+                  Accepted by terminal
+                </p>
+              </Show>
+              <div id="terminal-keys" class="mobile-keys" role="group" aria-label="Terminal keys">
+                <For
+                  each={[
+                    { label: 'Enter', name: 'Enter', data: '\r' },
+                    { label: '/', name: 'Slash', data: '/' },
+                    { label: 'Tab', name: 'Tab', data: '\t' },
+                    { label: '↑', name: 'Arrow up', data: '\x1b[A' },
+                    { label: '↓', name: 'Arrow down', data: '\x1b[B' },
+                    { label: 'Esc', name: 'Escape', data: '\x1b' },
+                    { label: 'Ctrl+C', name: 'Interrupt agent (Control C)', data: '\x03' },
+                  ]}
+                >
+                  {(key) => (
+                    <button
+                      class="mobile-button"
+                      aria-label={key.name}
+                      disabled={!canControl() || sending()}
+                      onClick={() => void quickKey(key.data)}
+                    >
+                      {key.label}
+                    </button>
+                  )}
+                </For>
+              </div>
             </div>
-          </div>
+          </Show>
         }
       >
         <footer class="mobile-footer mobile-notes-footer">
@@ -652,6 +698,21 @@ export function AgentDetail(props: AgentDetailProps) {
             {notesSaving() ? 'Saving…' : canControl() ? 'Save notes' : 'Authorize'}
           </button>
         </footer>
+      </Show>
+      <Show when={showActions()}>
+        <TaskActionsDialog
+          taskId={taskId()}
+          taskName={props.taskName}
+          canAct={canControl()}
+          onClose={() => setShowActions(false)}
+          onNeedsPairing={props.onNeedsPairing}
+          // Merging with cleanup, or closing, removes the task. Returning to the
+          // list avoids leaving the user on a screen for an agent that is gone.
+          onDone={() => {
+            setShowActions(false);
+            props.onBack();
+          }}
+        />
       </Show>
     </div>
   );

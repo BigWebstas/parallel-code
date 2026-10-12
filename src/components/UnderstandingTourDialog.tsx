@@ -8,6 +8,7 @@ import {
   ListIcon,
   PencilIcon,
   RedoIcon,
+  SyncIcon,
 } from './icons';
 import { TourAskBar } from './understanding/TourAskBar';
 import { TourCard } from './understanding/TourCard';
@@ -77,6 +78,7 @@ export function UnderstandingTourDialog(props: {
       title: `Tour: ${props.tour.subject()}`,
       cards: cards(),
       threads: props.tour.threads(),
+      omitted: tour()?.omitted,
     });
   }
 
@@ -224,9 +226,10 @@ export function UnderstandingTourDialog(props: {
             <span>This file changed after the tour was made.</span>
             <button
               type="button"
-              class="understanding-notice-action"
+              class="understanding-notice-action btn-with-icon"
               onClick={() => controller().retry()}
             >
+              <SyncIcon size={12} />
               Regenerate
             </button>
           </div>
@@ -316,6 +319,7 @@ export function UnderstandingTourDialog(props: {
                         onAsk={(question) => void controller().ask(question)}
                         asking={props.tour.asking()}
                         answeredQuestions={threads().map((thread) => thread.question)}
+                        omitted={onLastCard() ? tour()?.omitted : undefined}
                       />
                       {/* Every question asked here stays, in the order asked, under the card. */}
                       <TourThreads
