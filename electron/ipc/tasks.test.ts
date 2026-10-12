@@ -13,8 +13,6 @@ const mocks = vi.hoisted(() => ({
   cancelVerify: vi.fn(),
   stopPlanWatcher: vi.fn(),
   stopPlanWatchersForPath: vi.fn(),
-  stopStepsWatcher: vi.fn(),
-  stopStepsWatchersForPath: vi.fn(),
   resolvePrCheckout: vi.fn(),
   localBranchExists: vi.fn(),
 }));
@@ -32,10 +30,6 @@ vi.mock('./pty.js', () => ({
 vi.mock('./plans.js', () => ({
   stopPlanWatcher: mocks.stopPlanWatcher,
   stopPlanWatchersForPath: mocks.stopPlanWatchersForPath,
-}));
-vi.mock('./steps.js', () => ({
-  stopStepsWatcher: mocks.stopStepsWatcher,
-  stopStepsWatchersForPath: mocks.stopStepsWatchersForPath,
 }));
 vi.mock('./verify.js', () => ({ verificationRunner: { cancel: mocks.cancelVerify } }));
 vi.mock('../github/pr-checkout.js', () => ({
@@ -107,11 +101,7 @@ describe('deleteTask', () => {
 
     expect(mocks.cancelVerify).toHaveBeenCalledWith('t-123');
     expect(mocks.stopPlanWatcher).toHaveBeenCalledWith('t-123');
-    expect(mocks.stopStepsWatcher).toHaveBeenCalledWith('t-123');
     expect(mocks.stopPlanWatchersForPath).toHaveBeenCalledWith(
-      path.join('/nonexistent-root', '.worktrees', 'task/x'),
-    );
-    expect(mocks.stopStepsWatchersForPath).toHaveBeenCalledWith(
       path.join('/nonexistent-root', '.worktrees', 'task/x'),
     );
     expect(mocks.killAgent).toHaveBeenCalledTimes(2);

@@ -56,6 +56,9 @@ import { computeWrappedPathLinks, createTerminalHttpLinkHandler } from '../lib/t
 import { recordSharedWebglContextLoss, WEBGL_REATTACH_DELAY_MS } from '../lib/webglContextLoss';
 import { isTerminalPaneOnScreen, WEBGL_DETACH_DELAY_MS } from '../lib/terminalPaneVisibility';
 import type { PtyOutput } from '../ipc/types';
+import { SyncIcon, SendIcon } from './icons';
+import { TerminalSelectionMenu } from './TerminalSelectionMenu';
+import './AgentHandoffComposer.css';
 
 let windowUnloading = false;
 const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Win');
@@ -129,6 +132,9 @@ const BOOKMARK_EDGE_PAD = 3;
 const CONTROL_CHARS = /[\x00-\x1f\x7f-\x9f]/g;
 
 interface TerminalViewProps {
+  onSendSelection?: (text: string, recipientAgentId?: string) => void;
+  onSecondOpinion?: () => void;
+  handoffRecipients?: { id: string; label: string }[];
   taskId: string;
   agentId: string;
   /** False while this pane is hidden inside its task (an unselected tab).
@@ -147,7 +153,6 @@ interface TerminalViewProps {
    *  shell terminals (in-task shells and standalone full-size panels) opt out
    *  (pass false) so they fill the pane with no left inset. */
   bookmarksEnabled?: boolean;
-  stepsEnabled?: boolean;
   dockerMode?: boolean;
   dockerImage?: string;
   spawnDelayMs?: number;
@@ -165,11 +170,11 @@ interface TerminalViewProps {
   onReady?: (focusFn: () => void) => void;
   onBufferReady?: (getBuffer: () => string) => void;
   /** Exposes the scrollback-marker API: `mark(key)` registers a marker at the current line
-   *  under `key` (steps use `step:<index>`, reasoning updates `reasoning:<sequence>`);
+   *  under `key` (reasoning updates use `reasoning:<sequence>`);
    *  `jump(key)` scrolls the viewport so that marker is visible.
    *  Called with `undefined` on unmount so the consumer can reset its state — important
    *  on agent restart, where this component remounts but the parent does not. */
-  onStepNavReady?: (
+  onTranscriptMarksReady?: (
     api: { mark: (key: string) => void; jump: (key: string) => boolean } | undefined,
   ) => void;
   fontSize?: number;
@@ -223,6 +228,18 @@ export function TerminalView(props: TerminalViewProps) {
   // Bumped whenever the buffer grows or scrolls, so icon positions (derived from
   // live xterm state, not signals) recompute reactively.
   const [overviewTick, setOverviewTick] = createSignal(0);
+  const [selectionMenu, setSelectionMenu] = createSignal<{ x: number; y: number; text: string }>();
+  function openSelectionMenu(event: MouseEvent) {
+    if (!props.onSendSelection && !props.onSecondOpinion) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectionMenu({
+      x: event.clientX,
+      y: event.clientY,
+      text: cleanCopiedTerminalText(term?.getSelection() ?? ''),
+    });
+  }
+  const [hasHandoffSelection, setHasHandoffSelection] = createSignal(false);
   const [selectionActive, setSelectionActive] = createSignal(false);
   let nextBookmarkId = 1;
 
@@ -538,31 +555,31 @@ export function TerminalView(props: TerminalViewProps) {
 
     props.onReady?.(() => term?.focus());
 
-    // Step bookmarks — anchor each agent step to the current scrollback line so the
-    // user can jump from the steps panel back to the terminal moment a step was written.
+    // Transcript marks — anchor a key to the current scrollback line so other
+    // panels can jump back to the terminal moment something happened.
     // Markers auto-track buffer truncation; once the marker scrolls past the scrollback
     // limit xterm disposes it, in which case `jump` returns false so the caller can no-op.
-    // Remove disposed markers so truncated scrollback does not retain old steps.
-    const stepMarkers = new Map<string, IMarker>();
-    const stepNavApi = {
+    // Remove disposed markers so truncated scrollback does not retain old keys.
+    const transcriptMarkers = new Map<string, IMarker>();
+    const transcriptMarksApi = {
       mark(key: string) {
-        if (!term || stepMarkers.has(key)) return;
+        if (!term || transcriptMarkers.has(key)) return;
         const m = term.registerMarker(0);
         if (m) {
-          stepMarkers.set(key, m);
-          m.onDispose(() => stepMarkers.delete(key));
+          transcriptMarkers.set(key, m);
+          m.onDispose(() => transcriptMarkers.delete(key));
         }
       },
       jump(key: string): boolean {
         if (!term) return false;
-        const m = stepMarkers.get(key);
+        const m = transcriptMarkers.get(key);
         if (!m || m.isDisposed) return false;
         term.scrollToLine(m.line);
         return true;
       },
     };
-    props.onStepNavReady?.(stepNavApi);
-    onCleanup(() => props.onStepNavReady?.(undefined));
+    props.onTranscriptMarksReady?.(transcriptMarksApi);
+    onCleanup(() => props.onTranscriptMarksReady?.(undefined));
 
     // Scroll-bookmark overview: keep bookmark icon positions in sync with the
     // buffer. onRender fires per visual frame (on new output and on scroll), but
@@ -613,11 +630,12 @@ export function TerminalView(props: TerminalViewProps) {
     term.onRender(syncOverview);
     term.onScroll(syncOverview);
     term.onSelectionChange(() => {
+      setHasHandoffSelection(term?.hasSelection() === true);
       // Only offer to bookmark selections in the normal buffer — a marker on the
       // alternate buffer (full-screen TUI) is cleared the moment the TUI exits.
       const has = term?.hasSelection() === true && term.buffer.active.type === 'normal';
       setSelectionActive(has);
-      if (has) setOverviewTick((t) => t + 1); // refresh the button's position
+      if (term?.hasSelection()) setOverviewTick((t) => t + 1); // refresh the button's position
     });
 
     props.onBufferReady?.(() => {
@@ -1229,7 +1247,6 @@ export function TerminalView(props: TerminalViewProps) {
         cols: term.cols,
         rows: term.rows,
         isShell: props.isShell,
-        stepsEnabled: props.stepsEnabled,
         dockerMode: props.dockerMode,
         dockerImage: props.dockerImage,
         dockerMountWorktreeParent: props.dockerMountWorktreeParent,
@@ -1365,7 +1382,10 @@ export function TerminalView(props: TerminalViewProps) {
   });
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div
+      onContextMenu={openSelectionMenu}
+      style={{ position: 'relative', width: '100%', height: '100%' }}
+    >
       <Show when={reserveGutter()}>
         <TerminalBookmarkGutter
           width={BOOKMARK_GUTTER_WIDTH}
@@ -1395,6 +1415,33 @@ export function TerminalView(props: TerminalViewProps) {
           contain: 'strict',
         }}
       />
+      <Show when={props.onSendSelection && hasHandoffSelection()}>
+        <button
+          type="button"
+          class="terminal-selection-trigger"
+          aria-label="Actions for selected text"
+          title="Copy or send selected text"
+          style={{ top: `${selectionButtonTop()}px` }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={openSelectionMenu}
+        >
+          <SendIcon size={13} />
+        </button>
+      </Show>
+      <Show when={selectionMenu()} keyed>
+        {(selection) => (
+          <TerminalSelectionMenu
+            {...selection}
+            recipients={props.handoffRecipients ?? []}
+            onSend={(text, id) => props.onSendSelection?.(text, id)}
+            onOpinion={props.onSecondOpinion}
+            onClose={(restoreFocus = true) => {
+              setSelectionMenu(undefined);
+              if (restoreFocus) term?.focus();
+            }}
+          />
+        )}
+      </Show>
       <Show when={searchOpen()}>
         <TerminalSearchOverlay
           query={searchQuery()}
@@ -1433,6 +1480,7 @@ export function TerminalView(props: TerminalViewProps) {
             MCP startup failed: {mcpError() ?? 'unknown error'}
           </span>
           <button
+            class="btn-with-icon"
             style={{
               padding: '6px 16px',
               background: 'var(--accent)',
@@ -1444,6 +1492,7 @@ export function TerminalView(props: TerminalViewProps) {
             }}
             onClick={() => retryTaskMcpStartup(props.taskId)}
           >
+            <SyncIcon size={14} />
             Retry
           </button>
         </div>

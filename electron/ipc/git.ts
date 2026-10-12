@@ -162,6 +162,7 @@ const DEFAULT_SYMLINK_CANDIDATES = new Set(SYMLINK_CANDIDATES);
  * Entries inside `.claude/` that must NOT be seeded from the main repo's
  * `.claude/` into new worktrees (per-worktree-local state).
  */
+// `steps.json` belonged to the retired Steps panel; old worktrees may still hold one.
 const CLAUDE_DIR_EXCLUDE = new Set(['plans', 'steps.json']);
 
 /**
@@ -1022,11 +1023,48 @@ function splitContentLines(content: string): string[] {
   return content.endsWith('\n') ? lines.slice(0, -1) : lines;
 }
 
+interface LineCountEntry {
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  lines: number;
+}
+
+// The changed-files poll recounts every untracked file each tick; an agent's
+// new directory would otherwise be re-read in full every few seconds.
+// shortcut: cleared wholesale at the cap — LRU if large worktrees thrash it.
+const lineCountCache = new Map<string, LineCountEntry>();
+const LINE_COUNT_CACHE_MAX = 5_000;
+
+const NEWLINE = 0x0a;
+
 export async function countReadableTextLines(filePath: string): Promise<number> {
   try {
     const stat = await fs.promises.stat(filePath);
     if (!stat.isFile() || stat.size >= MAX_BUFFER) return 0;
-    return splitContentLines(await fs.promises.readFile(filePath, 'utf8')).length;
+    const cached = lineCountCache.get(filePath);
+    if (
+      cached &&
+      cached.size === stat.size &&
+      cached.mtimeMs === stat.mtimeMs &&
+      cached.ctimeMs === stat.ctimeMs
+    ) {
+      return cached.lines;
+    }
+    // Same count as splitting the decoded text: UTF-8 never encodes another
+    // character with a 0x0a byte, so counting raw newlines skips the decode.
+    const buf = await fs.promises.readFile(filePath);
+    let lines = 0;
+    for (let i = buf.indexOf(NEWLINE); i !== -1; i = buf.indexOf(NEWLINE, i + 1)) lines++;
+    if (buf.length > 0 && buf[buf.length - 1] !== NEWLINE) lines++;
+    if (lineCountCache.size >= LINE_COUNT_CACHE_MAX) lineCountCache.clear();
+    lineCountCache.set(filePath, {
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs,
+      lines,
+    });
+    return lines;
   } catch {
     return 0;
   }
@@ -2232,6 +2270,30 @@ const UNREADABLE_WORKTREE_STATUS: WorktreeStatus = {
   base_branch: null,
 };
 
+/** Parse `git status --porcelain=v2 --branch` output. */
+export function parseStatusV2(out: string): {
+  currentBranch: string | null;
+  headSha: string | null;
+  hasUncommittedChanges: boolean;
+} {
+  let currentBranch: string | null = null;
+  let headSha: string | null = null;
+  let hasUncommittedChanges = false;
+  for (const line of out.split('\n')) {
+    if (line.startsWith('# branch.head ')) {
+      const head = line.slice('# branch.head '.length);
+      currentBranch = head === '(detached)' ? null : head;
+    } else if (line.startsWith('# branch.oid ')) {
+      const oid = line.slice('# branch.oid '.length);
+      // An unborn branch has no commit yet.
+      headSha = oid === '(initial)' ? null : oid;
+    } else if (line.length > 0 && !line.startsWith('#')) {
+      hasUncommittedChanges = true;
+    }
+  }
+  return { currentBranch, headSha, hasUncommittedChanges };
+}
+
 export async function getWorktreeStatus(
   worktreePath: string,
   baseBranch?: string,
@@ -2244,25 +2306,22 @@ export async function getWorktreeStatus(
     // Polled every few seconds while agents run git in the same worktree:
     // skip status's opportunistic index refresh so it never takes index.lock
     // (agents would see "index.lock: File exists") or rewrites the index.
-    ({ stdout: statusOut } = await exec('git', ['--no-optional-locks', 'status', '--porcelain'], {
-      cwd: worktreePath,
-      maxBuffer: MAX_BUFFER,
-    }));
+    // `--branch` also reports HEAD's branch and sha, saving two git spawns per
+    // poll; `--no-ahead-behind` skips the upstream count this doesn't use.
+    ({ stdout: statusOut } = await exec(
+      'git',
+      ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--no-ahead-behind'],
+      { cwd: worktreePath, maxBuffer: MAX_BUFFER },
+    ));
   } catch {
     // Worktree removed between existsSync and exec (race condition)
     return UNREADABLE_WORKTREE_STATUS;
   }
-  const hasUncommittedChanges = statusOut.trim().length > 0;
+  const { currentBranch, headSha, hasUncommittedChanges } = parseStatusV2(statusOut);
 
   // Resolved base branch name, so the frontend can tell "agent switched to a
   // feature branch" (adoptable) apart from "agent is sitting on main" (not).
-  const [currentBranch, resolvedBaseBranch, headSha] = await Promise.all([
-    getCurrentBranchName(worktreePath).catch(() => null),
-    baseBranch ?? detectMainBranch(worktreePath).catch(() => null),
-    exec('git', ['rev-parse', 'HEAD'], { cwd: worktreePath })
-      .then(({ stdout }) => stdout.trim() || null)
-      .catch(() => null),
-  ]);
+  const resolvedBaseBranch = baseBranch ?? (await detectMainBranch(worktreePath).catch(() => null));
 
   const mergeBase = await detectMergeBase(
     worktreePath,
@@ -2274,9 +2333,12 @@ export async function getWorktreeStatus(
     hasCommittedChanges = false;
   } else {
     try {
-      const { stdout: logOut } = await exec('git', ['log', `${mergeBase}..HEAD`, '--oneline'], {
-        cwd: worktreePath,
-      });
+      // One commit is enough to answer "any?"; don't list the whole branch.
+      const { stdout: logOut } = await exec(
+        'git',
+        ['log', '-1', '--format=%H', `${mergeBase}..HEAD`],
+        { cwd: worktreePath },
+      );
       hasCommittedChanges = logOut.trim().length > 0;
     } catch {
       /* ignore */
@@ -2469,7 +2531,6 @@ export async function mergeTask(
   baseBranch?: string,
   worktreePath?: string,
   mergeWorktreePath?: string,
-  approval?: { expectedCommit: string; expectedTargetBranch: string; expectedTargetCommit: string },
 ): Promise<{ main_branch: string; lines_added: number; lines_removed: number }> {
   const lockKey = await detectRepoLockKey(projectRoot).catch(() => projectRoot);
 
@@ -2507,9 +2568,11 @@ export async function mergeTask(
 
     // When the target branch is already checked out in a worktree (e.g. a coordinator
     // worktree on a feature branch), we can't git checkout it in projectRoot — git
-    // refuses to check out a branch that's live elsewhere. Use mergeWorktreePath as the
-    // working directory for merge ops when provided; it's already on the right branch.
-    const mergeRoot = mergeWorktreePath ?? projectRoot;
+    // refuses to check out a branch that's live elsewhere. Merge in that worktree
+    // instead; it's already on the right branch.
+    const targetWorktree =
+      mergeWorktreePath ?? (await getBranchWorktreePath(projectRoot, mainBranch))?.path;
+    const mergeRoot = targetWorktree ?? projectRoot;
 
     // Verify clean working tree in the merge root
     const { stdout: statusOut } = await exec('git', ['status', '--porcelain'], {
@@ -2521,11 +2584,11 @@ export async function mergeTask(
       );
 
     // Capture the current branch BEFORE any checkout so we can restore it afterward.
-    const originalBranch = mergeWorktreePath
+    const originalBranch = targetWorktree
       ? null
       : await getCurrentBranchName(projectRoot).catch(() => null);
 
-    if (!mergeWorktreePath) {
+    if (!targetWorktree) {
       // Need to checkout the target branch in the main repo
       await exec('git', ['checkout', mainBranch], { cwd: projectRoot });
     }
@@ -2540,39 +2603,9 @@ export async function mergeTask(
       }
     };
 
-    // User approval binds the exact committed result and destination. Check under
-    // the same repository lock as the merge, after verification and checkout.
-    if (approval) {
-      if (
-        !/^[a-f0-9]{40,64}$/i.test(approval.expectedCommit) ||
-        !/^[a-f0-9]{40,64}$/i.test(approval.expectedTargetCommit)
-      ) {
-        throw new Error('Invalid review commit.');
-      }
-      const [childHead, childRef, targetHead, targetBranch, childStatus] = await Promise.all([
-        exec('git', ['rev-parse', 'HEAD'], { cwd: checkWorktreePath }),
-        exec('git', ['rev-parse', '--verify', `refs/heads/${branchName}`], { cwd: projectRoot }),
-        exec('git', ['rev-parse', 'HEAD'], { cwd: mergeRoot }),
-        getCurrentBranchName(mergeRoot),
-        exec('git', ['status', '--porcelain'], { cwd: checkWorktreePath }),
-      ]);
-      if (
-        mainBranch !== approval.expectedTargetBranch ||
-        targetBranch !== approval.expectedTargetBranch ||
-        childHead.stdout.trim() !== approval.expectedCommit ||
-        childRef.stdout.trim() !== approval.expectedCommit ||
-        targetHead.stdout.trim() !== approval.expectedTargetCommit ||
-        childStatus.stdout.trim()
-      ) {
-        throw new Error(
-          'The reviewed result or integration target changed. Review again before merging.',
-        );
-      }
-    }
-    const mergeRef = approval?.expectedCommit ?? branchName;
     if (squash) {
       try {
-        await exec('git', ['merge', '--squash', '--', mergeRef], { cwd: mergeRoot });
+        await exec('git', ['merge', '--squash', '--', branchName], { cwd: mergeRoot });
       } catch (e) {
         await exec('git', ['reset', '--hard', 'HEAD'], { cwd: mergeRoot }).catch((recoverErr) =>
           console.warn('git reset --hard failed during squash recovery:', recoverErr),
@@ -2592,7 +2625,7 @@ export async function mergeTask(
       }
     } else {
       try {
-        await exec('git', ['merge', '--', mergeRef], { cwd: mergeRoot });
+        await exec('git', ['merge', '--', branchName], { cwd: mergeRoot });
       } catch (e) {
         await exec('git', ['merge', '--abort'], { cwd: mergeRoot }).catch((recoverErr) =>
           console.warn('git merge --abort failed:', recoverErr),
@@ -2835,6 +2868,34 @@ export async function getBranchCommits(
       });
   } catch (err) {
     logDebug('git', `getBranchCommits failed for ${worktreePath}: ${err}`);
+    return [];
+  }
+}
+
+/** Branch commits, oldest first, with their full messages — for squash commit defaults. */
+export async function getBranchCommitMessages(
+  worktreePath: string,
+  baseBranch?: string,
+): Promise<CommitInfo[]> {
+  if (!fs.existsSync(worktreePath)) return [];
+  const mergeBase = await detectMergeBase(worktreePath, 'HEAD', baseBranch);
+  try {
+    // Record separator between commits: bodies can contain newlines.
+    const { stdout } = await exec(
+      'git',
+      ['log', `${mergeBase}..HEAD`, '--pretty=format:%H%x00%s%x00%b%x1e', '--reverse'],
+      { cwd: worktreePath, maxBuffer: MAX_BUFFER },
+    );
+    return stdout
+      .split('\x1e')
+      .map((record) => record.replace(/^\n/, ''))
+      .filter((record) => record.trim())
+      .map((record) => {
+        const [hash = '', message = '', body = ''] = record.split('\0');
+        return { hash, message, body: body.trim() };
+      });
+  } catch (err) {
+    logDebug('git', `getBranchCommitMessages failed for ${worktreePath}: ${err}`);
     return [];
   }
 }

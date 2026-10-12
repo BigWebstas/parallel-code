@@ -10,6 +10,9 @@ import android.widget.RemoteViews
 import androidx.core.content.edit
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import org.json.JSONArray
+import org.json.JSONException
+import org.json.JSONObject
 import kotlin.math.abs
 
 /** How opaque the widget's card is, in the stops the settings slider offers, opaque first. */
@@ -101,29 +104,95 @@ fun widgetPalette(key: String?): WidgetPalette =
 /** The card shape for [key] at [percent] opacity. */
 fun widgetBackground(key: String?, percent: Int): Int = widgetPalette(key).background(percent)
 
-/** What the widget shows, worked out from the live agent list and usage snapshot. */
-data class WidgetSummary(val headline: String, val usage: String)
+/** The status dot's color: what most needs the user right now. */
+enum class WidgetTone(val color: Int) {
+    OFFLINE(0xFFD9645B.toInt()),
+    ATTENTION(0xFFE0A84E.toInt()),
+    WORKING(0xFF5FBF77.toInt()),
+    QUIET(0xFF8A8A8A.toInt()),
+}
 
-fun widgetSummary(agents: List<RemoteAgent>, usage: List<ProviderUsage>, connected: Boolean): WidgetSummary {
-    val live = agents.filter { !it.collapsed }
+/** One computer's usage meters, under its [label]; the label is null when only one computer is counted. */
+data class UsageSection(val label: String?, val lines: List<String>)
+
+/** What the widget shows, worked out from the live agent list and usage snapshot. */
+data class WidgetSummary(
+    val headline: String,
+    val usage: List<UsageSection>,
+    val tone: WidgetTone = WidgetTone.QUIET,
+)
+
+/**
+ * [active] is the computer in use, its agents counted only while [connected]; [others] are the other
+ * saved computers that answered. With more than one computer counted, the headline sums them all and
+ * says how many, e.g. "3 working · 2 computers", and the usage meters sit under each computer's label.
+ */
+fun widgetSummary(
+    active: ComputerSnapshot,
+    connected: Boolean,
+    others: List<ComputerSnapshot> = emptyList(),
+): WidgetSummary {
+    val computers = (if (connected) listOf(active) else emptyList()) + others
+    val live = computers.flatMap { it.agents }.filter { !it.collapsed }
     val needInput = live.count { it.attention == "needs_input" || it.attention == "error" }
     val working = live.count { it.running && (it.attention == "active" || it.attention == "shell_busy") }
-    val headline = when {
-        !connected -> "Not connected"
-        needInput > 0 && working > 0 -> "$needInput need you · $working working"
-        needInput > 0 -> "$needInput need${if (needInput == 1) "s" else ""} you"
-        working > 0 -> "$working working"
+    // Idle is every shown agent that is neither waiting on the user nor working (idle, ready, review).
+    val idle = live.size - needInput - working
+    val counts = listOfNotNull(
+        working.takeIf { it > 0 }?.let { "$it working" },
+        idle.takeIf { it > 0 }?.let { "$it idle" },
+    )
+    val status = when {
+        computers.isEmpty() -> "Not connected"
         live.isEmpty() -> "No agents running"
-        else -> "All quiet"
+        // "1 needs you" alone, but "1 need you · 2 working" in a list.
+        needInput > 0 -> (listOf("$needInput need${if (needInput == 1 && counts.isEmpty()) "s" else ""} you") + counts)
+            .joinToString(" · ")
+        else -> counts.joinToString(" · ")
     }
-    val lines = usage.filter { it.hasSnapshot }.map { provider ->
-        val windows = listOfNotNull(
-            provider.fiveHour?.let { "5h ${it.remainingPercent}%" },
-            provider.sevenDay?.let { "7d ${it.remainingPercent}%" },
-        ).joinToString("  ")
-        "${provider.label.padEnd(11)} $windows"
+    val headline = if (computers.size > 1) "$status · ${computers.size} computers" else status
+    val tone = when {
+        computers.isEmpty() -> WidgetTone.OFFLINE
+        needInput > 0 -> WidgetTone.ATTENTION
+        working > 0 -> WidgetTone.WORKING
+        else -> WidgetTone.QUIET
     }
-    return WidgetSummary(headline, if (lines.isEmpty()) "" else "Left:\n" + lines.joinToString("\n"))
+    // The last snapshot of the computer in use still shows while disconnected, as before.
+    val labelled = others.isNotEmpty()
+    val usage = (listOf(active) + others)
+        .map { UsageSection(if (labelled) it.label else null, usageLines(it.usage)) }
+        .filter { it.lines.isNotEmpty() }
+    return WidgetSummary(headline, usage, tone)
+}
+
+/** One line per provider with a snapshot: what is left of each window, or the credits spent. */
+private fun usageLines(usage: List<ProviderUsage>): List<String> = usage.filter { it.hasSnapshot }.map { provider ->
+    val windows = listOfNotNull(
+        provider.fiveHour?.let { "5h ${it.remainingPercent}%" },
+        provider.sevenDay?.let { "7d ${it.remainingPercent}%" },
+        provider.creditUsage?.let { "credits ${formatCredit(it)}" },
+    ).joinToString("  ")
+    "${provider.label.padEnd(11)} $windows"
+}
+
+/** [sections] as JSON, for the widget's preferences. */
+fun encodeUsage(sections: List<UsageSection>): String = JSONArray(
+    sections.map { JSONObject().put("label", it.label ?: JSONObject.NULL).put("lines", JSONArray(it.lines)) },
+).toString()
+
+/** The sections [encodeUsage] wrote; none when [json] is missing or unreadable. */
+fun decodeUsage(json: String?): List<UsageSection> = try {
+    val array = JSONArray(json ?: "[]")
+    List(array.length()) { i ->
+        val section = array.getJSONObject(i)
+        val lines = section.getJSONArray("lines")
+        UsageSection(
+            if (section.isNull("label")) null else section.getString("label"),
+            List(lines.length()) { lines.getString(it) },
+        )
+    }
+} catch (_: JSONException) {
+    emptyList()
 }
 
 /**
@@ -137,16 +206,23 @@ class AgentWidget : AppWidgetProvider() {
     companion object {
         private const val PREFS = "widget"
         private const val KEY_HEADLINE = "headline"
-        private const val KEY_USAGE = "usage"
+        // Holds JSON sections; earlier builds kept plain text under "usage".
+        private const val KEY_USAGE = "usage_sections"
         private const val KEY_UPDATED = "updated"
+        private const val KEY_TONE = "tone"
 
         /** Store [summary] and redraw every placed widget. */
         fun publish(context: Context, summary: WidgetSummary) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            if (prefs.getString(KEY_HEADLINE, null) == summary.headline && prefs.getString(KEY_USAGE, null) == summary.usage) return
+            if (
+                prefs.getString(KEY_HEADLINE, null) == summary.headline &&
+                prefs.getString(KEY_USAGE, null) == encodeUsage(summary.usage) &&
+                prefs.getString(KEY_TONE, null) == summary.tone.name
+            ) return
             prefs.edit {
                 putString(KEY_HEADLINE, summary.headline)
-                putString(KEY_USAGE, summary.usage)
+                putString(KEY_USAGE, encodeUsage(summary.usage))
+                putString(KEY_TONE, summary.tone.name)
                 putString(KEY_UPDATED, LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")))
             }
             refresh(context)
@@ -170,14 +246,27 @@ class AgentWidget : AppWidgetProvider() {
             )
             val palette = widgetPalette(settings.getString(SettingsStore.KEY_WIDGET_PALETTE, null))
             val transparency = settings.getInt(SettingsStore.KEY_WIDGET_TRANSPARENCY, 100)
+            val usage = decodeUsage(prefs.getString(KEY_USAGE, null))
+            val tone = WidgetTone.entries.firstOrNull { it.name == prefs.getString(KEY_TONE, null) } ?: WidgetTone.OFFLINE
             val views = RemoteViews(context.packageName, R.layout.widget_agents).apply {
                 setTextViewText(R.id.widget_headline, prefs.getString(KEY_HEADLINE, null) ?: "Open the app to connect")
-                setTextViewText(R.id.widget_usage, prefs.getString(KEY_USAGE, null).orEmpty())
+                // Each computer's meters, its label above a full-width rule; rebuilt on every draw.
+                removeAllViews(R.id.widget_usage)
+                usage.forEach { section ->
+                    addView(R.id.widget_usage, usageSectionViews(context, section, palette))
+                }
+                setInt(R.id.widget_status, "setColorFilter", tone.color)
+                // The rule under the headline separates it from the usage meters; alone it is clutter.
+                val usageVisibility = if (usage.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
+                setViewVisibility(R.id.widget_divider, usageVisibility)
+                setViewVisibility(R.id.widget_usage_title, usageVisibility)
+                setViewVisibility(R.id.widget_usage, usageVisibility)
+                setInt(R.id.widget_divider, "setBackgroundColor", ruleColor(palette))
                 setTextViewText(R.id.widget_updated, prefs.getString(KEY_UPDATED, null).orEmpty())
                 // The card's color picks the text colors too, so a light card stays readable.
                 setTextColor(R.id.widget_title, palette.title)
                 setTextColor(R.id.widget_headline, palette.headline)
-                setTextColor(R.id.widget_usage, palette.usage)
+                setTextColor(R.id.widget_usage_title, palette.usage)
                 setTextColor(R.id.widget_updated, palette.updated)
                 setOnClickPendingIntent(R.id.widget_root, open)
                 // RemoteViews can only set a background through the View setter it reflects on.
@@ -185,5 +274,20 @@ class AgentWidget : AppWidgetProvider() {
             }
             manager.updateAppWidget(ids, views)
         }
+
+        private fun usageSectionViews(context: Context, section: UsageSection, palette: WidgetPalette) =
+            RemoteViews(context.packageName, R.layout.widget_usage_section).apply {
+                val labelVisibility = if (section.label == null) android.view.View.GONE else android.view.View.VISIBLE
+                setViewVisibility(R.id.usage_label, labelVisibility)
+                setViewVisibility(R.id.usage_rule, labelVisibility)
+                setTextViewText(R.id.usage_label, section.label.orEmpty())
+                setTextViewText(R.id.usage_lines, section.lines.joinToString("\n"))
+                setTextColor(R.id.usage_label, palette.title)
+                setTextColor(R.id.usage_lines, palette.usage)
+                setInt(R.id.usage_rule, "setBackgroundColor", ruleColor(palette))
+            }
+
+        /** The faint rule color for [palette]'s card, shared by the headline divider and section rules. */
+        private fun ruleColor(palette: WidgetPalette) = (palette.updated and 0x00FFFFFF) or 0x40000000
     }
 }

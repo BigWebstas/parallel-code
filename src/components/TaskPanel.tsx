@@ -1,12 +1,11 @@
-import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { DelegationPanel } from './DelegationPanel';
 import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
-import { TaskMindMap } from './TaskMindMap';
 import {
   Show,
   createSignal,
   createEffect,
   createMemo,
+  lazy,
   on,
   onMount,
   onCleanup,
@@ -50,8 +49,7 @@ import { TaskChangedFilesSection } from './TaskChangedFilesSection';
 import { isCommitHashSelection, type CommitSelection } from './CommitNavBar';
 import { TaskShellSection } from './TaskShellSection';
 import { TaskCanvasPanel } from './TaskCanvasPanel';
-import { TaskStepsSection } from './TaskStepsSection';
-import { TaskCurrentStateLine } from './TaskCurrentStateLine';
+import { TaskBriefBar } from './TaskBrief';
 import { TaskAITerminal } from './TaskAITerminal';
 import { isAgentChat } from '../store/agent-chat';
 import { TaskClosingOverlay } from './TaskClosingOverlay';
@@ -65,15 +63,16 @@ import { theme } from '../lib/theme';
 import { isMac } from '../lib/platform';
 import type { Task } from '../store/types';
 import type { CommitInfo } from '../ipc/types';
-import { TaskReasoningGraphHost } from './TaskReasoningGraphHost';
 import type { TranscriptMarks } from '../investigation/transcript';
 import { isLandedTaskState } from '../store/landing';
 import { shouldPollTaskCommits } from './task-commit-polling';
+import { ACTIVE_TASK_SETTLE_MS, createSettledFlag } from '../lib/settled-flag';
 import { devQualityFindingProvider } from './dev-quality-finding-fixture';
 import { createEslintQualityFindingProvider } from '../lib/eslint-quality-findings';
 import { createChangeTour } from '../lib/create-change-tour';
 import {
   createUnderstandingTour,
+  documentTourKind,
   planTourSubject,
   tourInputSubject,
   type UnderstandingTourInput,
@@ -81,6 +80,12 @@ import {
 import { parseAgentTour } from '../lib/understanding-tour';
 import { UnderstandingTourDialog } from './UnderstandingTourDialog';
 import { getTaskDiffBaseBranch } from '../lib/load-task-diff';
+
+// Lazy: d3 and the graph editors only load once a task opens one of these tabs.
+const TaskMindMap = lazy(() => import('./TaskMindMap').then((m) => ({ default: m.TaskMindMap })));
+const TaskReasoningGraphHost = lazy(() =>
+  import('./TaskReasoningGraphHost').then((m) => ({ default: m.TaskReasoningGraphHost })),
+);
 
 interface TaskPanelProps {
   task: Task;
@@ -90,7 +95,6 @@ interface TaskPanelProps {
 // Panels that auto-grow to their content share one ceiling so a long body
 // can't take over the column: never taller than the panel's own px cap, and
 // never taller than 33vh. User drag pins intentionally bypass this.
-const STEPS_PANEL_AUTO_MAX = 'min(240px, 33vh)';
 const CHANGED_FILES_PANEL_AUTO_MAX = 'min(300px, 33vh)';
 const NOTES_PANEL_AUTO_MAX = 'min(400px, 33vh)';
 // Last agent-tour revision shown per task. Collapsing and expanding a task
@@ -102,6 +106,18 @@ export function TaskPanel(props: TaskPanelProps) {
   const eslintQualityFindingProvider = createEslintQualityFindingProvider(
     () => props.task.worktreePath,
   );
+  // Git checks wait until the task stays active; UI and focus react at once.
+  const isSettledActive = createSettledFlag(() => props.isActive, ACTIVE_TASK_SETTLE_MS);
+  // Alt+Arrow also scrolls tiles past; only one that stays in view polls commits.
+  const shouldPollCommits = createSettledFlag(
+    () =>
+      shouldPollTaskCommits(
+        store.focusMode,
+        props.isActive,
+        store.focusMode ? undefined : store.taskViewportVisibility[props.task.id],
+      ),
+    ACTIVE_TASK_SETTLE_MS,
+  );
   const [showCloseConfirm, setShowCloseConfirm] = createSignal(false);
   const [planFullscreen, setPlanFullscreen] = createSignal(false);
 
@@ -110,8 +126,8 @@ export function TaskPanel(props: TaskPanelProps) {
   createEffect(() => {
     const n = props.task.stagedNotification;
     const hasActiveCountdown = Boolean(autoSendChildUpdates() && n && !n.userEdited);
-    if (!props.task.stepsEnabled && !hasActiveCountdown) return;
-    const id = window.setInterval(() => setNowMs(Date.now()), hasActiveCountdown ? 1_000 : 30_000);
+    if (!hasActiveCountdown) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1_000);
     onCleanup(() => clearInterval(id));
   });
   const stagedCountdown = () => {
@@ -127,7 +143,6 @@ export function TaskPanel(props: TaskPanelProps) {
   const [showCommitDialog, setShowCommitDialog] = createSignal(false);
   // null while the finish dialog is closed; otherwise the option it shows.
   const [finishAction, setFinishAction] = createSignal<FinishAction | null>(null);
-  const [showDelegationReview, setShowDelegationReview] = createSignal(false);
   const [openPrUrl, setOpenPrUrl] = createSignal<string | null>(null);
   const [pushSuccess, setPushSuccess] = createSignal(false);
   const [pushing, setPushing] = createSignal(false);
@@ -278,8 +293,17 @@ export function TaskPanel(props: TaskPanelProps) {
       worktreePath: props.task.worktreePath,
       filePath,
     });
-  /** A document open on the canvas is read fresh, so an edited file gets a new tour. */
+  /**
+   * A document open on the canvas is read fresh, so an edited file gets a new
+   * tour. The task's own plan takes the plan tour with the same text the notes
+   * button sends, so switching between the two never regenerates it.
+   */
   const openDocumentTour = (path: string) => {
+    const kind = documentTourKind(props.task, path);
+    if (kind === 'plan' && props.task.planContent) {
+      openPlanTour();
+      return;
+    }
     const { worktreePath, name: taskName } = props.task;
     void invoke<DocumentSnapshot>(IPC.ReadDocument, {
       projectRoot: worktreePath,
@@ -287,24 +311,17 @@ export function TaskPanel(props: TaskPanelProps) {
     })
       .then((snapshot) => {
         if (snapshot.missing) throw new Error('the file is not in the worktree');
-        startOrOpenTour({
-          kind: 'plan',
-          taskName,
-          worktreePath,
-          planContent: snapshot.content,
-          subject: path,
-        });
+        const content = snapshot.content;
+        startOrOpenTour(
+          kind === 'plan'
+            ? { kind, taskName, worktreePath, planContent: content, subject: path }
+            : { kind, taskName, worktreePath, content, subject: path },
+        );
       })
       .catch((error: unknown) => showNotification(`Could not read ${path}: ${errMessage(error)}`));
   };
   const [editingProjectId, setEditingProjectId] = createSignal<string | null>(null);
   const [editingChecks, setEditingChecks] = createSignal(false);
-  // Jump-to-step state is a single signal so ↗ can be hidden entirely before
-  // TerminalView is ready (otherwise firstIndex would default to 0, showing ↗
-  // on every step while `jump` is still undefined and every click no-ops).
-  const [stepNav, setStepNav] = createSignal<
-    { jump: (stepIndex: number) => boolean; firstIndex: number } | undefined
-  >();
   // Per-agent scrollback markers; jumping also brings the terminal into focus.
   const [transcriptMarks, setTranscriptMarks] = createSignal<ReadonlyMap<string, TranscriptMarks>>(
     new Map(),
@@ -343,13 +360,12 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const [emptySupportExpanded, setEmptySupportExpanded] = createSignal(false);
   // Hide only genuinely empty support panels. Plans, tours, commit navigation,
-  // steps and shells are useful content even when the file/notes counts are zero.
+  // and shells are useful content even when the file/notes counts are zero.
   const canCollapseSupport = createMemo(
     () =>
       topStripEmpty() &&
       !(store.showPlans && props.task.planContent) &&
       !props.task.agentTour &&
-      !props.task.stepsEnabled &&
       props.task.shellAgentIds.length === 0 &&
       commitList().length === 0 &&
       selectedCommit() === null &&
@@ -467,9 +483,8 @@ export function TaskPanel(props: TaskPanelProps) {
       case 'close':
         setShowCloseConfirm(true);
         break;
-      case 'merge':
-      case 'push':
-        openFinish(action.type);
+      case 'finish':
+        openFinish('merge');
         break;
     }
   });
@@ -485,16 +500,7 @@ export function TaskPanel(props: TaskPanelProps) {
     const isolation = props.task.gitIsolation;
     if (isLandedTask()) return;
     if (isolation !== 'worktree' && isolation !== 'direct') return;
-    const focusMode = store.focusMode;
-    if (
-      !shouldPollTaskCommits(
-        focusMode,
-        focusMode ? props.isActive : false,
-        focusMode ? undefined : store.taskViewportVisibility[props.task.id],
-      )
-    ) {
-      return;
-    }
+    if (!shouldPollCommits()) return;
     let cancelled = false;
 
     async function fetchCommits() {
@@ -573,10 +579,19 @@ export function TaskPanel(props: TaskPanelProps) {
         selectedAgentId={selectedAgentId()}
         onSelectAgent={setActiveAgent}
         promptHandle={promptHandle}
-        onStepJumpReady={(fn, fromIdx) => {
-          setStepNav(fn ? { jump: fn, firstIndex: fromIdx } : undefined);
-        }}
         onTranscriptMarksReady={handleTranscriptMarks}
+        // Shown with briefs off too, so Rate confidence stays reachable; a task
+        // without agents has no one to ask, unless a rating is already there.
+        brief={
+          <Show when={props.task.agentIds.length > 0 || props.task.confidence}>
+            <TaskBriefBar
+              task={props.task}
+              onFileClick={(file) => setDiffScrollTarget(file)}
+              onWalkThrough={openOrGenerateTour}
+              walkThroughDisabled={changedFileCount() === 0}
+            />
+          </Show>
+        }
       />
     </div>
   );
@@ -650,7 +665,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const changedFilesEl = (
     <TaskChangedFilesSection
       task={props.task}
-      isActive={props.isActive}
+      isActive={isSettledActive()}
       commitList={commitList()}
       selectedCommit={selectedCommit()}
       onCommitNavigate={setSelectedCommit}
@@ -665,23 +680,6 @@ export function TaskPanel(props: TaskPanelProps) {
       onFileCountChange={setChangedFileCount}
       onUnderstandClick={(file) => openFileTour(file.path)}
       understanding={understanding}
-    />
-  );
-  const stepsSectionEl = (
-    <TaskStepsSection
-      task={props.task}
-      isActive={props.isActive}
-      onFileClick={(file) => setDiffScrollTarget(file)}
-      firstJumpableIndex={stepNav()?.firstIndex}
-      onJumpToStep={
-        stepNav()
-          ? (idx) => {
-              const ok = stepNav()?.jump(idx) ?? false;
-              if (ok) setTaskFocusedPanel(props.task.id, 'ai-terminal');
-              return ok;
-            }
-          : undefined
-      }
     />
   );
   // Prompt wrapper carries its own intrinsic height so the flex-first panel
@@ -719,18 +717,12 @@ export function TaskPanel(props: TaskPanelProps) {
   // what it needs (id, minSize for drag floor); the tree picks one child per
   // ResizablePanel to be the flex absorber via `absorberIds`.
 
-  const stepsSectionChild: PanelChild = {
-    id: 'steps-section',
-    minSize: 28,
-    maxAutoSize: STEPS_PANEL_AUTO_MAX,
-    content: () => stepsSectionEl,
-  };
-
   // With no terminals open the shell section collapses to its 35 px toolbar.
   // Mark it noPin so dragging an adjacent handle can't pin it past content
   // size and leave a visible band of empty space above the AI terminal.
   const shellSectionChild: PanelChild = {
     id: 'shell-section',
+    resizeLabel: 'Resize shell panel',
     minSize: 35,
     noPin: () => props.task.shellAgentIds.length === 0,
     content: () => shellSectionEl,
@@ -744,6 +736,7 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const promptInputChild: PanelChild = {
     id: 'prompt',
+    resizeLabel: 'Resize prompt input',
     minSize: 54,
     content: () => promptInputEl,
   };
@@ -753,6 +746,7 @@ export function TaskPanel(props: TaskPanelProps) {
   // In the split-right vertical tree, both are content-sized and shell absorbs.
   const notesChild: PanelChild = {
     id: 'notes',
+    resizeLabel: 'Resize notes panel',
     minSize: 100,
     maxAutoSize: NOTES_PANEL_AUTO_MAX,
     content: () => notesBodyEl,
@@ -760,6 +754,7 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const changedFilesChild: PanelChild = {
     id: 'changed-files',
+    resizeLabel: 'Resize changed files panel',
     minSize: 100,
     maxAutoSize: CHANGED_FILES_PANEL_AUTO_MAX,
     content: () => changedFilesEl,
@@ -772,7 +767,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const notesAndFilesChild: PanelChild = {
     id: 'notes-files',
     minSize: 60,
-    absorberWeight: 0.25,
+    absorberWeight: 0.35,
     content: () => (
       <div style={{ height: '100%', 'min-height': topStripEmpty() ? '64px' : '140px' }}>
         {isGitUnavailable() ? (
@@ -839,7 +834,6 @@ export function TaskPanel(props: TaskPanelProps) {
                 ...(supportCollapsed() ? [] : [notesAndFilesChild]),
                 shellSectionChild,
                 aiTerminalChild,
-                ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
                 ...(!isAgentChat(props.task, firstAgentId()) &&
                 (store.showPromptInput || autoSendChildUpdates())
                   ? [promptInputChild]
@@ -873,6 +867,7 @@ export function TaskPanel(props: TaskPanelProps) {
               },
               {
                 id: 'right-col',
+                resizeLabel: 'Resize side panel',
                 minSize: 360,
                 defaultSize: 420,
                 content: () => (
@@ -880,10 +875,12 @@ export function TaskPanel(props: TaskPanelProps) {
                     direction="vertical"
                     persistKey={`task:${props.task.id}:split-right`}
                     absorberIds={['shell-section']}
+                    // An empty shell is just its toolbar. An auto-height column
+                    // keeps the absorber from claiming the unused column space.
+                    style={{ height: props.task.shellAgentIds.length > 0 ? '100%' : 'auto' }}
                     children={[
                       ...(isGitUnavailable() ? [] : [changedFilesChild]),
                       notesChild,
-                      ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
                       shellSectionChild,
                     ]}
                   />
@@ -905,6 +902,7 @@ export function TaskPanel(props: TaskPanelProps) {
   };
   const canvasChild: PanelChild = {
     id: 'canvas',
+    resizeLabel: 'Resize canvas panel',
     minSize: CANVAS_MIN_WIDTH,
     defaultSize: CANVAS_DEFAULT_WIDTH,
     absorberWeight: 2,
@@ -935,6 +933,42 @@ export function TaskPanel(props: TaskPanelProps) {
         closingError={props.task.closingError}
         onRetry={() => retryCloseTask(props.task.id)}
       />
+      {/* The title sits above the collaboration banners so they never push it
+          to a different height across tasks. */}
+      <div
+        class="task-header-stack"
+        style={{
+          flex: '0 0 96px',
+          display: 'flex',
+          'flex-direction': 'column',
+          overflow: 'hidden',
+        }}
+      >
+        {/* Title + branch bars live outside <Show> so they don't remount on layout flips. */}
+        {/* 68px fits the title bar's two rows: a 30px icon-button row, the 2px
+            row gap, a ~21px badge row, and the bar's 12px vertical padding.
+            The stack total above is this plus the 28px branch bar. */}
+        <div style={{ flex: '0 0 68px', overflow: 'hidden' }}>
+          <TaskTitleBar
+            task={props.task}
+            isActive={props.isActive}
+            onClose={() => setShowCloseConfirm(true)}
+            onCommit={() => setShowCommitDialog(true)}
+            onFinish={() => openFinish('merge')}
+            pushing={pushing()}
+            pushSuccess={pushSuccess()}
+            onTitleEditRef={(h) => (titleEditHandle = h)}
+          />
+        </div>
+        <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
+          <TaskBranchInfoBar
+            task={props.task}
+            onEditProject={(id) => setEditingProjectId(id)}
+            onOpenPullRequest={setOpenPrUrl}
+            onFinish={canFinish() ? () => openFinish('merge') : undefined}
+          />
+        </div>
+      </div>
       <Show
         when={
           !!props.task.coordinatedBy ||
@@ -1048,43 +1082,6 @@ export function TaskPanel(props: TaskPanelProps) {
       />
       <TaskBranchAdoptionBanner task={props.task} />
       <TaskSuperProductivityBanner taskId={props.task.id} />
-      <div
-        class="task-header-stack"
-        style={{
-          flex: `0 0 ${props.task.stepsEnabled ? 120 : 96}px`,
-          display: 'flex',
-          'flex-direction': 'column',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Title + branch bars live outside <Show> so they don't remount on layout flips. */}
-        {/* 68px fits the title bar's two rows: a 30px icon-button row, the 2px
-            row gap, a ~21px badge row, and the bar's 12px vertical padding.
-            The stack totals above are this plus the 28px branch bar (and the
-            24px steps line when enabled). */}
-        <div style={{ flex: '0 0 68px', overflow: 'hidden' }}>
-          <TaskTitleBar
-            task={props.task}
-            isActive={props.isActive}
-            onClose={() => setShowCloseConfirm(true)}
-            onCommit={() => setShowCommitDialog(true)}
-            onFinish={() => openFinish('merge')}
-            pushing={pushing()}
-            pushSuccess={pushSuccess()}
-            onTitleEditRef={(h) => (titleEditHandle = h)}
-          />
-        </div>
-        <Show when={props.task.stepsEnabled}>
-          <TaskCurrentStateLine task={props.task} nowMs={nowMs()} variant="card" />
-        </Show>
-        <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
-          <TaskBranchInfoBar
-            task={props.task}
-            onEditProject={(id) => setEditingProjectId(id)}
-            onOpenPullRequest={setOpenPrUrl}
-          />
-        </div>
-      </div>
       <div style={{ flex: '1', 'min-height': '0' }}>
         <ResizablePanel
           direction="horizontal"
@@ -1093,11 +1090,6 @@ export function TaskPanel(props: TaskPanelProps) {
           children={canvasVisible() ? [mainChild, canvasChild] : [mainChild]}
         />
       </div>
-      <DelegationReviewDialog
-        task={props.task}
-        open={showDelegationReview()}
-        onClose={() => setShowDelegationReview(false)}
-      />
       <CloseTaskDialog
         open={showCloseConfirm()}
         task={props.task}
@@ -1124,9 +1116,13 @@ export function TaskPanel(props: TaskPanelProps) {
             tour.reset();
             generateTour();
           }}
-          onDelegationReview={() => {
+          onOpenPullRequest={(url) => {
             setFinishAction(null);
-            setShowDelegationReview(true);
+            setOpenPrUrl(url);
+          }}
+          onCloseTask={() => {
+            setFinishAction(null);
+            setShowCloseConfirm(true);
           }}
           onPushStart={() => {
             setPushing(true);

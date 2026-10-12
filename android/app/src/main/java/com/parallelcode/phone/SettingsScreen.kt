@@ -29,7 +29,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -37,6 +39,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
@@ -94,12 +97,21 @@ fun SettingsScreen(
     onWidgetPaletteChange: (String) -> Unit,
     quickReplies: List<String>,
     onQuickRepliesChange: (List<String>) -> Unit,
+    sendQuickReplies: Boolean,
+    onSendQuickRepliesChange: (Boolean) -> Unit,
     notifications: NotificationPrefs,
     onNotificationsChange: (NotificationPrefs) -> Unit,
+    waitForVpn: Boolean,
+    onWaitForVpnChange: (Boolean) -> Unit,
+    homeWifiSsid: String?,
+    onHomeWifiSsidChange: (String?) -> Unit,
+    currentWifiSsid: String?,
+    onUseCurrentWifi: () -> Unit,
     latencyMs: Long?,
     state: ConnectionState,
     computers: List<SavedComputer>,
     onSwitchComputer: (String) -> Unit,
+    onRenameComputer: (String, String?) -> Unit,
     onForgetComputer: (String) -> Unit,
     onAddComputer: () -> Unit,
     onPair: () -> Unit,
@@ -117,8 +129,8 @@ fun SettingsScreen(
                         navigationIconContentColor = MaterialTheme.colorScheme.primary,
                     ),
                     navigationIcon = {
-                        TextButton(onClick = onBack) {
-                            Text("← Back", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                     },
                     title = {
@@ -433,6 +445,13 @@ fun SettingsScreen(
                         QuickRepliesEditor(quickReplies, onQuickRepliesChange)
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(vertical = 14.dp))
                         SettingSwitchRow(
+                            title = "Send quick replies immediately",
+                            description = "Tapping a quick reply sends it straight to the agent. Off, it is added to your draft first.",
+                            checked = sendQuickReplies,
+                            onCheckedChange = onSendQuickRepliesChange,
+                        )
+                        HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(vertical = 14.dp))
+                        SettingSwitchRow(
                             title = "Always scroll to latest output",
                             description = "Jump to new output even after scrolling up. Off, the terminal follows output only while you are at the bottom.",
                             checked = alwaysFollowOutput,
@@ -566,6 +585,8 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         val host = state.link?.baseUrl ?: "Not connected"
+                        val hostLabel = computers.firstOrNull { it.baseUrl == state.link?.baseUrl }?.label
+                            ?: host.substringAfter("://")
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -573,7 +594,7 @@ fun SettingsScreen(
                         ) {
                             Text("Computer", style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.textMuted)
                             Text(
-                                host.substringAfter("://"),
+                                hostLabel,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Medium,
@@ -588,17 +609,22 @@ fun SettingsScreen(
                         ) {
                             Text("Status", style = MaterialTheme.typography.bodyMedium, color = AppTheme.extra.textMuted)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val statusColor = when (state.status) {
+                                    ConnectionStatus.CONNECTED -> AppTheme.extra.success
+                                    ConnectionStatus.WAITING_FOR_VPN -> AppTheme.extra.warningText
+                                    else -> AppTheme.extra.textMuted
+                                }
                                 Box(
                                     modifier = Modifier
                                         .size(8.dp)
                                         .clip(CircleShape)
-                                        .background(if (state.status == ConnectionStatus.CONNECTED) AppTheme.extra.success else AppTheme.extra.textMuted),
+                                        .background(statusColor),
                                 )
                                 Text(
                                     statusLabel(state),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium,
-                                    color = if (state.status == ConnectionStatus.CONNECTED) AppTheme.extra.success else AppTheme.extra.textMuted,
+                                    color = statusColor,
                                 )
                             }
                         }
@@ -648,6 +674,53 @@ fun SettingsScreen(
                             }
                         }
 
+                        HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 16.dp),
+                            ) {
+                                Text(
+                                    "Wait for VPN",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "Pause connection until a VPN (such as Tailscale or WireGuard) is active.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = AppTheme.extra.textMuted,
+                                )
+                            }
+                            Switch(
+                                checked = waitForVpn,
+                                onCheckedChange = onWaitForVpnChange,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedThumbColor = AppTheme.extra.textMuted,
+                                    uncheckedTrackColor = AppTheme.extra.inputBg,
+                                    uncheckedBorderColor = AppTheme.extra.border,
+                                ),
+                            )
+                        }
+
+                        if (waitForVpn) {
+                            HomeWifiEditor(
+                                ssid = homeWifiSsid,
+                                onChange = onHomeWifiSsidChange,
+                                currentSsid = currentWifiSsid,
+                                onUseCurrent = onUseCurrentWifi,
+                            )
+                        }
+
                         HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.border)
 
                         OutlinedButton(
@@ -679,6 +752,7 @@ fun SettingsScreen(
                                 computer = computer,
                                 inUse = computer.baseUrl == state.link?.baseUrl,
                                 onSelect = { onSwitchComputer(computer.baseUrl) },
+                                onRename = { onRenameComputer(computer.baseUrl, it) },
                                 onForget = { onForgetComputer(computer.baseUrl) },
                             )
                             HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle, modifier = Modifier.padding(horizontal = 8.dp))
@@ -687,6 +761,20 @@ fun SettingsScreen(
                             Text("Add another computer", fontWeight = FontWeight.SemiBold)
                         }
                     }
+                }
+            }
+
+            // BACKUP SECTION
+            item {
+                SectionHeader("BACKUP")
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, AppTheme.extra.border),
+                ) {
+                    Box(Modifier.fillMaxWidth().padding(16.dp)) { BackupSettings() }
                 }
             }
 
@@ -700,26 +788,7 @@ fun SettingsScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, AppTheme.extra.border),
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Parallel Code", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                            Text("v3.1.0", color = AppTheme.extra.textMuted, fontFamily = FontFamily.Monospace)
-                        }
-                        Text(
-                            "Mobile companion for monitoring and interacting with parallel AI agents.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = AppTheme.extra.textMuted,
-                        )
-                    }
+                    Box(Modifier.fillMaxWidth().padding(16.dp)) { UpdateSettings() }
                 }
             }
         }
@@ -873,7 +942,7 @@ private fun SectionHeader(title: String) {
 }
 
 @Composable
-private fun SettingSwitchRow(
+internal fun SettingSwitchRow(
     title: String,
     description: String,
     checked: Boolean,
@@ -958,6 +1027,41 @@ private fun RowScope.WidgetSwatch(
     }
 }
 
+/** The home Wi-Fi name; saved when the field loses focus or the screen closes. */
+@Composable
+private fun HomeWifiEditor(ssid: String?, onChange: (String?) -> Unit, currentSsid: String?, onUseCurrent: () -> Unit) {
+    var text by remember(ssid) { mutableStateOf(ssid.orEmpty()) }
+    val latest by rememberUpdatedState(text)
+    DisposableEffect(Unit) { onDispose { if (latest.trim() != ssid.orEmpty()) onChange(latest) } }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            "Home Wi-Fi",
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            "On this Wi-Fi network, connect without waiting for the VPN. Android needs location access to read the network's name; allow it all the time so agent notifications connect here too.",
+            style = MaterialTheme.typography.bodySmall,
+            color = AppTheme.extra.textMuted,
+        )
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { if (!it.isFocused && text.trim() != ssid.orEmpty()) onChange(text) },
+            placeholder = { Text("Wi-Fi name") },
+            singleLine = true,
+        )
+        if (currentSsid == null || currentSsid != ssid) {
+            TextButton(onClick = onUseCurrent) {
+                Text(if (currentSsid != null) "Use current Wi-Fi ($currentSsid)" else "Use current Wi-Fi")
+            }
+        }
+    }
+}
+
 /** One reply per line; saved when the field loses focus or the screen closes. */
 @Composable
 private fun QuickRepliesEditor(replies: List<String>, onChange: (List<String>) -> Unit) {
@@ -972,7 +1076,7 @@ private fun QuickRepliesEditor(replies: List<String>, onChange: (List<String>) -
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
-            "Shown above the reply box; tap one to add it to your message. One per line.",
+            "Shown above the reply box in built-in chats and behind the star button in terminals. One per line.",
             style = MaterialTheme.typography.bodyMedium,
             color = AppTheme.extra.textMuted,
         )
@@ -990,7 +1094,24 @@ private fun QuickRepliesEditor(replies: List<String>, onChange: (List<String>) -
 
 /** A saved computer: tap to switch to it; the one in use is marked and cannot be forgotten here. */
 @Composable
-private fun ComputerRow(computer: SavedComputer, inUse: Boolean, onSelect: () -> Unit, onForget: () -> Unit) {
+private fun ComputerRow(
+    computer: SavedComputer,
+    inUse: Boolean,
+    onSelect: () -> Unit,
+    onRename: (String?) -> Unit,
+    onForget: () -> Unit,
+) {
+    var renaming by remember(computer.baseUrl) { mutableStateOf(false) }
+    if (renaming) {
+        RenameComputerDialog(
+            computer = computer,
+            onConfirm = {
+                onRename(it)
+                renaming = false
+            },
+            onDismiss = { renaming = false },
+        )
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1007,15 +1128,64 @@ private fun ComputerRow(computer: SavedComputer, inUse: Boolean, onSelect: () ->
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
+            if (computer.alias?.isNotBlank() == true) {
+                Text(
+                    computer.baseUrl.substringAfter("://"),
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTheme.extra.textMuted,
+                )
+            }
             Text(
                 (if (inUse) "In use · " else "") + if (computer.pairedToken != null) "Paired" else "View only",
                 style = MaterialTheme.typography.bodySmall,
                 color = AppTheme.extra.textMuted,
             )
         }
+        TextButton(onClick = { renaming = true }) { Text("Label") }
         if (!inUse) {
             TextButton(onClick = onForget) { Text("Forget", color = MaterialTheme.colorScheme.error) }
         }
     }
+}
+
+/** Name a saved computer so it reads as something friendlier than its address. */
+@Composable
+private fun RenameComputerDialog(
+    computer: SavedComputer,
+    onConfirm: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember(computer.baseUrl) { mutableStateOf(computer.alias.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        title = { Text("Label this computer") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Shown in the header, the switch menu and this list instead of the address.",
+                    color = AppTheme.extra.textMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Label (optional)") },
+                    placeholder = { Text(computer.baseUrl.substringAfter("://")) },
+                    singleLine = true,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(text.takeIf { it.isNotBlank() }) }) {
+                Text("Save", fontWeight = FontWeight.SemiBold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 

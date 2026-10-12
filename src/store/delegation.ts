@@ -12,6 +12,7 @@ import { invoke } from '../lib/ipc';
 import { warn as logWarn } from '../lib/log';
 import { store, setStore } from './core';
 import { isLandedTaskState } from './landing';
+import { isHiddenAgentTaskId } from '../documents/task-id';
 import type { AgentDef } from '../ipc/types';
 import type { PersistedTask, Project, Task } from './types';
 import { commandName } from '../../electron/shared/command-name';
@@ -151,7 +152,8 @@ export function startDelegationStateHydration(): () => void {
     createEffect(() => {
       const tasks = new Map(
         Object.entries(store.tasks).filter(
-          ([, task]) =>
+          ([id, task]) =>
+            !isHiddenAgentTaskId(id) &&
             store.projects.find((project) => project.id === task.projectId)?.kind !== 'document',
         ),
       );
@@ -200,6 +202,9 @@ export function startPeerMessageDelivery(onDelivered: (message: PeerMessage) => 
         recipients.add(agentId);
         const task = store.tasks[taskId];
         const agent = store.agents[agentId];
+        // The task composer targets the first pane. An explicit handoff to a
+        // reviewer in another pane must not wait for that unrelated draft.
+        const checkComposerDraft = message.origin !== 'user' || task?.agentIds[0] === agentId;
         if (
           peerDeliveriesInFlight.has(agentId) ||
           !task ||
@@ -213,15 +218,19 @@ export function startPeerMessageDelivery(onDelivered: (message: PeerMessage) => 
           isLandedTaskState(task.landingState) ||
           task.delegationPaused ||
           state.paused ||
-          task.controlledBy === 'human' ||
+          (task.controlledBy === 'human' && message.origin !== 'user') ||
           task.initialPrompt ||
           task.automationWriteInFlight ||
-          task.promptDraftActive ||
-          task.promptDraft?.trim() ||
+          (checkComposerDraft && (task.promptDraftActive || task.promptDraft?.trim())) ||
           task.terminalInputPending ||
           (task.userActivityHoldUntil ?? 0) > Date.now() ||
-          task.prefillPrompt ||
-          task.stagedNotification
+          (checkComposerDraft && task.prefillPrompt) ||
+          // Manual completion summaries can remain unread indefinitely. Only
+          // reserve input for an automatic notification or a user-edited one.
+          (checkComposerDraft &&
+            task.stagedNotification &&
+            ((task.autoSendChildUpdates ?? task.coordinatorMode) ||
+              task.stagedNotification.userEdited))
         )
           continue;
         const generation = agent.generation;

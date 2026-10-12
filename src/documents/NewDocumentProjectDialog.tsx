@@ -1,3 +1,5 @@
+// The workspace panel that also loads these styles is lazy, and this dialog opens before it.
+import './documents.css';
 import {
   For,
   Show,
@@ -19,6 +21,7 @@ import { showNotification } from '../store/notification';
 import type { DocumentFileInfo, DocumentFolderInfo, DocumentProjectSetup } from './types';
 import { openDocumentWorkspace } from './store';
 import { pathBasename } from '../lib/path';
+import { FolderIcon } from '../components/icons';
 
 interface NewDocumentProjectDialogProps {
   open: boolean;
@@ -225,6 +228,7 @@ export function NewDocumentProjectDialog(props: NewDocumentProjectDialogProps) {
               onClick={() => void chooseFolder()}
               disabled={busy()}
             >
+              <FolderIcon size={14} />
               Browse…
             </button>
           </div>
@@ -321,6 +325,7 @@ export function NewDocumentProjectDialog(props: NewDocumentProjectDialogProps) {
                 class="docws-btn docws-btn-sm"
                 onClick={() => setFolder(repo())}
               >
+                <FolderIcon size={12} />
                 Use the repository
               </button>
             </div>
@@ -341,6 +346,7 @@ export function NewDocumentProjectDialog(props: NewDocumentProjectDialogProps) {
             disabled={!canCreate()}
             onClick={() => void create()}
           >
+            <FolderIcon size={14} />
             {busy() ? 'Setting up…' : 'Open workspace'}
           </button>
         </div>

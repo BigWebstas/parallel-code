@@ -172,11 +172,13 @@ describe('rollupBucket', () => {
 describe('isPrUrl', () => {
   it('accepts PR URLs', () => {
     expect(isPrUrl('https://github.com/acme/app/pull/42')).toBe(true);
+    expect(isPrUrl('https://code.acme.test/acme/app/pull/42')).toBe(true);
+    expect(isPrUrl('http://code.acme.test/acme/app/pull/42')).toBe(false);
     expect(isPrUrl('https://www.github.com/acme/app/pull/1')).toBe(true);
   });
-  it('rejects issues, discussions, and non-github', () => {
+  it('rejects issues, discussions, and malformed PR URLs', () => {
     expect(isPrUrl('https://github.com/acme/app/issues/42')).toBe(false);
-    expect(isPrUrl('https://gitlab.com/acme/app/pull/42')).toBe(false);
+    expect(isPrUrl('https://gitlab.com/acme/app/-/merge_requests/42')).toBe(false);
     expect(isPrUrl('not a url')).toBe(false);
     expect(isPrUrl('https://github.com/acme/app')).toBe(false);
     expect(isPrUrl('https://github.com/acme/app/pull/abc')).toBe(false);
@@ -216,7 +218,7 @@ describe('fetchPrStatus', () => {
     expect(calls[0][0]).toBe('pr');
     expect(calls[0][1]).toBe('view');
     expect(calls[0]).toContain(
-      'state,headRefOid,isDraft,reviewDecision,mergeable,statusCheckRollup',
+      'state,mergedAt,headRefOid,isDraft,reviewDecision,mergeable,statusCheckRollup',
     );
     expect(out.state).toBe('OPEN');
     expect(out.headRefOid).toBe('abc123');
@@ -305,13 +307,13 @@ describe('detectPrUrlForBranch', () => {
     expect(commands).toEqual(['git', 'git', 'gh']);
   });
 
-  it('finds an open PR for a branch', async () => {
+  it.each(['github.com', 'code.acme.test'])('finds an open PR for a branch on %s', async (host) => {
     const calls = stubGh((_args, cb) => {
       cb(
         null,
         JSON.stringify([
           {
-            url: 'https://github.com/a/b/pull/11',
+            url: `https://${host}/a/b/pull/11`,
             headRefName: 'task/my-branch',
           },
         ]),
@@ -319,7 +321,7 @@ describe('detectPrUrlForBranch', () => {
       );
     });
     await expect(detectPrUrlForBranch('/repo/worktree', 'task/my-branch')).resolves.toBe(
-      'https://github.com/a/b/pull/11',
+      `https://${host}/a/b/pull/11`,
     );
     expect(calls).toHaveLength(1);
     expect(calls[0]).toEqual([
@@ -393,6 +395,51 @@ describe('refreshPrChecksWatcher', () => {
     vi.clearAllMocks();
     __resetForTests();
   });
+
+  it.each([
+    { statusCheckRollup: [] },
+    { statusCheckRollup: [{ name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS' }] },
+  ])(
+    'reports conflicts instead of green or absent CI for rollup %j',
+    async ({ statusCheckRollup }) => {
+      const send = vi.fn();
+      initPrChecks(fakeWindow(send));
+      let mergeable = 'CONFLICTING';
+      stubGh((_args, cb) =>
+        cb(
+          null,
+          JSON.stringify({ state: 'OPEN', headRefOid: 'sha', mergeable, statusCheckRollup }),
+          '',
+        ),
+      );
+      startPrChecksWatcher({
+        taskId: 't1',
+        prUrl: 'https://github.com/a/b/pull/1',
+        taskName: 'test',
+      });
+      await flushPromises();
+      expect(send.mock.calls[send.mock.calls.length - 1]?.[1]).toMatchObject({
+        overall: 'failure',
+        failing: 1,
+        checks: expect.arrayContaining([
+          { name: 'Merge conflicts with base branch', bucket: 'fail' },
+        ]),
+      });
+
+      mergeable = 'MERGEABLE';
+      const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10 * 60_000);
+      try {
+        await __runTickForTests();
+      } finally {
+        now.mockRestore();
+      }
+      expect(send.mock.calls[send.mock.calls.length - 1]?.[1]).toMatchObject({
+        taskId: 't1',
+        overall: statusCheckRollup.length ? 'success' : 'none',
+        failing: 0,
+      });
+    },
+  );
 
   it('does not suppress the first fetched status after a post-push refresh', async () => {
     const send = vi.fn();
@@ -576,7 +623,16 @@ describe('refreshPrChecksWatcher', () => {
     const send = vi.fn();
     initPrChecks(fakeWindow(send));
     stubGh((_args, cb) =>
-      cb(null, JSON.stringify({ state, headRefOid: 'sha', statusCheckRollup: [] }), ''),
+      cb(
+        null,
+        JSON.stringify({
+          state,
+          mergedAt: merged ? '2026-10-09T10:00:00Z' : null,
+          headRefOid: 'sha',
+          statusCheckRollup: [],
+        }),
+        '',
+      ),
     );
 
     startPrChecksWatcher({
@@ -587,7 +643,13 @@ describe('refreshPrChecksWatcher', () => {
     await flushPromises();
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0][1]).toMatchObject({ taskId: 't1', cleared: true, merged });
+    expect(send.mock.calls[0][1]).toMatchObject({
+      taskId: 't1',
+      cleared: true,
+      merged,
+      prUrl: 'https://github.com/a/b/pull/1',
+      mergedAt: merged ? '2026-10-09T10:00:00Z' : undefined,
+    });
     expect(__getStateForTests().taskIds).toEqual([]);
   });
 });

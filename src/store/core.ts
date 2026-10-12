@@ -2,6 +2,7 @@ import { createStore } from 'solid-js/store';
 import { DEFAULT_TERMINAL_FONT } from '../lib/fonts';
 import { getLocalDateKey } from '../lib/date';
 import { defaultPresetForTone } from '../lib/look';
+import { DEFAULT_TASK_NAME_MODEL } from '../../electron/shared/task-name-model';
 import type { AppStore, UsageState } from './types';
 
 const EMPTY_USAGE: UsageState = {
@@ -47,6 +48,7 @@ export const [store, setStore] = createStore<AppStore>({
   notification: null,
   completedTaskDate: getLocalDateKey(),
   completedTaskCount: 0,
+  countedMergedPrs: [],
   mergedLinesAdded: 0,
   mergedLinesRemoved: 0,
   terminalFont: DEFAULT_TERMINAL_FONT,
@@ -62,9 +64,14 @@ export const [store, setStore] = createStore<AppStore>({
   windowState: null,
   autoTrustFolders: false,
   showPlans: true,
+  modelTaskNames: false,
+  taskNameModel: DEFAULT_TASK_NAME_MODEL,
+  taskBriefs: false,
+  confidencePrompt: '',
   showSidebarTips: true,
   showSidebarProgress: true,
   sidebarNeedsInputFirst: true,
+  taskProjectFilter: null,
   projectsCollapsed: false,
   desktopNotificationsEnabled: false,
   inactiveColumnOpacity: 0.9,
@@ -87,6 +94,7 @@ export const [store, setStore] = createStore<AppStore>({
     connectedClients: 0,
   },
   autoStartRemoteAccess: false,
+  githubIssuesProjectId: null,
   showArena: false,
   keybindingPreset: 'default',
   keybindingOverridesByPreset: {},
@@ -102,7 +110,6 @@ export const [store, setStore] = createStore<AppStore>({
   coordinatorNotificationDelayMs: 60_000,
   coordinatorControlHintDismissed: false,
   preferUiMode: false,
-  defaultStepsEnabled: false,
   defaultSkipPermissions: false,
   defaultPropagateSkipPermissions: false,
   canvasOwnershipBadges: true,

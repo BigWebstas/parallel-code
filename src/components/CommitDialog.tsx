@@ -5,7 +5,7 @@ import { refreshTaskStatus } from '../store/store';
 import { ConfirmDialog } from './ConfirmDialog';
 import { theme, bannerStyle } from '../lib/theme';
 import type { Task } from '../store/types';
-import type { ChangedFile } from '../ipc/types';
+import { loadCommitFiles } from '../lib/commit-status';
 import { errMessage } from '../lib/log';
 
 type BusyKind = 'staging' | 'unstaging' | 'committing';
@@ -16,19 +16,6 @@ interface CommitDialogProps {
   onDone: () => void;
 }
 
-interface CommitSnapshot {
-  files: ChangedFile[];
-  staged: Set<string>;
-}
-
-async function loadSnapshot(worktreePath: string): Promise<CommitSnapshot> {
-  const [files, staged] = await Promise.all([
-    invoke<ChangedFile[]>(IPC.GetUncommittedChangedFiles, { worktreePath }),
-    invoke<string[]>(IPC.GetStagedFiles, { worktreePath }),
-  ]);
-  return { files, staged: new Set(staged) };
-}
-
 export function CommitDialog(props: CommitDialogProps) {
   const [message, setMessage] = createSignal('');
   const [error, setError] = createSignal('');
@@ -36,11 +23,11 @@ export function CommitDialog(props: CommitDialogProps) {
 
   const [snapshot, { refetch, mutate }] = createResource(
     () => (props.open ? props.task.worktreePath : null),
-    loadSnapshot,
+    loadCommitFiles,
   );
-  const files = () => snapshot()?.files ?? [];
-  const stagedCount = () => snapshot()?.staged.size ?? 0;
-  const unstagedCount = () => files().filter((f) => !snapshot()?.staged.has(f.path)).length;
+  const files = () => snapshot() ?? [];
+  const stagedCount = () => files().filter((f) => f.staged).length;
+  const unstagedCount = () => files().length - stagedCount();
 
   createEffect(() => {
     if (props.open) {
@@ -151,7 +138,7 @@ export function CommitDialog(props: CommitDialogProps) {
             >
               <For each={files()}>
                 {(file) => {
-                  const staged = () => snapshot()?.staged.has(file.path) ?? false;
+                  const staged = () => file.staged;
                   return (
                     <li style={{ display: 'flex', gap: '8px', 'white-space': 'nowrap' }}>
                       <span

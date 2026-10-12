@@ -1,12 +1,12 @@
 import { createEffect } from 'solid-js';
 import { store, saveState } from './store';
-import { documentAgentTaskIds } from '../documents/task-id';
+import { hiddenAgentTaskIds } from '../documents/task-id';
 
 function persistedTaskIds(): string[] {
   return [
     ...store.taskOrder,
     ...store.collapsedTaskOrder,
-    ...documentAgentTaskIds(store.projects),
+    ...hiddenAgentTaskIds(store.projects),
   ].filter((id) => store.tasks[id]);
 }
 
@@ -21,12 +21,12 @@ function structuralSnapshot(): string {
     lastAgentId: store.lastAgentId,
     taskOrder: store.taskOrder,
     collapsedTaskOrder: store.collapsedTaskOrder,
-    activeTaskId: store.activeTaskId,
     sidebarVisible: store.sidebarVisible,
     panelUserSize: store.panelUserSize,
     globalScale: store.globalScale,
     completedTaskDate: store.completedTaskDate,
     completedTaskCount: store.completedTaskCount,
+    countedMergedPrs: store.countedMergedPrs,
     mergedLinesAdded: store.mergedLinesAdded,
     mergedLinesRemoved: store.mergedLinesRemoved,
     terminalFont: store.terminalFont,
@@ -36,10 +36,13 @@ function structuralSnapshot(): string {
     autoTrustFolders: store.autoTrustFolders,
     showPlans: store.showPlans,
     preferUiMode: store.preferUiMode,
-    defaultStepsEnabled: store.defaultStepsEnabled,
     defaultSkipPermissions: store.defaultSkipPermissions,
     defaultPropagateSkipPermissions: store.defaultPropagateSkipPermissions,
     canvasOwnershipBadges: store.canvasOwnershipBadges,
+    modelTaskNames: store.modelTaskNames,
+    taskNameModel: store.taskNameModel,
+    taskBriefs: store.taskBriefs,
+    confidencePrompt: store.confidencePrompt,
     showSidebarTips: store.showSidebarTips,
     showSidebarProgress: store.showSidebarProgress,
     sidebarNeedsInputFirst: store.sidebarNeedsInputFirst,
@@ -82,6 +85,8 @@ function structuralSnapshot(): string {
             externalWorktree: t.externalWorktree,
             savedInitialPrompt: t.savedInitialPrompt,
             collapsed: t.collapsed,
+            snoozedUntil: t.snoozedUntil,
+            snoozedUntilCi: t.snoozedUntilCi,
             agentSessionIds: t.agentSessionIds,
             savedAgentSessionIds: t.savedAgentSessionIds,
             coordinatedBy: t.coordinatedBy,
@@ -104,6 +109,8 @@ function structuralSnapshot(): string {
             verification: t.verification,
             verificationRun: t.verificationRun,
             evidence: t.evidence,
+            brief: t.brief,
+            confidence: t.confidence,
             landingState: t.landingState,
             landingReason: t.landingReason,
             landingSummary: t.landingSummary,
@@ -131,9 +138,15 @@ function typedTextSnapshot(): string {
   );
 }
 
+/** Tracked apart from the structural snapshot so switching tasks (Alt+Arrow
+ *  can switch many times a second) doesn't re-serialize every task. */
+function activeTaskSnapshot(): string {
+  return JSON.stringify(store.activeTaskId);
+}
+
 /** Snapshot string of all persisted fields; changes whenever a save is due. */
 export function persistedSnapshot(): string {
-  return structuralSnapshot() + typedTextSnapshot();
+  return structuralSnapshot() + typedTextSnapshot() + activeTaskSnapshot();
 }
 
 /** Quiet period after the last change before a save is written. */
@@ -179,4 +192,5 @@ export function setupAutosave(): void {
   };
   watch(structuralSnapshot);
   watch(typedTextSnapshot);
+  watch(activeTaskSnapshot);
 }

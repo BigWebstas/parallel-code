@@ -5,10 +5,13 @@ import { ContextMeter } from './ContextMeter';
 import { MoreMenu, type MoreMenuItem } from './MoreMenu';
 import { mod } from '../../lib/platform';
 import { createFileMention } from './file-mention';
-import type { Composer as ComposerState } from './composer-state';
+import { createInputHistory } from './input-history';
+import { CommandList, createCommandComplete } from './command-complete';
+import { shellCommand, type Composer as ComposerState } from './composer-state';
 import { ModelPicker, PermissionPicker } from './ModelPicker';
 import { Progress } from './Progress';
 import { RequestCard, type RespondToRequest } from './RequestCard';
+import { PencilIcon, SendIcon, SyncIcon } from '../icons';
 
 export interface ChatHistoryEntry {
   title: string;
@@ -53,11 +56,13 @@ function Queue(props: ComposerProps) {
           <div>
             <span>{entry.text}</span>
             <button
+              class="btn-with-icon"
               disabled={c.sending()}
               onClick={() => {
                 if (c.editQueued(entry)) props.focus();
               }}
             >
+              <PencilIcon size={12} />
               Edit
             </button>
             <button
@@ -72,9 +77,11 @@ function Queue(props: ComposerProps) {
       </For>
       <Show when={paused()}>
         <button
+          class="btn-with-icon"
           disabled={c.sending() || props.disabled || props.state.status !== 'ready'}
           onClick={() => c.retryQueue()}
         >
+          <SyncIcon size={12} />
           Retry queued message
         </button>
       </Show>
@@ -103,13 +110,35 @@ export function Composer(props: ComposerProps) {
       run: entry.open,
     })),
   ];
+  // A terminal shows the `!` as its prompt, so the field holds only the command after it.
+  const shellPrefix = () => (c.shellMode() ? props.draft.indexOf('!') + 1 : 0);
+  const shown = () => props.draft.slice(shellPrefix());
   const placeholder = () =>
-    `${working() ? 'Add a follow-up' : `Message ${props.agentName}`}… Shift+Enter for a new line${props.onListFiles ? ', @ for files' : ''}`;
-  const hasContent = () => !!props.draft.trim() || c.images().length > 0 || c.files().length > 0;
+    c.shellMode()
+      ? 'Command to run in this worktree… Backspace to leave'
+      : `${working() ? 'Add a follow-up' : `Message ${props.agentName}`}… Shift+Enter for a new line${props.onListFiles ? ', @ for files' : ''}${props.state.commands?.length ? ', / for commands' : ''}${c.canRunShell() ? ', ! for a shell command' : ''}`;
+  const sendLabel = () =>
+    c.shellMode()
+      ? working()
+        ? 'Queue command'
+        : 'Run command'
+      : working()
+        ? 'Queue message'
+        : 'Send message';
+  const stopLabel = () =>
+    props.state.items.some((item) => item.kind === 'shell' && item.activity?.status === 'running')
+      ? 'Stop command'
+      : 'Stop response';
+  // A shell command leaves attachments for the next message, so only the command counts.
+  const hasContent = () =>
+    c.shellMode()
+      ? !!shellCommand(props.draft)
+      : !!props.draft.trim() || c.images().length > 0 || c.files().length > 0;
   const busy = () => c.sending() || c.readingImages() || c.stopping();
   let textarea: HTMLTextAreaElement | undefined;
   createEffect(() => {
-    const val = props.draft;
+    // What the field displays: the command alone in shell mode, else the draft.
+    const val = shown();
     if (textarea && textarea.value !== val) {
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
@@ -125,6 +154,40 @@ export function Composer(props: ComposerProps) {
     onDraft: (text) => props.onDraft(text),
     files: () => c.files(),
   });
+  const commands = createCommandComplete({
+    commands: () => props.state.commands,
+    draft: () => props.draft,
+    onDraft: (text) => props.onDraft(text),
+  });
+  const history = createInputHistory({
+    entries: () =>
+      props.state.items.flatMap((item) =>
+        item.kind === 'user' && item.text.trim() ? item.text : [],
+      ),
+    draft: () => props.draft,
+    onDraft: (text, recalled) => {
+      if (recalled) commands.dismiss(text);
+      props.onDraft(text);
+    },
+  });
+  function onInput(event: InputEvent & { currentTarget: HTMLTextAreaElement }) {
+    const field = event.currentTarget;
+    const { value, selectionStart } = field;
+    props.onDraft(c.shellMode() ? `!${value}` : value);
+    // A typed `!` becomes the prompt; keep the caret on the text it was before.
+    if (field.value !== value) {
+      const caret = Math.max(0, selectionStart - (value.length - field.value.length));
+      field.setSelectionRange(caret, caret);
+    }
+    // File references attach to the next message, not to a command.
+    if (props.onListFiles && !c.shellMode()) mention.onInput(event);
+  }
+  /** Backspace before the command removes the `!`, as in a terminal agent. */
+  function leaveShell(field: HTMLTextAreaElement): boolean {
+    if (!c.shellMode() || field.selectionStart !== 0 || field.selectionEnd !== 0) return false;
+    props.onDraft(field.value);
+    return true;
+  }
   return (
     <div class="chat-composer-dock">
       <Progress state={props.state} />
@@ -152,22 +215,41 @@ export function Composer(props: ComposerProps) {
           {c.error()}
         </div>
       </Show>
-      <div class="chat-composer">
+      <CommandList complete={commands} />
+      <div class="chat-composer" classList={{ 'chat-composer-shell': c.shellMode() }}>
         <div class="chat-composer-row">
+          <Show when={c.shellMode()}>
+            <span class="chat-shell-prompt" aria-hidden="true">
+              !
+            </span>
+          </Show>
           <textarea
             ref={(element) => {
               textarea = element;
               element.value = props.draft;
               props.textarea(element);
             }}
-            aria-label={`Message ${props.agentName}`}
+            aria-label={c.shellMode() ? 'Shell command' : `Message ${props.agentName}`}
             placeholder={placeholder()}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-haspopup="listbox"
+            aria-expanded={commands.matches().length > 0}
+            aria-controls={commands.matches().length ? commands.listId : undefined}
+            aria-activedescendant={commands.activeId()}
             disabled={props.disabled}
-            onInput={(event) => {
-              props.onDraft(event.currentTarget.value);
-              if (props.onListFiles) mention.onInput(event);
-            }}
+            onInput={onInput}
             onKeyDown={(event) => {
+              if (commands.onKeyDown(event) || history.onKeyDown(event)) return;
+              // An IME edits its own composition with Backspace.
+              if (
+                event.key === 'Backspace' &&
+                !event.isComposing &&
+                leaveShell(event.currentTarget)
+              ) {
+                event.preventDefault();
+                return;
+              }
               if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -207,10 +289,11 @@ export function Composer(props: ComposerProps) {
         </Show>
         <Show when={working() && hasContent()}>
           <button
-            class="chat-interrupt"
+            class="chat-interrupt btn-with-icon"
             disabled={busy() || props.disabled}
             onClick={() => void c.stop(true)}
           >
+            <SendIcon size={12} />
             Interrupt and send now
           </button>
         </Show>
@@ -248,8 +331,13 @@ export function Composer(props: ComposerProps) {
                   !['ready', 'working'].includes(props.state.status) ||
                   !hasContent()
                 }
-                aria-label={working() ? 'Queue message' : 'Send message'}
-                title={working() ? 'Queue message (Enter)' : 'Send message (Enter)'}
+                aria-label={sendLabel()}
+                // In the tooltip, not a status row: entering shell mode must not move the layout.
+                title={
+                  c.shellMode()
+                    ? `${sendLabel()} in this worktree (Enter). ${props.agentName} answers its output.`
+                    : `${sendLabel()} (Enter)`
+                }
                 onClick={() => void c.send()}
               >
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -267,8 +355,8 @@ export function Composer(props: ComposerProps) {
               <button
                 class="chat-stop"
                 disabled={c.stopping()}
-                aria-label="Stop response"
-                title="Stop response"
+                aria-label={stopLabel()}
+                title={stopLabel()}
                 onClick={() => void c.stop()}
               >
                 <svg

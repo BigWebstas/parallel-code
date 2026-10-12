@@ -2,7 +2,6 @@ import { randomUUID } from 'crypto';
 import { createWorktree, removeWorktree, worktreePathFor } from './git.js';
 import { killAgent, notifyAgentListChanged, waitForAgentExit } from './pty.js';
 import { stopPlanWatcher, stopPlanWatchersForPath } from './plans.js';
-import { stopStepsWatcher, stopStepsWatchersForPath } from './steps.js';
 import { verificationRunner } from './verify.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
 import { debug as logDebug } from '../log.js';
@@ -127,12 +126,10 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
   if (opts.taskId) {
     verificationRunner.cancel(opts.taskId);
     stopPlanWatcher(opts.taskId);
-    stopStepsWatcher(opts.taskId);
   }
   const targetWorktree = opts.worktreePath ?? worktreePathFor(opts.projectRoot, opts.branchName);
   if (targetWorktree) {
     stopPlanWatchersForPath(targetWorktree);
-    stopStepsWatchersForPath(targetWorktree);
   }
   for (const agentId of opts.agentIds) {
     try {

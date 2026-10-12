@@ -20,6 +20,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -39,6 +40,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -64,6 +66,7 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     private val phoneApp = application as PhoneApplication
     val client = phoneApp.client
     val settingsStore = phoneApp.settings
+    val promptHistory = phoneApp.promptHistory
 
     /** An agent to open, from a tapped notification. */
     val openAgentRequest = MutableStateFlow<String?>(null)
@@ -89,6 +92,28 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     private val _keepScreenOn = MutableStateFlow(settingsStore.keepScreenOn)
     val keepScreenOn: StateFlow<Boolean> = _keepScreenOn.asStateFlow()
 
+    private val _waitForVpn = MutableStateFlow(settingsStore.waitForVpn)
+    val waitForVpn: StateFlow<Boolean> = _waitForVpn.asStateFlow()
+
+    fun setWaitForVpn(value: Boolean) {
+        settingsStore.waitForVpn = value
+        _waitForVpn.value = value
+        client.onVpnPolicyChanged()
+    }
+
+    private val _homeWifiSsid = MutableStateFlow(settingsStore.homeWifiSsid)
+    val homeWifiSsid: StateFlow<String?> = _homeWifiSsid.asStateFlow()
+    val currentWifiSsid: StateFlow<String?> = phoneApp.networkMonitor.wifiSsid
+
+    fun setHomeWifiSsid(value: String?) {
+        settingsStore.homeWifiSsid = value
+        _homeWifiSsid.value = settingsStore.homeWifiSsid
+        client.onVpnPolicyChanged()
+    }
+
+    /** Reads the Wi-Fi name again, after location permission is granted or the app returns to the screen. */
+    fun refreshWifi() = phoneApp.networkMonitor.refreshWifi()
+
     private val _keepScreenOnOnlyWhenActive = MutableStateFlow(settingsStore.keepScreenOnOnlyWhenActive)
     val keepScreenOnOnlyWhenActive: StateFlow<Boolean> = _keepScreenOnOnlyWhenActive.asStateFlow()
 
@@ -110,6 +135,14 @@ class PhoneViewModel(application: Application) : AndroidViewModel(application) {
     fun setQuickReplies(value: List<String>) {
         settingsStore.quickReplies = value
         _quickReplies.value = settingsStore.quickReplies
+    }
+
+    private val _sendQuickReplies = MutableStateFlow(settingsStore.sendQuickReplies)
+    val sendQuickReplies: StateFlow<Boolean> = _sendQuickReplies.asStateFlow()
+
+    fun setSendQuickReplies(value: Boolean) {
+        settingsStore.sendQuickReplies = value
+        _sendQuickReplies.value = value
     }
 
     private val _fitTerminalToPhone = MutableStateFlow(settingsStore.fitTerminalToPhone)
@@ -253,9 +286,13 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         (application as PhoneApplication).inForeground = true
+        // Android hides the Wi-Fi name from apps in the background, so a name read while only the
+        // notification service was running is blank. Read it again now that the app is visible.
+        model.refreshWifi()
         model.client.start(HOLDER)
         model.client.resumeViewSize()
         AgentWatchService.sync(this)
+        (application as PhoneApplication).updates.checkIfDue()
     }
 
     override fun onStop() {
@@ -284,6 +321,9 @@ private fun PhoneApp(model: PhoneViewModel) {
     val state by model.client.state.collectAsState()
     val agents by model.client.agents.collectAsState()
     var screenKey by rememberSaveable { mutableStateOf("agents") }
+    // Held above the screen switch, so the list's search and filter survive opening a task.
+    var taskSearch by rememberSaveable { mutableStateOf("") }
+    var taskFilterKey by rememberSaveable { mutableStateOf(TaskFilter.ALL.key) }
     val screen = when {
         screenKey == "pair" -> Screen.Pair
         screenKey == "new-task" -> Screen.NewTask
@@ -372,6 +412,12 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onPair = { screenKey = "pair" },
                     onNewTask = { screenKey = "new-task" },
                     onSettings = { screenKey = "settings" },
+                    computers = computers,
+                    onSwitchComputer = { model.client.switchTo(it) },
+                    search = taskSearch,
+                    onSearch = { taskSearch = it },
+                    filter = TaskFilter.fromKey(taskFilterKey),
+                    onFilter = { taskFilterKey = it.key },
                 )
             }
             Screen.Settings -> {
@@ -389,6 +435,40 @@ private fun PhoneApp(model: PhoneViewModel) {
                     model.setNotifications(notifications.copy(enabled = granted))
                 }
                 val context = LocalContext.current
+                // Agent notifications run in the background, where Android hides the Wi-Fi name unless
+                // location is allowed all the time. Android 10+ asks for that after the usual location
+                // access, and Android 11+ shows it as a settings page.
+                val backgroundLocationPermission = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { model.refreshWifi() }
+                val requestBackgroundLocationIfNeeded = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
+                        PackageManager.PERMISSION_GRANTED
+                    ) {
+                        backgroundLocationPermission.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                    }
+                }
+                val locationPermission = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions(),
+                ) { granted ->
+                    model.refreshWifi()
+                    if (granted[Manifest.permission.ACCESS_FINE_LOCATION] == true) requestBackgroundLocationIfNeeded()
+                }
+                // Asks for location access; true while the Wi-Fi name is still hidden even on screen.
+                val requestLocationIfNeeded = {
+                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+                        PackageManager.PERMISSION_GRANTED
+                    if (!granted) {
+                        locationPermission.launch(
+                            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                        )
+                    } else {
+                        requestBackgroundLocationIfNeeded()
+                    }
+                    !granted
+                }
+                val currentWifiSsid by model.currentWifiSsid.collectAsState()
                 SettingsScreen(
                     keepScreenOn = keepScreenOn,
                     onKeepScreenOnChange = model::setKeepScreenOn,
@@ -412,6 +492,8 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onWidgetPaletteChange = model::setWidgetPalette,
                     quickReplies = quickReplies,
                     onQuickRepliesChange = model::setQuickReplies,
+                    sendQuickReplies = model.sendQuickReplies.collectAsState().value,
+                    onSendQuickRepliesChange = model::setSendQuickReplies,
                     notifications = notifications,
                     onNotificationsChange = { prefs ->
                         val needsPermission = prefs.enabled && !notifications.enabled &&
@@ -421,6 +503,18 @@ private fun PhoneApp(model: PhoneViewModel) {
                         if (needsPermission) permission.launch(Manifest.permission.POST_NOTIFICATIONS)
                         else model.setNotifications(prefs)
                     },
+                    waitForVpn = model.waitForVpn.collectAsState().value,
+                    onWaitForVpnChange = model::setWaitForVpn,
+                    homeWifiSsid = model.homeWifiSsid.collectAsState().value,
+                    onHomeWifiSsidChange = { ssid ->
+                        model.setHomeWifiSsid(ssid)
+                        if (!ssid.isNullOrBlank()) requestLocationIfNeeded()
+                    },
+                    currentWifiSsid = currentWifiSsid,
+                    onUseCurrentWifi = {
+                        val ssid = currentWifiSsid
+                        if (!requestLocationIfNeeded() && ssid != null) model.setHomeWifiSsid(ssid)
+                    },
                     latencyMs = latencyMs,
                     state = state,
                     computers = computers,
@@ -428,6 +522,7 @@ private fun PhoneApp(model: PhoneViewModel) {
                         model.client.switchTo(it)
                         screenKey = "agents"
                     },
+                    onRenameComputer = { url, alias -> model.client.rename(url, alias) },
                     onForgetComputer = { model.client.forget(it) },
                     onAddComputer = { screenKey = "add-computer" },
                     onPair = { screenKey = "pair" },
@@ -451,21 +546,27 @@ private fun PhoneApp(model: PhoneViewModel) {
             is Screen.Agent -> {
                 val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
                 val quickReplies by model.quickReplies.collectAsState()
+                val sendQuickReplies by model.sendQuickReplies.collectAsState()
                 val fitTerminalToPhone by model.fitTerminalToPhone.collectAsState()
                 // The tasks in the order the list shows them: swipe sideways to move between them.
-                val pages = remember(agents) { agents.filter { !it.collapsed } + agents.filter { it.collapsed } }
+                val pages = remember(agents) { taskListOrder(agents) }
                 val openIndex = pages.indexOfFirst { it.agentId == currentScreen.agentId }
+                // The task whose terminal is pinch-zoomed; its sideways pans must not turn the page.
+                var zoomedAgentId by remember { mutableStateOf<String?>(null) }
 
                 @Composable
                 fun Task(agentId: String, active: Boolean, pageLabel: String?) {
                     val agent = agents.firstOrNull { it.agentId == agentId }
-                    if (agent?.isChat == true) {
+                    // Keyed so another task never sees this one's chat for a frame; that would clobber its saved scroll.
+                    if (agent?.isChat == true) key(agentId) {
                         ChatScreen(
                             agent = agent,
                             agentId = agentId,
                             state = state,
                             client = model.client,
                             quickReplies = quickReplies,
+                            sendQuickReplies = sendQuickReplies,
+                            promptHistory = model.promptHistory,
                             pageLabel = pageLabel,
                             onBack = { screenKey = "agents" },
                             onPair = { screenKey = "pair" },
@@ -478,7 +579,14 @@ private fun PhoneApp(model: PhoneViewModel) {
                         alwaysFollowOutput = alwaysFollowOutput,
                         fitTerminalToPhone = fitTerminalToPhone && active,
                         quickReplies = quickReplies,
+                        sendQuickReplies = sendQuickReplies,
+                        promptHistory = model.promptHistory,
                         pageLabel = pageLabel,
+                        nextNeedingYou = nextTaskNeedingYou(agents, agentId),
+                        onOpenTask = { screenKey = "agent:$it" },
+                        onZoomedChange = { zoomed ->
+                            zoomedAgentId = if (zoomed) agentId else zoomedAgentId.takeUnless { it == agentId }
+                        },
                         onBack = { screenKey = "agents" },
                         onPair = { screenKey = "pair" },
                     )
@@ -489,13 +597,29 @@ private fun PhoneApp(model: PhoneViewModel) {
                     Task(currentScreen.agentId, active = true, pageLabel = null)
                 } else {
                     val pager = rememberPagerState(initialPage = openIndex) { pages.size }
-                    LaunchedEffect(pager, pages) {
+                    val currentPages by rememberUpdatedState(pages)
+                    // Opening another task without swiping (Next task, a notification) turns the
+                    // pager to it. A swipe has already settled there, so it does nothing then. Keyed
+                    // by task rather than index: pages are keyed by task, so a reorder keeps the open
+                    // one in view by itself, and must not scroll mid-swipe.
+                    LaunchedEffect(pager, currentScreen.agentId) {
+                        val target = currentPages.indexOfFirst { it.agentId == currentScreen.agentId }
+                        if (target >= 0 && currentPages.getOrNull(pager.currentPage)?.agentId != currentScreen.agentId) {
+                            pager.scrollToPage(target)
+                        }
+                    }
+                    LaunchedEffect(pager) {
                         snapshotFlow { pager.settledPage }.collect { page ->
-                            pages.getOrNull(page)?.let { screenKey = "agent:${it.agentId}" }
+                            // Only a swipe moves between tasks. This page stays composed while it
+                            // animates out, so once the screen is left (Back, or closing the task,
+                            // which also changes the list) it must not navigate to a neighbour.
+                            if (!screenKey.startsWith("agent:")) return@collect
+                            currentPages.getOrNull(page)?.let { screenKey = "agent:${it.agentId}" }
                         }
                     }
                     HorizontalPager(
                         state = pager,
+                        userScrollEnabled = zoomedAgentId != currentScreen.agentId,
                         key = { pages[it].agentId },
                         pageSpacing = 8.dp,
                     ) { page ->

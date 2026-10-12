@@ -53,6 +53,28 @@ class UsageTest {
     }
 
     @Test
+    fun showsCreditsForLoginsWithoutRateLimitWindows() {
+        val usage = parseUsage(
+            JSONObject(
+                """{
+                "claude": {"fiveHour": null, "sevenDay": null,
+                           "creditUsage": {"used": 45, "limit": 50, "currency": "USD", "usedPercent": 90},
+                           "fetchedAt": 1, "status": "ok", "error": null}
+                }""",
+            ),
+        )
+        val credit = usage.single().creditUsage
+        assertEquals(CreditUsage(45.0, 50.0, "USD", 90.0), credit)
+        assertTrue(credit?.warn == true)
+        assertEquals("\$45.00 / \$50.00", credit?.let { formatCredit(it, Locale.US) })
+    }
+
+    @Test
+    fun formatsCreditsWithoutACap() {
+        assertEquals("\$9.00 used", formatCredit(CreditUsage(9.0, null, "USD", null), Locale.US))
+    }
+
+    @Test
     fun hidesProvidersWithoutASubscription() {
         val none = """{"fiveHour": null, "sevenDay": null, "fetchedAt": null, "status": "unavailable", "error": null}"""
         assertEquals(emptyList<ProviderUsage>(), parseUsage(JSONObject("""{"claude": $none, "codex": $none, "antigravity": $none}""")))

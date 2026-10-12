@@ -51,6 +51,10 @@ let credentialsDir: string;
 let generatePin: () => { pin: string; expiresAt: number };
 const createTaskFromMobile = vi.fn(async () => ({ taskId: 'task-123' }));
 const getProjects = vi.fn(async () => [{ id: 'proj-1', name: 'Repo One' }]);
+const agentChoices = [
+  { id: 'claude', name: 'Claude', isDefault: true, models: [{ id: 'opus', label: 'opus' }] },
+];
+const getAgentChoices = vi.fn(async () => agentChoices);
 
 function req(method: string, path: string, token: string, body?: unknown): Promise<Resp> {
   return new Promise((resolve, reject) => {
@@ -93,6 +97,7 @@ async function startServer(enableRemembered = true) {
     getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
     getCoordinator: () => null,
     getProjects,
+    getAgentChoices,
     createTaskFromMobile,
   });
   if (enableRemembered) srv.enableRememberedDevices(join(credentialsDir, 'phones.json'));
@@ -106,6 +111,7 @@ async function startServer(enableRemembered = true) {
 beforeEach(async () => {
   createTaskFromMobile.mockClear();
   getProjects.mockClear();
+  getAgentChoices.mockClear();
   credentialsDir = mkdtempSync(join(tmpdir(), 'phone-pairing-'));
   await startServer();
 });
@@ -287,6 +293,7 @@ describe('pairing', () => {
 describe('paired-mobile routes', () => {
   it('mobile token cannot list projects or create tasks (403)', async () => {
     expect((await req('GET', '/api/mobile/projects', mobileToken)).status).toBe(403);
+    expect((await req('GET', '/api/mobile/agents', mobileToken)).status).toBe(403);
     expect(
       (
         await req('POST', '/api/mobile/tasks', mobileToken, {
@@ -311,6 +318,7 @@ describe('paired-mobile routes', () => {
       projectId: 'proj-1',
       name: 'Fix bug',
       prompt: 'Investigate the crash',
+      agentId: 'claude',
     });
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual({ taskId: 'task-123' });
@@ -318,7 +326,52 @@ describe('paired-mobile routes', () => {
       projectId: 'proj-1',
       name: 'Fix bug',
       prompt: 'Investigate the crash',
+      agentId: 'claude',
     });
+  });
+
+  it('paired token can list agents and their models', async () => {
+    const paired = await pair();
+    const res = await req('GET', '/api/mobile/agents', paired);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(agentChoices);
+  });
+
+  it('passes a chosen agent and model through to task creation', async () => {
+    const paired = await pair();
+    const res = await req('POST', '/api/mobile/tasks', paired, {
+      projectId: 'proj-1',
+      name: 'Fix bug',
+      prompt: 'Investigate the crash',
+      agentId: 'claude',
+      model: 'opus',
+    });
+    expect(res.status).toBe(201);
+    expect(createTaskFromMobile).toHaveBeenCalledWith({
+      projectId: 'proj-1',
+      name: 'Fix bug',
+      prompt: 'Investigate the crash',
+      agentId: 'claude',
+      model: 'opus',
+    });
+  });
+
+  it.each([
+    { agentId: '' },
+    { agentId: 42 },
+    { model: '--dangerously-skip-permissions' },
+    { model: 'opus extra' },
+    { model: 7 },
+  ])('rejects an invalid agent or model choice: %o', async (choice) => {
+    const paired = await pair();
+    const res = await req('POST', '/api/mobile/tasks', paired, {
+      projectId: 'proj-1',
+      name: 'n',
+      prompt: 'x',
+      ...choice,
+    });
+    expect(res.status).toBe(400);
+    expect(createTaskFromMobile).not.toHaveBeenCalled();
   });
 
   it('rejects task creation with a missing name or prompt', async () => {

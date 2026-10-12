@@ -25,6 +25,37 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun savesHomeWifiTrimmedAndClearsWhenBlank() {
+        assertEquals(null, store.homeWifiSsid)
+        store.homeWifiSsid = "  Home Net "
+        assertEquals("Home Net", store.homeWifiSsid)
+        store.homeWifiSsid = "   "
+        assertEquals(null, store.homeWifiSsid)
+        assertFalse(prefs.contains(SettingsStore.KEY_HOME_WIFI_SSID))
+    }
+
+    @Test
+    fun defaultsToWaitForVpnDisabled() {
+        assertFalse(store.waitForVpn)
+    }
+
+    @Test
+    fun enablesWaitForVpnAndPersists() {
+        store.waitForVpn = true
+        assertTrue(store.waitForVpn)
+        assertTrue(prefs.getBoolean(SettingsStore.KEY_WAIT_FOR_VPN, false))
+    }
+
+    @Test
+    fun togglesWaitForVpnBackToDisabled() {
+        store.waitForVpn = true
+        assertTrue(store.waitForVpn)
+        store.waitForVpn = false
+        assertFalse(store.waitForVpn)
+        assertFalse(prefs.getBoolean(SettingsStore.KEY_WAIT_FOR_VPN, true))
+    }
+
+    @Test
     fun enablesKeepScreenOnAndPersists() {
         store.keepScreenOn = true
         assertTrue(store.keepScreenOn)
@@ -147,6 +178,14 @@ class SettingsStoreTest {
         assertEquals("yes", appendToDraft("  ", "yes"))
         assertEquals("ok yes", appendToDraft("ok", "yes"))
         assertEquals("ok yes", appendToDraft("ok ", "yes"))
+    }
+
+    @Test
+    fun sendQuickRepliesDefaultsOffAndPersists() {
+        assertFalse(store.sendQuickReplies)
+        store.sendQuickReplies = true
+        assertTrue(store.sendQuickReplies)
+        assertTrue(prefs.getBoolean(SettingsStore.KEY_SEND_QUICK_REPLIES, false))
     }
 
     @Test

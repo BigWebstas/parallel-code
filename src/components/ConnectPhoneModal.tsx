@@ -11,9 +11,14 @@ import {
   generatePairingPin,
 } from '../store/remote';
 import { theme } from '../lib/theme';
+import { invoke } from '../lib/ipc';
+import { IPC } from '../../electron/ipc/channels';
 import type { RemoteAccess } from '../store/types';
+import { CloseIcon, SyncIcon } from './icons';
 
 type NetworkMode = 'wifi' | 'tailscale';
+
+const ANDROID_APP_GUIDE = 'https://github.com/johannesjo/parallel-code#android-app';
 type RemoteAccessUrls = Pick<RemoteAccess, 'enabled' | 'url' | 'wifiUrl' | 'tailscaleUrl'>;
 
 interface ConnectPhoneModalProps {
@@ -416,6 +421,27 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
             <> Your phone and this computer must be on the same Tailscale network.</>
           </Show>
         </p>
+        <p
+          style={{
+            'font-size': '13px',
+            color: theme.fgMuted,
+            'text-align': 'center',
+            margin: '0',
+          }}
+        >
+          On Android, the{' '}
+          <a
+            href={ANDROID_APP_GUIDE}
+            style={{ color: theme.accent }}
+            onClick={(e) => {
+              e.preventDefault();
+              void invoke(IPC.ShellOpenExternal, { url: ANDROID_APP_GUIDE });
+            }}
+          >
+            Parallel Code app
+          </a>{' '}
+          also notifies you in the background.
+        </p>
 
         {/* Connected clients */}
         <Show
@@ -505,6 +531,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
             fallback={
               <>
                 <button
+                  class="btn-with-icon"
                   onClick={handleGeneratePin}
                   style={{
                     padding: '7px 16px',
@@ -517,6 +544,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
                     'font-weight': '500',
                   }}
                 >
+                  <SyncIcon size={14} />
                   Get a new pairing code
                 </button>
                 <Show when={pairingError()}>
@@ -542,6 +570,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
                   {pin()}
                 </span>
                 <button
+                  class="btn-with-icon"
                   onClick={handleGeneratePin}
                   style={{
                     padding: '4px 10px',
@@ -552,6 +581,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
                     'font-size': '12px',
                   }}
                 >
+                  <SyncIcon size={12} />
                   Generate a new code
                 </button>
               </>
@@ -622,6 +652,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
 
         {/* Disconnect — always available when server is running */}
         <button
+          class="btn-with-icon"
           onClick={handleDisconnect}
           disabled={disconnecting()}
           style={{
@@ -635,6 +666,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
             'font-weight': '400',
           }}
         >
+          <CloseIcon size={14} />
           Disconnect
         </button>
       </Show>

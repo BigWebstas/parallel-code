@@ -1,5 +1,6 @@
 package com.parallelcode.phone
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 // Mirrors the server messages in electron/remote/protocol.ts that this app uses.
@@ -18,6 +19,8 @@ data class RemoteAgent(
     /** The desktop's built-in chat has no terminal to stream. */
     val isChat: Boolean,
     val collapsed: Boolean = false,
+    /** The task's open PR checks: `pending`, `failure` or `success`; null without one. */
+    val ci: String? = null,
 )
 
 sealed interface ServerMessage {
@@ -71,6 +74,14 @@ fun parseServerMessage(raw: String): ServerMessage? = try {
     null
 }
 
+/** The desktop's `GET /api/agents` reply; null when malformed. */
+fun parseAgentList(raw: String): List<RemoteAgent>? = try {
+    val list = JSONArray(raw)
+    List(list.length()) { i -> parseAgent(list.getJSONObject(i)) }
+} catch (_: Exception) {
+    null
+}
+
 private fun parseAgent(a: JSONObject) = RemoteAgent(
     agentId = a.getString("agentId"),
     taskId = a.getString("taskId"),
@@ -83,6 +94,7 @@ private fun parseAgent(a: JSONObject) = RemoteAgent(
     attention = a.optString("attention", "idle"),
     isChat = a.optString("kind") == "chat",
     collapsed = a.optBoolean("collapsed", false),
+    ci = a.optStringOrNull("ci"),
 )
 
 /**

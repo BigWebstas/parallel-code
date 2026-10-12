@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,10 +27,15 @@ import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
-enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED }
+enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED, WAITING_FOR_VPN }
+
+/** With "Wait for VPN" on, hold off connecting until a VPN is up, unless the phone is on the home Wi-Fi. */
+fun waitsForVpn(waitForVpn: Boolean, vpnActive: Boolean, wifiSsid: String?, homeWifiSsid: String?): Boolean =
+    waitForVpn && !vpnActive && (homeWifiSsid == null || wifiSsid != homeWifiSsid)
 
 /** What the UI needs to know about the link to the desktop. */
 data class ConnectionState(
@@ -47,11 +53,17 @@ interface TerminalListener {
     fun onOutput(data: ByteArray)
 }
 
+/** Read timeout for requests that wait on desktop git work; see [RemoteClient.slowHttp]. */
+private const val SLOW_REQUEST_SECONDS = 130L
+
 /** A REST call the desktop refused or could not answer; `status` is 0 when it was unreachable. */
 /** [json] is the error reply's body, for routes that explain a refusal (e.g. close warnings). */
 class ApiException(message: String, val status: Int = 0, val json: JSONObject? = null) : IOException(message)
 
-data class MobileProject(val id: String, val name: String, val agentName: String?)
+data class MobileProject(val id: String, val name: String, val agentName: String?, val path: String? = null)
+
+/** What another saved computer reported in the last poll, under the name the phone shows for it. */
+data class ComputerSnapshot(val label: String, val agents: List<RemoteAgent>, val usage: List<ProviderUsage>)
 
 /** One row of the desktop's merge-readiness panel, as that panel labels it. */
 data class ReadinessCheck(val label: String, val status: String, val detail: String)
@@ -73,21 +85,49 @@ data class MergeReadiness(
  * UI in src/remote/ws.ts: authenticate with the first WebSocket message, prefer the paired token,
  * and fall back to view-only when the desktop revokes it. All state changes on the main thread.
  */
-class RemoteClient(private val credentials: CredentialStore) {
+class RemoteClient(
+    private val credentials: CredentialStore,
+    private val vpnActive: StateFlow<Boolean> = MutableStateFlow(true),
+    private val wifiSsid: StateFlow<String?> = MutableStateFlow(null),
+    private val waitForVpn: () -> Boolean = { false },
+    private val homeWifiSsid: () -> String? = { null },
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * For requests the desktop answers only once real git work is done: creating a task builds a
+     * worktree; merging, closing, the diff and merge readiness run git too. The desktop waits up to 120 s for that work
+     * (callRenderer in electron/ipc/register.ts), so OkHttp's default 10 s read timeout reported
+     * "could not reach your computer" for a request that was still running, and usually succeeded.
+     * A little longer than the desktop lets the desktop's own error come through instead.
+     */
+    private val slowHttp = http.newBuilder().readTimeout(SLOW_REQUEST_SECONDS, TimeUnit.SECONDS).build()
+
     private val _state = MutableStateFlow(ConnectionState(link = credentials.link))
     val state: StateFlow<ConnectionState> = _state.asStateFlow()
+
+    init {
+        scope.launch { combine(vpnActive, wifiSsid) { _, _ -> }.collect { onVpnPolicyChanged() } }
+    }
+
     private val _agents = MutableStateFlow<List<RemoteAgent>>(emptyList())
     val agents: StateFlow<List<RemoteAgent>> = _agents.asStateFlow()
     private val _computers = MutableStateFlow(credentials.computers)
 
     /** Every desktop this phone has linked to; [ConnectionState.link] is the one in use. */
     val computers: StateFlow<List<SavedComputer>> = _computers.asStateFlow()
+    private val _otherComputers = MutableStateFlow<Map<String, ComputerSnapshot>>(emptyMap())
+
+    /**
+     * The saved computers other than the one in use, by address, from those that answered the last
+     * poll (see [pollOtherComputers]). Feeds the home-screen widget.
+     */
+    val otherComputers: StateFlow<Map<String, ComputerSnapshot>> = _otherComputers.asStateFlow()
+    private var pollJob: Job? = null
     private val _latencyMs = MutableStateFlow<Long?>(null)
     val latencyMs: StateFlow<Long?> = _latencyMs.asStateFlow()
 
@@ -100,6 +140,8 @@ class RemoteClient(private val credentials: CredentialStore) {
     private var handshakeJob: Job? = null
     private val terminalBuffers = mutableMapOf<String, TerminalBuffer>()
     private val subscribedAgents = mutableSetOf<String>()
+    /** Screens showing each agent's terminal; it streams until the last one lets go. */
+    private val terminalWatchers = mutableMapOf<String, Int>()
     private val chats = mutableMapOf<String, MutableStateFlow<ChatState?>>()
     private val chatWatchers = mutableMapOf<String, Int>()
     /** The agent whose PTY takes this phone's terminal size, and that size (see [setViewSize]). */
@@ -122,6 +164,7 @@ class RemoteClient(private val credentials: CredentialStore) {
         holders.add(holder)
         started = true
         connect()
+        if (pollJob == null) pollOtherComputers()
     }
 
     fun stop(holder: String) {
@@ -129,6 +172,59 @@ class RemoteClient(private val credentials: CredentialStore) {
         if (holders.isNotEmpty()) return
         started = false
         closeSocket()
+        pollJob?.cancel()
+        pollJob = null
+    }
+
+    /**
+     * While a holder keeps the app connected, ask every other saved computer for its agents and usage
+     * each [OTHER_COMPUTERS_POLL_MS] over plain HTTP, rather than holding a socket open to each.
+     */
+    private fun pollOtherComputers() {
+        pollJob?.cancel()
+        pollJob = scope.launch {
+            while (true) {
+                val active = credentials.link?.baseUrl
+                val others = credentials.computers.filter { it.baseUrl != active }
+                _otherComputers.value = if (others.isEmpty() || mustWaitForVpn()) {
+                    emptyMap()
+                } else {
+                    others.mapNotNull { c -> fetchSnapshotFrom(c)?.let { c.baseUrl to it } }.toMap()
+                }
+                delay(OTHER_COMPUTERS_POLL_MS)
+            }
+        }
+    }
+
+    /**
+     * [computer]'s agents and usage, or null when it can't be reached or refuses the token. A desktop
+     * that answers for agents but not usage still counts, with no usage.
+     */
+    private suspend fun fetchSnapshotFrom(computer: SavedComputer): ComputerSnapshot? {
+        val agents = getFrom(computer, "/api/agents")?.takeIf { it.first in 200..299 }
+            ?.let { parseAgentList(it.second) } ?: return null
+        return ComputerSnapshot(computer.label, agents, usageFrom(computer))
+    }
+
+    private suspend fun usageFrom(computer: SavedComputer): List<ProviderUsage> {
+        if (usageRoute.isMissing(computer.baseUrl)) return emptyList()
+        val (code, body) = getFrom(computer, "/api/mobile/usage") ?: return emptyList()
+        usageRoute.record(computer.baseUrl, code)
+        if (code !in 200..299) return emptyList()
+        return runCatching { parseUsage(JSONObject(body)) }.getOrDefault(emptyList())
+    }
+
+    /** The status and body of a GET to [path] on [computer], or null when it can't be reached. */
+    private suspend fun getFrom(computer: SavedComputer, path: String): Pair<Int, String>? = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(computer.baseUrl + path)
+            .header("Authorization", "Bearer ${computer.pairedToken ?: computer.token}")
+            .build()
+        try {
+            http.newCall(request).execute().use { it.code to it.body.string() }
+        } catch (_: IOException) {
+            null
+        }
     }
 
     fun link(link: ConnectionLink) {
@@ -143,12 +239,21 @@ class RemoteClient(private val credentials: CredentialStore) {
         useActiveComputer()
     }
 
+    /** Name a saved computer; a blank name clears the one it had. */
+    fun rename(baseUrl: String, alias: String?) {
+        credentials.rename(baseUrl, alias)
+        _computers.value = credentials.computers
+        val label = credentials.computers.firstOrNull { it.baseUrl == baseUrl }?.label
+        _otherComputers.update { all -> all[baseUrl]?.let { all + (baseUrl to it.copy(label = label ?: it.label)) } ?: all }
+    }
+
     /** Forget a saved computer; forgetting the one in use leaves the phone unlinked. */
     fun forget(baseUrl: String? = credentials.link?.baseUrl) {
         if (baseUrl == null) return
         val inUse = baseUrl == credentials.link?.baseUrl
         credentials.remove(baseUrl)
         _computers.value = credentials.computers
+        _otherComputers.update { it - baseUrl }
         if (!inUse) return
         closeSocket()
         resetSession()
@@ -162,6 +267,7 @@ class RemoteClient(private val credentials: CredentialStore) {
         _computers.value = credentials.computers
         _state.value = ConnectionState(link = credentials.link)
         reconnect()
+        if (started) pollOtherComputers()
     }
 
     private fun resetSession() {
@@ -177,9 +283,24 @@ class RemoteClient(private val credentials: CredentialStore) {
     }
 
     fun reconnect() {
+        // A manual reconnect is the user's way to pick up a desktop that was updated meanwhile.
+        usageRoute.clear()
         closeSocket()
         if (started) connect()
     }
+
+    /** Pauses or resumes connecting when the VPN, the Wi-Fi network, or the wait-for-VPN settings change. */
+    fun onVpnPolicyChanged() {
+        if (!started) return
+        if (mustWaitForVpn()) {
+            closeSocket()
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+        } else if (_state.value.status == ConnectionStatus.WAITING_FOR_VPN) {
+            connect()
+        }
+    }
+
+    private fun mustWaitForVpn() = waitsForVpn(waitForVpn(), vpnActive.value, wifiSsid.value, homeWifiSsid())
 
     /** Trade the desktop's six-digit PIN for a paired token, then reconnect with it. */
     suspend fun pair(pin: String, remember: Boolean) {
@@ -201,14 +322,55 @@ class RemoteClient(private val credentials: CredentialStore) {
         val list = JSONArray(apiRaw("GET", "/api/mobile/projects", null, pairedTokenOrThrow()))
         return List(list.length()) { i ->
             val p = list.getJSONObject(i)
-            MobileProject(p.getString("id"), p.getString("name"), p.optString("agentName").ifEmpty { null })
+            MobileProject(
+                p.getString("id"),
+                p.getString("name"),
+                p.optString("agentName").ifEmpty { null },
+                p.optString("path").ifEmpty { null },
+            )
         }
     }
 
-    /** Start a top-level task on the desktop; returns its task id. */
-    suspend fun createTask(projectId: String, name: String, prompt: String): String {
+    /** Create a new git project folder on the desktop and add it; returns the project. */
+    suspend fun createProject(name: String, parentDir: String): MobileProject {
+        val body = JSONObject().put("name", name).put("parentDir", parentDir)
+        val p = api("POST", "/api/mobile/projects", body, pairedTokenOrThrow())
+        return MobileProject(p.getString("id"), p.getString("name"), null, p.optString("path").ifEmpty { null })
+    }
+
+    /**
+     * Agents and models a paired phone may start tasks with. Empty from a desktop that predates
+     * the route: it refuses unknown paths for a paired token with 403. Tasks then use its
+     * default agent.
+     */
+    suspend fun fetchAgentChoices(): List<MobileAgentChoice> {
+        val raw = try {
+            apiRaw("GET", "/api/mobile/agents", null, pairedTokenOrThrow())
+        } catch (e: ApiException) {
+            if (e.status == 403 || e.status == 404) return emptyList() else throw e
+        }
+        return try {
+            parseAgentChoices(raw)
+        } catch (e: JSONException) {
+            throw ApiException("Your computer sent an unexpected reply.")
+        }
+    }
+
+    /**
+     * Start a top-level task on the desktop; returns its task id. A null [agentId]
+     * or [model] leaves that choice to the desktop's defaults.
+     */
+    suspend fun createTask(
+        projectId: String,
+        name: String,
+        prompt: String,
+        agentId: String? = null,
+        model: String? = null,
+    ): String {
         val body = JSONObject().put("projectId", projectId).put("name", name).put("prompt", prompt)
-        return api("POST", "/api/mobile/tasks", body, pairedTokenOrThrow()).getString("taskId")
+        agentId?.let { body.put("agentId", it) }
+        model?.let { body.put("model", it) }
+        return api("POST", "/api/mobile/tasks", body, pairedTokenOrThrow(), slow = true).getString("taskId")
     }
 
     /** The task's notes panel; readable with the view-only token. */
@@ -222,14 +384,34 @@ class RemoteClient(private val credentials: CredentialStore) {
 
     /** The task's changes against its base branch; readable with the view-only token. */
     suspend fun fetchDiff(taskId: String): TaskDiff {
-        val json = api("GET", "/api/mobile/tasks/${encodePath(taskId)}/diff", null, credentials.pairedToken ?: credentials.link?.token)
+        val json = api(
+            "GET",
+            "/api/mobile/tasks/${encodePath(taskId)}/diff",
+            null,
+            credentials.pairedToken ?: credentials.link?.token,
+            slow = true,
+        )
         return TaskDiff.from(json)
     }
 
-    /** The desktop status bar's subscription usage; readable with the view-only token. */
-    suspend fun fetchUsage(): List<ProviderUsage> =
-        parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
-            .also { _usage.value = it }
+    /**
+     * The desktop status bar's subscription usage; readable with the view-only token. Empty, without
+     * asking again, from a desktop that has no usage route yet (it answered 404).
+     */
+    suspend fun fetchUsage(): List<ProviderUsage> {
+        val baseUrl = credentials.link?.baseUrl
+        if (baseUrl != null && usageRoute.isMissing(baseUrl)) return emptyList<ProviderUsage>().also { _usage.value = it }
+        val usage = try {
+            parseUsage(api("GET", "/api/mobile/usage", null, credentials.pairedToken ?: credentials.link?.token))
+        } catch (e: ApiException) {
+            if (baseUrl == null) throw e
+            usageRoute.record(baseUrl, e.status)
+            if (!usageRoute.isMissing(baseUrl)) throw e
+            emptyList()
+        }
+        _usage.value = usage
+        return usage
+    }
 
     /**
      * The desktop's merge-readiness checks for a task, built by the same
@@ -243,6 +425,7 @@ class RemoteClient(private val credentials: CredentialStore) {
                 "/api/mobile/tasks/${encodePath(taskId)}/readiness",
                 null,
                 credentials.pairedToken ?: credentials.link?.token,
+                slow = true,
             ),
         )
 
@@ -253,10 +436,29 @@ class RemoteClient(private val credentials: CredentialStore) {
             "/api/mobile/tasks/${encodePath(taskId)}/merge",
             JSONObject().put("squash", squash).put("cleanup", cleanup),
             pairedTokenOrThrow(),
+            slow = true,
         )
     }
 
+    /**
+     * The desktop's Fix CI prompt: the failed PR checks and their log tails. Null when nothing
+     * failed. Paired only, since the phone's next step is sending it to the agent.
+     */
+    suspend fun fetchFixCiPrompt(taskId: String): String? =
+        parseFixCiPrompt(
+            api("GET", fixCiPath(taskId), null, pairedTokenOrThrow(), slow = true),
+        )
+
+    /** Send the reviewed Fix CI prompt to the task's agent, exactly as the user left it. */
+    suspend fun sendFixCiPrompt(taskId: String, prompt: String) {
+        api("POST", fixCiPath(taskId), JSONObject().put("prompt", prompt), pairedTokenOrThrow(), slow = true)
+    }
+
+    private fun fixCiPath(taskId: String) = "/api/mobile/tasks/${encodePath(taskId)}/fix-ci"
+
     private val _usage = MutableStateFlow<List<ProviderUsage>>(emptyList())
+
+    private val usageRoute = MissingRoutes()
 
     /** The last usage snapshot fetched, for the widget. */
     val usage: StateFlow<List<ProviderUsage>> = _usage.asStateFlow()
@@ -266,7 +468,13 @@ class RemoteClient(private val credentials: CredentialStore) {
      * desktop refuses when work would be lost and this returns its warnings; empty means closed.
      */
     suspend fun closeTask(taskId: String, force: Boolean): List<String> = try {
-        api("POST", "/api/mobile/tasks/${encodePath(taskId)}/close", JSONObject().put("force", force), pairedTokenOrThrow())
+        api(
+            "POST",
+            "/api/mobile/tasks/${encodePath(taskId)}/close",
+            JSONObject().put("force", force),
+            pairedTokenOrThrow(),
+            slow = true,
+        )
         emptyList()
     } catch (e: ApiException) {
         val warnings = e.json?.optJSONArray("warnings")
@@ -281,16 +489,31 @@ class RemoteClient(private val credentials: CredentialStore) {
     private fun pairedTokenOrThrow(): String =
         credentials.pairedToken ?: throw ApiException("Pair this phone first.", 401)
 
-    private suspend fun api(method: String, path: String, body: JSONObject?, token: String?): JSONObject =
+    private suspend fun api(
+        method: String,
+        path: String,
+        body: JSONObject?,
+        token: String?,
+        slow: Boolean = false,
+    ): JSONObject =
         try {
-            JSONObject(apiRaw(method, path, body, token))
+            JSONObject(apiRaw(method, path, body, token, slow))
         } catch (e: JSONException) {
             throw ApiException("Your computer sent an unexpected reply.")
         }
 
-    private suspend fun apiRaw(method: String, path: String, body: JSONObject?, token: String?): String {
+    private suspend fun apiRaw(
+        method: String,
+        path: String,
+        body: JSONObject?,
+        token: String?,
+        slow: Boolean = false,
+    ): String {
         val link = credentials.link ?: throw ApiException("Not connected to a computer.")
         if (token == null) throw ApiException("Not connected to a computer.")
+        if (mustWaitForVpn()) {
+            throw ApiException("Waiting for VPN connection. Connect your VPN and try again.")
+        }
         val request = Request.Builder()
             .url(link.baseUrl + path)
             .header("Authorization", "Bearer $token")
@@ -299,9 +522,14 @@ class RemoteClient(private val credentials: CredentialStore) {
         val start = System.currentTimeMillis()
         val (code, text) = withContext(Dispatchers.IO) {
             try {
-                http.newCall(request).execute().use { it.code to it.body.string() }
+                (if (slow) slowHttp else http).newCall(request).execute().use { it.code to it.body.string() }
             } catch (e: IOException) {
                 _latencyMs.value = null
+                // A slow request may still finish on the desktop, so don't call it unreachable.
+                // (A connect timeout is also a SocketTimeoutException, hence the hedged wording.)
+                if (slow && e is SocketTimeoutException) {
+                    throw ApiException("Your computer did not answer in time.")
+                }
                 throw ApiException("Could not reach your computer. Check you're on the same network.")
             }
         }
@@ -325,16 +553,29 @@ class RemoteClient(private val credentials: CredentialStore) {
     /**
      * Stream an agent's terminal while it is on screen. Only viewed terminals stream: opening one
      * starts from the desktop's rendered snapshot, so nothing needs buffering in the background.
-     * Pair with [releaseTerminal].
+     * Pair each call with [releaseTerminal]: two screens can show one terminal at once (a task
+     * reopened while its last screen still animates out, the pager taking over from a lone task),
+     * and the screen leaving last must not drop the buffer the other one is drawing.
      */
     fun getTerminalBuffer(agentId: String): TerminalBuffer {
+        terminalWatchers[agentId] = (terminalWatchers[agentId] ?: 0) + 1
+        return streamTerminal(agentId)
+    }
+
+    private fun streamTerminal(agentId: String): TerminalBuffer {
         val buffer = terminalBuffers.getOrPut(agentId) { TerminalBuffer(agentId) }
         subscribeAgent(agentId)
         return buffer
     }
 
-    /** Stop streaming a terminal that left the screen. */
+    /** Stop streaming a terminal once no screen shows it. */
     fun releaseTerminal(agentId: String) {
+        val watchers = (terminalWatchers[agentId] ?: 0) - 1
+        if (watchers > 0) {
+            terminalWatchers[agentId] = watchers
+            return
+        }
+        terminalWatchers.remove(agentId)
         terminalBuffers.remove(agentId)
         if (subscribedAgents.remove(agentId) && socketOpen) {
             send(JSONObject().put("type", "unsubscribe").put("agentId", agentId))
@@ -392,9 +633,28 @@ class RemoteClient(private val credentials: CredentialStore) {
         terminalBuffers[agentId]?.resize(cols, rows)
     }
 
+    /**
+     * Turn the mouse wheel over an agent's full-screen TUI, as scrolling over the desktop pane
+     * does: the TUI keeps its transcript out of the terminal history. Negative [lines] scroll up.
+     * Needs pairing; the server closes a view-only socket that tries. Agents scroll their
+     * transcript wherever the wheel turns, so it turns over the middle of the screen.
+     */
+    fun scrollTerminal(agentId: String, lines: Int) {
+        val screen = terminalBuffers[agentId]?.screen ?: return
+        if (lines == 0 || !_state.value.canControl) return
+        send(
+            JSONObject()
+                .put("type", "scroll")
+                .put("agentId", agentId)
+                .put("lines", lines.coerceIn(-MAX_SCROLL_LINES, MAX_SCROLL_LINES))
+                .put("col", screen.cols / 2 + 1)
+                .put("row", screen.rows / 2 + 1),
+        )
+    }
+
     /** Stream an agent's terminal. Retained for backwards compatibility. */
     fun watchTerminal(agentId: String, listener: TerminalListener): () -> Unit {
-        getTerminalBuffer(agentId)
+        streamTerminal(agentId)
         val listeners = terminalListeners.getOrPut(agentId) { mutableSetOf() }
         listeners.add(listener)
         return {
@@ -405,10 +665,22 @@ class RemoteClient(private val credentials: CredentialStore) {
         }
     }
 
-    /** Type into an agent's terminal; `submit` presses Enter once the text has landed. */
-    suspend fun sendInput(agentId: String, data: String, submit: Boolean) {
+    /**
+     * Types [data] into the agent's terminal; `submit` presses Enter once the text has landed.
+     *
+     * A [prefixKey] (such as `!` for an agent's shell mode) is typed first, in a write of its own,
+     * so the TUI reads it as a keystroke and opens that mode. The phone types it itself rather
+     * than sending the protocol's `prefixKey`: desktops from before that field drop it, which
+     * would send a shell command to the agent as a prompt.
+     */
+    suspend fun sendInput(agentId: String, data: String, submit: Boolean, prefixKey: String? = null) {
         if (data.length > MAX_INPUT_LENGTH) {
             throw IOException("This message is too long. Shorten it and try again.")
+        }
+        if (prefixKey != null) {
+            request(JSONObject().put("type", "input").put("agentId", agentId).put("data", prefixKey).put("submit", false))
+            // The prefix needs its own terminal read before the text arrives, as on the desktop.
+            delay(PREFIX_KEY_DELAY_MS)
         }
         request(
             JSONObject()
@@ -484,6 +756,11 @@ class RemoteClient(private val credentials: CredentialStore) {
     private fun connect() {
         if (socket != null) return
         val link = credentials.link ?: return
+        if (mustWaitForVpn()) {
+            reconnectJob?.cancel()
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false, linkExpired = false) }
+            return
+        }
         val paired = credentials.pairedToken
         authKind = if (paired != null) TokenKind.PAIRED else TokenKind.MOBILE
         val token = paired ?: link.token
@@ -560,7 +837,7 @@ class RemoteClient(private val credentials: CredentialStore) {
                     list.map { if (it.agentId == msg.agentId) it.copy(running = msg.running, exitCode = msg.exitCode) else it }
                 }
                 if (msg.running) {
-                    getTerminalBuffer(msg.agentId)
+                    streamTerminal(msg.agentId)
                 }
             }
             is ServerMessage.Scrollback -> {
@@ -608,6 +885,10 @@ class RemoteClient(private val credentials: CredentialStore) {
             }
         }
         if (!started) return
+        if (mustWaitForVpn()) {
+            _state.update { it.copy(status = ConnectionStatus.WAITING_FOR_VPN, canControl = false) }
+            return
+        }
         reconnectJob = scope.launch {
             delay(RECONNECT_DELAY_MS)
             connect()
@@ -643,9 +924,13 @@ class RemoteClient(private val credentials: CredentialStore) {
         const val HANDSHAKE_TIMEOUT_MS = 10_000L
         const val RECONNECT_DELAY_MS = 3_000L
         const val REQUEST_TIMEOUT_MS = 10_000L
+        const val OTHER_COMPUTERS_POLL_MS = 60_000L
 
         // The server drops a socket message past 64 KiB; leave room for the envelope.
         const val MAX_CHAT_MESSAGE_LENGTH = 60_000
         const val MAX_INPUT_LENGTH = 4096
+        // The server's MAX_SCROLL_LINES: wheel turns in one scroll message.
+        const val MAX_SCROLL_LINES = 100
+        const val PREFIX_KEY_DELAY_MS = 50L
     }
 }

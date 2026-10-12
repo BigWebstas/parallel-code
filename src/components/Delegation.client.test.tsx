@@ -8,7 +8,6 @@ import { setStore, store } from '../store/core';
 import type { Task } from '../store/types';
 import { DelegationPanel } from './DelegationPanel';
 import { SubTaskStrip } from './SubTaskStrip';
-import { DelegationReviewDialog } from './DelegationReviewDialog';
 import { setDelegationStates, canUsePeerComposer, usePeerComposer } from '../store/delegation';
 
 vi.mock('../lib/ipc', () => ({ invoke: vi.fn() }));
@@ -94,6 +93,14 @@ it('offers tools restart after enabling MCP for a session without tools', () => 
   });
   setStore('tasks', 'parent', 'delegationParent', true);
   expect(button('Restart and resume Claude')).toBeUndefined();
+});
+
+it('shows no tools notice for the chat pane, which never receives delegation tools', () => {
+  setStore('tasks', 'parent', 'agentSessionIds', { agent: 'conversation' });
+  setStore('tasks', 'parent', 'mainAgentView', 'chat');
+  setStore('agents', 'agent', 'capabilities', undefined);
+  dispose = render(() => <DelegationPanel task={store.tasks.parent} />, host);
+  expect(host.querySelector('[aria-label="Task collaboration"]')).toBeNull();
 });
 
 it.each(['delegationParent', 'coordinatorMode'] as const)(
@@ -237,35 +244,6 @@ it('changes the child limit only after the backend accepts it', async () => {
   });
   expect(store.tasks.parent.maxConcurrentTasks).toBe(7);
   expect(input()?.value).toBe('7');
-});
-
-it('approves only the child commit and target shown in the review', async () => {
-  const review = {
-    expectedCommit: 'child-sha',
-    expectedTargetBranch: 'task/parent',
-    expectedTargetCommit: 'target-sha',
-    diff: '+ reviewed line',
-  };
-  vi.mocked(invoke).mockImplementation(async (_channel, args) =>
-    args?.action === 'review' ? review : {},
-  );
-  dispose = render(
-    () => <DelegationReviewDialog task={store.tasks.parent} open={true} onClose={vi.fn()} />,
-    host,
-  );
-  await vi.waitFor(() => expect(document.body.textContent).toContain('+ reviewed line'));
-  button('Approve and merge')?.click();
-  await vi.waitFor(() =>
-    expect(invoke).toHaveBeenCalledWith(IPC.DelegationRequest, {
-      action: 'merge',
-      taskId: 'parent',
-      review: {
-        expectedCommit: 'child-sha',
-        expectedTargetBranch: 'task/parent',
-        expectedTargetCommit: 'target-sha',
-      },
-    }),
-  );
 });
 
 it('keeps an automatic failure visible after remount until explicitly dismissed', async () => {
@@ -451,4 +429,28 @@ it.each([
   const childButton = button('Child');
   expect(childButton?.textContent).toContain(label);
   expect(childButton?.querySelector('svg')).toBeNull();
+});
+
+it('lists every subtask under a collapsible header', () => {
+  for (const id of ['a', 'b', 'c']) {
+    setStore('tasks', id, {
+      ...task,
+      id,
+      name: `Child ${id}`,
+      coordinatedBy: 'parent',
+      agentIds: [],
+    });
+  }
+  setStore('taskOrder', ['parent', 'a', 'b', 'c']);
+  dispose = render(() => <SubTaskStrip coordinatorTaskId="parent" />, host);
+  const toggle = button('Subtasks (3)');
+  expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+  expect(host.querySelectorAll('li')).toHaveLength(3);
+  toggle?.click();
+  expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+  const list = host.querySelector('ul');
+  expect(list?.id).toBe(toggle?.getAttribute('aria-controls'));
+  expect(list?.hidden).toBe(true);
+  toggle?.click();
+  expect(list?.hidden).toBe(false);
 });

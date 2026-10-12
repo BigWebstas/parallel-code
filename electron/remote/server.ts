@@ -13,6 +13,7 @@ import {
   writeToAgent,
   resizeAgent,
   setAgentRemoteSize,
+  scrollAgent,
   killAgent,
   subscribeToAgent,
   subscribeToAgentRendered,
@@ -28,11 +29,15 @@ import {
   parseClientMessage,
   type ServerMessage,
   type RemoteAgent,
+  type RemoteAgentChoice,
   type RemoteAttentionState,
   type RemoteTaskContext,
   type RemoteCloseResult,
   type RemoteMergeReadiness,
   type RemoteTaskDiff,
+  REMOTE_COMMIT_ACTIONS,
+  type RemoteCommitAction,
+  type RemoteCommitStatus,
 } from './protocol.js';
 import {
   createChatSubscriptions,
@@ -43,6 +48,12 @@ import { parseMindMapUpdate, type MindMapDocument, type MindMapUpdate } from '..
 import { parseReasoningUpdate } from '../shared/reasoning-feed.js';
 import { parseCanvasView, type CanvasView } from '../shared/canvas-view.js';
 import { parseAgentTourPayload, type AgentTourPayload } from '../shared/agent-tour.js';
+import {
+  CONFIDENCE_LIMITS,
+  parseConfidencePayload,
+  type ConfidencePayload,
+} from '../shared/task-confidence.js';
+import { parseGitHubList, type GitHubCustomList } from '../shared/github-list.js';
 import {
   EVIDENCE_LIMITS,
   parseEvidenceSubmission,
@@ -57,6 +68,7 @@ import { validateBranchName } from '../mcp/validation.js';
 import { validateProjectFolderName } from './project-create.js';
 import type { ApiTaskDetail, LandSelfInput, SubtaskVerification } from '../mcp/types.js';
 import { parseSignalDoneInput } from '../shared/completion-report.js';
+import { CODEX_MODEL_PATTERN } from '../shared/ask-code-models.js';
 
 // --- MCP log ring buffer ---
 export interface MCPLogEntry {
@@ -69,6 +81,8 @@ const MAX_LOG_ENTRIES = 200;
 const REST_COORDINATOR_SENTINEL = 'api';
 const MAX_REST_PROMPT_BYTES = 16 * 1024;
 const MAX_NOTES_BYTES = 100 * 1024;
+/** A commit message from a phone; far above any real one, well under the body cap. */
+const MAX_COMMIT_MESSAGE_BYTES = 16 * 1024;
 /** Give the TUI a read of its own for a prefix keystroke before the paste lands. */
 const PREFIX_KEY_DELAY_MS = 50;
 // Device pairing: a mobile client proves it can see the desktop by entering a
@@ -306,6 +320,15 @@ export interface RemoteProject {
   path?: string;
 }
 
+/** The task a paired phone asked for; agent and model fall back to the desktop default. */
+export type MobileTaskRequest = {
+  projectId: string;
+  name: string;
+  prompt: string;
+  agentId?: string;
+  model?: string;
+};
+
 /** Detect available network IPs (WiFi and Tailscale). */
 function getNetworkIps(): { wifi: string | null; tailscale: string | null } {
   const nets = networkInterfaces();
@@ -419,12 +442,26 @@ type CanvasOps = Pick<
   | 'updateReasoning'
   | 'openCanvas'
   | 'publishTour'
+  | 'publishConfidence'
+  | 'publishGitHubList'
   | 'submitEvidence'
   | 'getEvidence'
 >;
-type CanvasRoute = 'mindmaps' | 'reasoning' | 'canvas' | 'tours' | 'evidence';
+type CanvasRoute =
+  | 'mindmaps'
+  | 'reasoning'
+  | 'canvas'
+  | 'tours'
+  | 'confidence'
+  | 'github-lists'
+  | 'evidence';
 /** A published tour inlines its own context; the shared parser caps it again. */
 const TOUR_MAX_BODY_BYTES = 256 * 1024;
+/** 100 items with full-length titles and reasons, plus JSON overhead. */
+const GITHUB_LIST_MAX_BODY_BYTES = 1024 * 1024;
+// Several failed jobs at 4,000 log characters each; the chat route allows the same.
+const FIX_CI_MAX_PROMPT_CHARS = 60_000;
+const FIX_CI_MAX_BODY_BYTES = 256 * 1024;
 const CANVAS_MAX_IN_FLIGHT = 4;
 // The renderer reports failures as plain messages; 409 tells the agent to read again, 400 to fix its input.
 const CANVAS_CONFLICT =
@@ -477,6 +514,20 @@ async function canvasRequest(
     const payload = parseAgentTourPayload(await readJsonBody(req, TOUR_MAX_BODY_BYTES));
     await ops.publishTour(taskId, payload);
     return { ok: true, subject: payload.subject };
+  }
+  if (route === 'confidence') {
+    if (req.method !== 'POST') throw httpError(405, 'Method not allowed');
+    if (!ops.publishConfidence) throw httpError(503, 'Confidence ratings unavailable');
+    const payload = parseConfidencePayload(await readJsonBody(req, CONFIDENCE_LIMITS.payloadBytes));
+    await ops.publishConfidence(taskId, payload);
+    return { ok: true, scores: payload.scores.length };
+  }
+  if (route === 'github-lists') {
+    if (req.method !== 'POST') throw httpError(405, 'Method not allowed');
+    if (!ops.publishGitHubList) throw httpError(503, 'GitHub lists unavailable');
+    const { list } = parseGitHubList(await readJsonBody(req, GITHUB_LIST_MAX_BODY_BYTES));
+    await ops.publishGitHubList(taskId, list);
+    return { ok: true, name: list.name };
   }
   if (route === 'evidence') return evidenceRequest(ops, req, taskId);
   const reasoning = route === 'reasoning';
@@ -980,12 +1031,10 @@ export function startRemoteServer(opts: {
   ) => Promise<unknown>;
   /** List projects the mobile "New Task" screen can target (renderer-backed). */
   getProjects?: () => Promise<RemoteProject[]>;
+  /** List agents and models the mobile "New Task" screen offers (renderer-backed). */
+  getAgentChoices?: () => Promise<RemoteAgentChoice[]>;
   /** Create a top-level task on behalf of a paired phone (renderer-backed). */
-  createTaskFromMobile?: (req: {
-    projectId: string;
-    name: string;
-    prompt: string;
-  }) => Promise<{ taskId: string }>;
+  createTaskFromMobile?: (req: MobileTaskRequest) => Promise<{ taskId: string }>;
   /** Create a new git project folder and register it (renderer-backed). */
   createProjectFromMobile?: (req: { parentDir: string; name: string }) => Promise<RemoteProject>;
   readMindMap?: (taskId: string) => Promise<MindMapDocument>;
@@ -996,6 +1045,10 @@ export function startRemoteServer(opts: {
   openCanvas?: (taskId: string, view: CanvasView) => Promise<void>;
   /** Show a tour the agent wrote for its own task (renderer-backed). */
   publishTour?: (taskId: string, payload: AgentTourPayload) => Promise<unknown>;
+  /** Show a confidence rating the agent published for its own task (renderer-backed). */
+  publishConfidence?: (taskId: string, payload: ConfidencePayload) => Promise<unknown>;
+  /** Show an issue list the agent ordered and grouped on its project's GitHub page. */
+  publishGitHubList?: (taskId: string, list: GitHubCustomList) => Promise<unknown>;
   /** Record the agent's handoff claim and start building evidence (renderer-backed). */
   submitEvidence?: (taskId: string, submission: EvidenceSubmission) => Promise<unknown>;
   /** The app's evidence status for the agent's own task (renderer-backed). */
@@ -1004,12 +1057,24 @@ export function startRemoteServer(opts: {
   getTaskNotes?: (taskId: string) => Promise<string>;
   /** Read merge readiness for the phone's merge dialog (renderer-backed). */
   getMergeReadiness?: (taskId: string) => Promise<RemoteMergeReadiness>;
+  /** The failed-checks prompt for a task's PR, or null when nothing failed (renderer-backed). */
+  getFixCiPrompt?: (taskId: string) => Promise<string | null>;
+  /** Send a phone-reviewed Fix CI prompt to the task's agent (renderer-backed). */
+  sendFixCiPrompt?: (taskId: string, prompt: string) => Promise<void>;
   /** Merge a task on behalf of a paired phone (renderer-backed). */
   mergeTaskFromMobile?: (req: {
     taskId: string;
     squash: boolean;
     cleanup: boolean;
   }) => Promise<void>;
+  /** A task's uncommitted files and what is staged (renderer-backed). */
+  getCommitStatus?: (taskId: string) => Promise<RemoteCommitStatus>;
+  /** Stage, unstage or commit on behalf of a paired phone; answers the new status (renderer-backed). */
+  commitActionFromMobile?: (req: {
+    taskId: string;
+    action: RemoteCommitAction;
+    message?: string;
+  }) => Promise<RemoteCommitStatus>;
   /** Persist a task's notes (renderer-backed). */
   setTaskNotes?: (taskId: string, notes: string) => Promise<void>;
   /** The desktop's last agent-subscription usage snapshot (renderer-backed). */
@@ -1024,6 +1089,8 @@ export function startRemoteServer(opts: {
   getCollapsedTaskIds?: () => string[];
   /** The desktop's built-in chats; without it phones only see terminals. */
   chats?: RemoteChatSource;
+  /** Ping interval for dropping silent sockets; tests shorten it. */
+  heartbeatMs?: number;
 }): Promise<RemoteServer> {
   // Defensive default for the optional signature: every real caller wires
   // attention via mobileTaskBridge, so 'idle' is only used if a future caller
@@ -1292,7 +1359,7 @@ export function startRemoteServer(opts: {
       };
 
       const mapMatch = url.pathname.match(
-        /^\/api\/(mindmaps|reasoning|canvas|tours|evidence)\/([^/]+)$/,
+        /^\/api\/(mindmaps|reasoning|canvas|tours|confidence|github-lists|evidence)\/([^/]+)$/,
       );
       if (mapMatch) {
         const route = mapMatch[1] as CanvasRoute;
@@ -1448,10 +1515,23 @@ export function startRemoteServer(opts: {
       }
 
       // --- Paired-mobile task creation ---
-      // GET projects for the picker + POST a new top-level task. Both require the
-      // elevated "paired" token; the read-only mobile token is rejected here.
-      if (url.pathname === '/api/mobile/projects' || url.pathname === '/api/mobile/tasks') {
+      // GET projects and agents for the pickers + POST a new top-level task. All
+      // require the elevated "paired" token; the read-only mobile token is rejected here.
+      if (
+        url.pathname === '/api/mobile/projects' ||
+        url.pathname === '/api/mobile/agents' ||
+        url.pathname === '/api/mobile/tasks'
+      ) {
         if (tokenClass !== 'paired') return jsonEnd(403, { error: 'forbidden' });
+
+        if (url.pathname === '/api/mobile/agents' && req.method === 'GET') {
+          if (!opts.getAgentChoices) return jsonEnd(503, { error: 'task creation unavailable' });
+          opts
+            .getAgentChoices()
+            .then((agents) => jsonEnd(200, agents))
+            .catch((err) => jsonEnd(500, { error: String(err) }));
+          return;
+        }
 
         if (url.pathname === '/api/mobile/projects' && req.method === 'GET') {
           if (!opts.getProjects) return jsonEnd(503, { error: 'task creation unavailable' });
@@ -1503,7 +1583,21 @@ export function startRemoteServer(opts: {
               const projectId = typeof body.projectId === 'string' ? body.projectId : '';
               if (!projectId)
                 return jsonEnd(400, { error: 'projectId must be a non-empty string' });
-              createTask({ projectId, name, prompt })
+              const request: MobileTaskRequest = { projectId, name, prompt };
+              // Optional: older phones omit both and get the desktop default agent.
+              if (body.agentId !== undefined) {
+                if (typeof body.agentId !== 'string' || !body.agentId || body.agentId.length > 200)
+                  return jsonEnd(400, { error: 'agentId must be a non-empty string' });
+                request.agentId = body.agentId;
+              }
+              if (body.model !== undefined) {
+                // The renderer checks the model against the agent's list; this
+                // only keeps the value a plain CLI argument.
+                if (typeof body.model !== 'string' || !CODEX_MODEL_PATTERN.test(body.model))
+                  return jsonEnd(400, { error: 'model is not a valid model name' });
+                request.model = body.model;
+              }
+              createTask(request)
                 .then((r) => jsonEnd(201, { taskId: r.taskId }))
                 .catch((err) => jsonEnd(500, { error: String(err) }));
             })
@@ -1704,6 +1798,106 @@ export function startRemoteServer(opts: {
               squash: body.squash === true,
               cleanup: body.cleanup === true,
             }).then(
+              () => jsonEnd(200, { ok: true }),
+              (err: unknown) => jsonEnd(500, { error: String(err) }),
+            );
+          })
+          .catch(() => jsonEnd(400, { error: 'bad request' }));
+        return;
+      }
+
+      // --- Commit (read: mobile + paired; write: paired) ---
+      // The desktop commit dialog: GET lists uncommitted files and what is
+      // staged; POST stages everything, unstages everything, or commits what is
+      // staged. Writes run real git in the task's worktree, so they need pairing.
+      const commitMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/commit$/);
+      if (commitMatch) {
+        if (tokenClass !== 'mobile' && tokenClass !== 'paired')
+          return jsonEnd(403, { error: 'forbidden' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(commitMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+
+        if (req.method === 'GET') {
+          const getCommitStatus = opts.getCommitStatus;
+          if (!getCommitStatus) return jsonEnd(503, { error: 'commit unavailable' });
+          getCommitStatus(taskId)
+            .then((status) => jsonEnd(200, status))
+            .catch((err) => jsonEnd(500, { error: String(err) }));
+          return;
+        }
+
+        if (req.method === 'POST') {
+          if (tokenClass !== 'paired') return jsonEnd(403, { error: 'pairing required' });
+          const commitAction = opts.commitActionFromMobile;
+          if (!commitAction) return jsonEnd(503, { error: 'commit unavailable' });
+          readJsonBody(req)
+            .then((body) => {
+              const action = REMOTE_COMMIT_ACTIONS.find((a) => a === body.action);
+              if (!action) return jsonEnd(400, { error: 'unknown commit action' });
+              let message: string | undefined;
+              if (action === 'commit') {
+                if (typeof body.message !== 'string' || !body.message.trim())
+                  return jsonEnd(400, { error: 'commit message required' });
+                if (Buffer.byteLength(body.message, 'utf8') > MAX_COMMIT_MESSAGE_BYTES)
+                  return jsonEnd(400, { error: 'commit message too long' });
+                message = body.message.trim();
+              }
+              return commitAction({ taskId, action, message }).then(
+                (status) => jsonEnd(200, status),
+                (err: unknown) => jsonEnd(500, { error: String(err) }),
+              );
+            })
+            .catch(() => jsonEnd(400, { error: 'bad request' }));
+          return;
+        }
+
+        return jsonEnd(405, { error: 'method not allowed' });
+      }
+
+      // --- Paired-mobile Fix CI ---
+      // GET builds the desktop's failed-checks prompt; POST sends the text the
+      // phone showed back to the agent. The log tails are untrusted GitHub
+      // content, so the user reads (and may edit) them before the agent does.
+      const fixCiMatch = url.pathname.match(/^\/api\/mobile\/tasks\/([^/]+)\/fix-ci$/);
+      if (fixCiMatch) {
+        if (tokenClass !== 'paired') return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'GET' && req.method !== 'POST')
+          return jsonEnd(405, { error: 'method not allowed' });
+        const getFixCiPrompt = opts.getFixCiPrompt;
+        const sendFixCiPrompt = opts.sendFixCiPrompt;
+        if (!getFixCiPrompt || !sendFixCiPrompt)
+          return jsonEnd(503, { error: 'fix CI unavailable' });
+        let taskId: string;
+        try {
+          taskId = decodeURIComponent(fixCiMatch[1]);
+        } catch {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (taskId === '__proto__' || taskId === 'constructor' || taskId === 'prototype') {
+          return jsonEnd(400, { error: 'invalid task id' });
+        }
+        if (req.method === 'GET') {
+          getFixCiPrompt(taskId)
+            .then((prompt) => jsonEnd(200, { prompt }))
+            .catch((err) => jsonEnd(500, { error: String(err) }));
+          return;
+        }
+        readJsonBody(req, FIX_CI_MAX_BODY_BYTES)
+          .then((body) => {
+            if (
+              typeof body.prompt !== 'string' ||
+              !body.prompt.trim() ||
+              body.prompt.length > FIX_CI_MAX_PROMPT_CHARS
+            )
+              return jsonEnd(400, { error: 'prompt must be a non-empty string' });
+            return sendFixCiPrompt(taskId, body.prompt).then(
               () => jsonEnd(200, { ok: true }),
               (err: unknown) => jsonEnd(500, { error: String(err) }),
             );
@@ -1963,6 +2157,8 @@ export function startRemoteServer(opts: {
   });
 
   const clientSubs = new WeakMap<WebSocket, Map<string, (data: string) => void>>();
+  // The agents each client asked to stream; unlike clientSubs, this outlives the PTY.
+  const clientWants = new WeakMap<WebSocket, Set<string>>();
   // Which phone currently sizes each agent's PTY (see ViewSizeCommand).
   const viewSizeOwners = new Map<string, WebSocket>();
   const authenticatedClients = new Set<WebSocket>();
@@ -1973,6 +2169,65 @@ export function startRemoteServer(opts: {
   // A phone on a slow link cannot drain a full conversation every frame interval;
   // past this backlog, chat frames wait rather than pile up in the send buffer.
   const SOCKET_BACKLOG_BYTES = 1024 * 1024;
+
+  /**
+   * Stream an agent's terminal to a phone, starting from its rendered snapshot.
+   * Also runs again when the agent's PTY respawns under the same ID (switching
+   * a task back from chat to terminal), since the old PTY's subscribers die with it.
+   */
+  function streamAgent(ws: WebSocket, agentId: string): void {
+    const subs = clientSubs.get(ws);
+    const sendScrollback = (data: string, cols: number, rows: number) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      ws.send(
+        JSON.stringify({
+          type: 'scrollback',
+          agentId,
+          data,
+          cols,
+          rows,
+        } satisfies ServerMessage),
+      );
+    };
+    const sendRawScrollback = () => {
+      const scrollback = getAgentScrollback(agentId);
+      if (scrollback) sendScrollback(scrollback, getAgentCols(agentId), getAgentRows(agentId));
+    };
+    const cb = (encoded: string) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        if (ws.bufferedAmount > SOCKET_BACKLOG_BYTES) {
+          // Terminal chunks cannot be skipped safely. Release the queued bytes;
+          // the phone reconnects and resets its terminal from scrollback replay.
+          ws.terminate();
+          return;
+        }
+        ws.send(
+          JSON.stringify({
+            type: 'output',
+            agentId,
+            data: encoded,
+          } satisfies ServerMessage),
+        );
+      }
+    };
+    // Phones get the rendered screen and history; a live agent's raw
+    // replay can be nothing but repaints of its last screen.
+    const subscriber = subscribeToAgentRendered(
+      agentId,
+      (snapshot) => {
+        if (snapshot) sendScrollback(snapshot.data, snapshot.cols, snapshot.rows);
+        else sendRawScrollback();
+      },
+      cb,
+    );
+    if (subscriber) {
+      subs?.set(agentId, subscriber);
+    } else {
+      // Not a live PTY session: replay what is left, as before.
+      sendRawScrollback();
+      if (subscribeToAgent(agentId, cb)) subs?.set(agentId, cb);
+    }
+  }
 
   function broadcast(msg: ServerMessage): void {
     const json = JSON.stringify(msg);
@@ -1990,7 +2245,19 @@ export function startRemoteServer(opts: {
     push.snapshot(list);
     broadcast({ type: 'agents', list });
   };
-  const unsubSpawn = onPtyEvent('spawn', publishAgents);
+  const unsubSpawn = onPtyEvent('spawn', (agentId, data) => {
+    publishAgents();
+    if ((data as { reattached?: boolean } | undefined)?.reattached) return;
+    // A new PTY under a known ID (a task switched back from chat to terminal)
+    // starts with no subscribers, and the phone still believes it is streaming.
+    for (const client of wss.clients) {
+      if (!clientWants.get(client)?.has(agentId)) continue;
+      const stale = clientSubs.get(client)?.get(agentId);
+      if (stale) unsubscribeFromAgent(agentId, stale);
+      clientSubs.get(client)?.delete(agentId);
+      streamAgent(client, agentId);
+    }
+  });
 
   const unsubChats =
     opts.chats?.onChange(() => {
@@ -2013,8 +2280,27 @@ export function startRemoteServer(opts: {
     }, 100);
   });
 
+  // A phone that leaves Wi-Fi sends no close frame, so without pings its socket
+  // (and any PTY size it owns) would linger until TCP gives up, which for an
+  // idle agent can be never. A socket that misses one ping is terminated, which
+  // runs the close handler and hands view sizes back to the desktop.
+  const awaitingPong = new WeakSet<WebSocket>();
+  const heartbeat = setInterval(() => {
+    for (const client of wss.clients) {
+      if (awaitingPong.has(client)) {
+        client.terminate();
+        continue;
+      }
+      awaitingPong.add(client);
+      client.ping();
+    }
+  }, opts.heartbeatMs ?? 30_000);
+  heartbeat.unref();
+
   wss.on('connection', (ws, req) => {
     clientSubs.set(ws, new Map());
+    clientWants.set(ws, new Set());
+    ws.on('pong', () => awaitingPong.delete(ws));
     if (opts.chats)
       clientChats.set(
         ws,
@@ -2089,9 +2375,13 @@ export function startRemoteServer(opts: {
         ws.close(4003, 'Pairing required');
         return;
       }
-      // A viewing phone may size the terminal once paired: it changes what the
-      // desktop pane shows, and typing already needs the same trust.
-      if (msg.type === 'view-size' && tokenType !== 'coordinator' && tokenType !== 'paired') {
+      // A viewing phone may size or scroll the terminal once paired: both change
+      // what the desktop pane shows, and typing already needs the same trust.
+      if (
+        (msg.type === 'view-size' || msg.type === 'scroll') &&
+        tokenType !== 'coordinator' &&
+        tokenType !== 'paired'
+      ) {
         ws.close(4003, 'Pairing required');
         return;
       }
@@ -2227,6 +2517,10 @@ export function startRemoteServer(opts: {
           break;
         }
 
+        case 'scroll':
+          scrollAgent(msg.agentId, msg.lines, msg.col, msg.row);
+          break;
+
         case 'kill':
           try {
             killAgent(msg.agentId);
@@ -2236,64 +2530,14 @@ export function startRemoteServer(opts: {
           break;
 
         case 'subscribe': {
-          const subs = clientSubs.get(ws);
-          if (subs?.has(msg.agentId)) break;
-
-          const sendScrollback = (data: string, cols: number, rows: number) => {
-            if (ws.readyState !== WebSocket.OPEN) return;
-            ws.send(
-              JSON.stringify({
-                type: 'scrollback',
-                agentId: msg.agentId,
-                data,
-                cols,
-                rows,
-              } satisfies ServerMessage),
-            );
-          };
-          const sendRawScrollback = () => {
-            const scrollback = getAgentScrollback(msg.agentId);
-            if (scrollback)
-              sendScrollback(scrollback, getAgentCols(msg.agentId), getAgentRows(msg.agentId));
-          };
-          const cb = (encoded: string) => {
-            if (ws.readyState === WebSocket.OPEN) {
-              if (ws.bufferedAmount > SOCKET_BACKLOG_BYTES) {
-                // Terminal chunks cannot be skipped safely. Release the queued bytes;
-                // the phone reconnects and resets its terminal from scrollback replay.
-                ws.terminate();
-                return;
-              }
-              ws.send(
-                JSON.stringify({
-                  type: 'output',
-                  agentId: msg.agentId,
-                  data: encoded,
-                } satisfies ServerMessage),
-              );
-            }
-          };
-          // Phones get the rendered screen and history; a live agent's raw
-          // replay can be nothing but repaints of its last screen.
-          const subscriber = subscribeToAgentRendered(
-            msg.agentId,
-            (snapshot) => {
-              if (snapshot) sendScrollback(snapshot.data, snapshot.cols, snapshot.rows);
-              else sendRawScrollback();
-            },
-            cb,
-          );
-          if (subscriber) {
-            subs?.set(msg.agentId, subscriber);
-          } else {
-            // Not a live PTY session: replay what is left, as before.
-            sendRawScrollback();
-            if (subscribeToAgent(msg.agentId, cb)) subs?.set(msg.agentId, cb);
-          }
+          clientWants.get(ws)?.add(msg.agentId);
+          if (clientSubs.get(ws)?.has(msg.agentId)) break;
+          streamAgent(ws, msg.agentId);
           break;
         }
 
         case 'unsubscribe': {
+          clientWants.get(ws)?.delete(msg.agentId);
           const subs = clientSubs.get(ws);
           const cb = subs?.get(msg.agentId);
           if (cb) {
@@ -2449,6 +2693,7 @@ export function startRemoteServer(opts: {
         unsubExit();
         unsubListChanged();
         unsubChats();
+        clearInterval(heartbeat);
         for (const client of wss.clients) client.close();
         wss.close();
         const timeout = setTimeout(() => resolve(), 5_000);
@@ -2467,6 +2712,7 @@ export function startRemoteServer(opts: {
       unsubExit();
       unsubListChanged();
       unsubChats();
+      clearInterval(heartbeat);
       wss.close();
       reject(toFriendlyListenError(err, opts.port));
     };
