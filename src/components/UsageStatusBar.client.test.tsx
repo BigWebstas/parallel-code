@@ -33,6 +33,9 @@ vi.mock('../store/store', () => ({
   USAGE_PROVIDERS: ['claude', 'codex'],
 }));
 
+// The resources panel has its own test; keep this one about usage.
+vi.mock('./ResourcesPanel', () => ({ ResourcesPanel: () => null }));
+
 const disposers: Array<() => void> = [];
 
 afterEach(() => {

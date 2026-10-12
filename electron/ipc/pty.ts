@@ -647,7 +647,9 @@ function attachPtyOutputHandlers(
 
     tailChunks.push(chunk);
     tailSize += chunk.length;
-    if (tailSize > TAIL_CAP) {
+    // Trim only at twice the cap: compacting on every chunk past the cap would
+    // copy the whole tail per chunk. Exit slices it back to TAIL_CAP.
+    if (tailSize > 2 * TAIL_CAP) {
       const combined = Buffer.concat(tailChunks);
       const trimmed = combined.subarray(combined.length - TAIL_CAP);
       tailChunks = [trimmed];
@@ -687,7 +689,7 @@ function attachPtyOutputHandlers(
 
     flush();
 
-    const tailBuf = Buffer.concat(tailChunks);
+    const tailBuf = Buffer.concat(tailChunks).subarray(-TAIL_CAP);
     const tailStr = tailBuf.toString('utf8');
     if (path.basename(command) === 'codex' && exitCode === 0 && !signal) {
       const id = codexResumeId(tailStr);
@@ -895,6 +897,20 @@ export function writeToAgent(agentId: string, data: string): void {
     return;
   }
   writeSessionInput(session, data);
+}
+
+/**
+ * Turn the mouse wheel over the agent's screen, as the desktop pane does. A
+ * full-screen TUI keeps its transcript out of the terminal's history, so this
+ * is the only way a phone can scroll it. Does nothing unless the TUI reads the wheel.
+ */
+export function scrollAgent(agentId: string, lines: number, col: number, row: number): void {
+  const session = sessions.get(agentId);
+  // Inside a peer prompt's paste, a report would be typed into the composer.
+  if (!session || session.peerInputQueue || handingOff.has(agentId)) return;
+  const report = session.queries.wheelReport(lines, col, row);
+  // Not through writeSessionInput: a scroll is not a draft that holds back peer prompts.
+  if (report) session.proc.write(report);
 }
 
 function writeSessionInput(session: PtySession, data: string): void {
@@ -1197,6 +1213,24 @@ export function getAgentScrollback(agentId: string): string | null {
 /** Return all active agent IDs. */
 export function getActiveAgentIds(): string[] {
   return Array.from(sessions.keys());
+}
+
+/**
+ * The local root process of every live PTY. In Docker mode this is the
+ * `docker run` client; the container's own load is not visible from here.
+ */
+export function getPtyProcessRoots(): {
+  agentId: string;
+  taskId: string;
+  isShell: boolean;
+  pid: number;
+}[] {
+  return Array.from(sessions.values(), (s) => ({
+    agentId: s.agentId,
+    taskId: s.taskId,
+    isShell: s.isShell,
+    pid: s.proc.pid,
+  }));
 }
 
 /** Return metadata for a specific agent, or null if not found. */

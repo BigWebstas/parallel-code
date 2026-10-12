@@ -1,6 +1,8 @@
+import { matchesTaskProjectFilter } from './task-project-filter';
 import { batch } from 'solid-js';
-import { documentAgentTaskId } from '../documents/task-id';
+import { documentAgentTaskId, isGitHubAgentTaskId } from '../documents/task-id';
 import { store, setStore } from './core';
+import { info as logInfo } from '../lib/log';
 import {
   getTaskFocusedPanel,
   scheduleTaskFocus,
@@ -31,17 +33,29 @@ function selectedAgentIdForTask(task: {
 
 /** Visible tile order; the single document workspace follows coding tasks. */
 export function openPanelOrder(): string[] {
+  const taskOrder = store.taskOrder.filter(matchesTaskProjectFilter);
   return store.activeDocumentProjectId
-    ? [...store.taskOrder, documentAgentTaskId(store.activeDocumentProjectId)]
-    : store.taskOrder;
+    ? [...taskOrder, documentAgentTaskId(store.activeDocumentProjectId)]
+    : taskOrder;
 }
 
 export function setActiveTask(id: string): void {
+  // Its panel lives on the GitHub page, which an active task would close.
+  if (isGitHubAgentTaskId(id)) return;
   const task = store.tasks[id];
   const terminal = store.terminals[id];
   const isDocument =
     store.activeDocumentProjectId && id === documentAgentTaskId(store.activeDocumentProjectId);
   if (!task && !terminal && !isDocument) return;
+  // Activating a CI-snoozed task returns it; the stack says which path did it.
+  if (task?.snoozedUntilCi && store.activeTaskId !== id) {
+    logInfo('background-tasks', 'activating snoozed task', {
+      taskId: id,
+      stack: new Error().stack,
+    });
+  }
+  if (!isDocument && !matchesTaskProjectFilter(id)) setStore('taskProjectFilter', null);
+  setStore('githubIssuesProjectId', null);
   setStore('newTaskPanelFocused', false);
   setStore('placeholderFocused', false);
   let activeAgentId: string | null = null;
@@ -88,11 +102,12 @@ export function moveActiveTask(direction: 'left' | 'right'): void {
   if (store.newTaskPanelFocused) return;
   const { taskOrder, activeTaskId } = store;
   if (!activeTaskId || taskOrder.length < 2) return;
-  const idx = taskOrder.indexOf(activeTaskId);
+  const visibleOrder = taskOrder.filter(matchesTaskProjectFilter);
+  const idx = visibleOrder.indexOf(activeTaskId);
   if (idx === -1) return;
   const target = direction === 'left' ? idx - 1 : idx + 1;
-  if (target < 0 || target >= taskOrder.length) return;
-  reorderTask(idx, target);
+  if (target < 0 || target >= visibleOrder.length) return;
+  reorderTask(taskOrder.indexOf(activeTaskId), taskOrder.indexOf(visibleOrder[target]));
   // Re-focus the moved task and scroll it into view (DOM node move loses focus)
   setTaskFocusedPanel(activeTaskId, getTaskFocusedPanel(activeTaskId));
 }
@@ -117,6 +132,7 @@ export function toggleNewTaskPanel(show?: boolean): void {
     return;
   }
   if (shouldShow) {
+    setStore('githubIssuesProjectId', null);
     setStore('sidebarFocused', false);
     setStore('placeholderFocused', false);
   } else {
@@ -126,4 +142,19 @@ export function toggleNewTaskPanel(show?: boolean): void {
   }
   setStore('showNewTaskPanel', shouldShow);
   if (shouldShow) triggerFocus('new-task');
+}
+
+export function setTaskProjectFilter(projectId: string | null): void {
+  batch(() => {
+    setStore('taskProjectFilter', projectId);
+    setStore('sidebarFocusedTaskId', null);
+    if (!store.activeTaskId || !openPanelOrder().includes(store.activeTaskId)) {
+      const nextId = openPanelOrder()[0];
+      if (nextId) setActiveTask(nextId);
+      else {
+        setStore('activeTaskId', null);
+        setStore('activeAgentId', null);
+      }
+    }
+  });
 }

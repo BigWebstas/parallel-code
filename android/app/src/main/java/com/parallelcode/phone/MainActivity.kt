@@ -40,6 +40,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -320,6 +321,9 @@ private fun PhoneApp(model: PhoneViewModel) {
     val state by model.client.state.collectAsState()
     val agents by model.client.agents.collectAsState()
     var screenKey by rememberSaveable { mutableStateOf("agents") }
+    // Held above the screen switch, so the list's search and filter survive opening a task.
+    var taskSearch by rememberSaveable { mutableStateOf("") }
+    var taskFilterKey by rememberSaveable { mutableStateOf(TaskFilter.ALL.key) }
     val screen = when {
         screenKey == "pair" -> Screen.Pair
         screenKey == "new-task" -> Screen.NewTask
@@ -410,6 +414,10 @@ private fun PhoneApp(model: PhoneViewModel) {
                     onSettings = { screenKey = "settings" },
                     computers = computers,
                     onSwitchComputer = { model.client.switchTo(it) },
+                    search = taskSearch,
+                    onSearch = { taskSearch = it },
+                    filter = TaskFilter.fromKey(taskFilterKey),
+                    onFilter = { taskFilterKey = it.key },
                 )
             }
             Screen.Settings -> {
@@ -541,13 +549,16 @@ private fun PhoneApp(model: PhoneViewModel) {
                 val sendQuickReplies by model.sendQuickReplies.collectAsState()
                 val fitTerminalToPhone by model.fitTerminalToPhone.collectAsState()
                 // The tasks in the order the list shows them: swipe sideways to move between them.
-                val pages = remember(agents) { agents.filter { !it.collapsed } + agents.filter { it.collapsed } }
+                val pages = remember(agents) { taskListOrder(agents) }
                 val openIndex = pages.indexOfFirst { it.agentId == currentScreen.agentId }
+                // The task whose terminal is pinch-zoomed; its sideways pans must not turn the page.
+                var zoomedAgentId by remember { mutableStateOf<String?>(null) }
 
                 @Composable
                 fun Task(agentId: String, active: Boolean, pageLabel: String?) {
                     val agent = agents.firstOrNull { it.agentId == agentId }
-                    if (agent?.isChat == true) {
+                    // Keyed so another task never sees this one's chat for a frame; that would clobber its saved scroll.
+                    if (agent?.isChat == true) key(agentId) {
                         ChatScreen(
                             agent = agent,
                             agentId = agentId,
@@ -571,6 +582,11 @@ private fun PhoneApp(model: PhoneViewModel) {
                         sendQuickReplies = sendQuickReplies,
                         promptHistory = model.promptHistory,
                         pageLabel = pageLabel,
+                        nextNeedingYou = nextTaskNeedingYou(agents, agentId),
+                        onOpenTask = { screenKey = "agent:$it" },
+                        onZoomedChange = { zoomed ->
+                            zoomedAgentId = if (zoomed) agentId else zoomedAgentId.takeUnless { it == agentId }
+                        },
                         onBack = { screenKey = "agents" },
                         onPair = { screenKey = "pair" },
                     )
@@ -582,6 +598,16 @@ private fun PhoneApp(model: PhoneViewModel) {
                 } else {
                     val pager = rememberPagerState(initialPage = openIndex) { pages.size }
                     val currentPages by rememberUpdatedState(pages)
+                    // Opening another task without swiping (Next task, a notification) turns the
+                    // pager to it. A swipe has already settled there, so it does nothing then. Keyed
+                    // by task rather than index: pages are keyed by task, so a reorder keeps the open
+                    // one in view by itself, and must not scroll mid-swipe.
+                    LaunchedEffect(pager, currentScreen.agentId) {
+                        val target = currentPages.indexOfFirst { it.agentId == currentScreen.agentId }
+                        if (target >= 0 && currentPages.getOrNull(pager.currentPage)?.agentId != currentScreen.agentId) {
+                            pager.scrollToPage(target)
+                        }
+                    }
                     LaunchedEffect(pager) {
                         snapshotFlow { pager.settledPage }.collect { page ->
                             // Only a swipe moves between tasks. This page stays composed while it
@@ -593,6 +619,7 @@ private fun PhoneApp(model: PhoneViewModel) {
                     }
                     HorizontalPager(
                         state = pager,
+                        userScrollEnabled = zoomedAgentId != currentScreen.agentId,
                         key = { pages[it].agentId },
                         pageSpacing = 8.dp,
                     ) { page ->

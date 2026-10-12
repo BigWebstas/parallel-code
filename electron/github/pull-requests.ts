@@ -69,6 +69,13 @@ export function parseMergeMethods(raw: unknown): PrMergeMethod[] {
   return methods;
 }
 
+export interface MergePullRequestOptions {
+  method: PrMergeMethod;
+  headSha: string;
+  /** Bypass branch protection (`gh pr merge --admin`); GitHub decides who may. */
+  admin?: boolean;
+}
+
 /**
  * Merges only if the PR head is still `headSha`, the commit the user saw.
  * Resolves true once GitHub reports the PR merged; false when gh accepted the
@@ -76,13 +83,13 @@ export function parseMergeMethods(raw: unknown): PrMergeMethod[] {
  */
 export async function mergePullRequest(
   prUrl: string,
-  method: PrMergeMethod,
-  headSha: string,
+  { method, headSha, admin = false }: MergePullRequestOptions,
 ): Promise<boolean> {
   requirePrRef(prUrl);
   // No --delete-branch: gh would try to delete the local branch, which fails
   // while the task worktree has it checked out. Closing the task cleans up.
-  await runGh(['pr', 'merge', prUrl, `--${method}`, '--match-head-commit', headSha]);
+  const args = ['pr', 'merge', prUrl, `--${method}`, '--match-head-commit', headSha];
+  await runGh(admin ? [...args, '--admin'] : args);
   try {
     const raw = asRecord(await runGhJson(['pr', 'view', prUrl, '--json', 'state']));
     return asString(raw?.['state']) === 'MERGED';
@@ -91,6 +98,12 @@ export async function mergePullRequest(
     logWarn('github', 'PR state check after merge failed', { err: errMessage(err) });
     return false;
   }
+}
+
+/** Takes a draft PR out of draft (`gh pr ready`); GitHub refuses drafts a merge. */
+export async function markPullRequestReady(prUrl: string): Promise<void> {
+  requirePrRef(prUrl);
+  await runGh(['pr', 'ready', prUrl]);
 }
 
 /** Failed checks of the PR head, with job log tails for GitHub Actions jobs. */

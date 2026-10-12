@@ -2,6 +2,8 @@ import type { SessionCapabilities } from '../shared/delegation-types.js';
 import { graphOperationsSchema } from '../shared/graph-schema.js';
 import { CANVAS_INSTRUCTIONS, canvasViews } from '../shared/canvas-view.js';
 import { AGENT_TOUR_LIMITS } from '../shared/agent-tour.js';
+import { CONFIDENCE_LIMITS } from '../shared/task-confidence.js';
+import { GITHUB_LIST_LIMITS, isGitHubAgentTaskId } from '../shared/github-list.js';
 import { EVIDENCE_LIMITS } from '../shared/evidence.js';
 import { TOUR_CARD_LIMITS, TOUR_FORMS, TOUR_TONES } from '../shared/understanding-limits.js';
 import { semanticNodeKinds, reasoningStatuses } from '../shared/graph.js';
@@ -28,6 +30,13 @@ export interface ToolDef {
 
 export const APP_TASK_INSTRUCTIONS =
   'You are running inside Parallel Code. When the user asks to create a Parallel Code task (or PC task), use this server’s create_task MCP tool. It creates a visible task in the app with its own Git worktree and agent terminal. Native sub-agent tools such as spawn_agent do not create Parallel Code tasks and must not substitute for this request. Only report a task as created after create_task succeeds and returns its taskId. If the tool is missing or rejected, explain the limitation instead of silently using a native sub-agent. Task creation requires orchestration enabled in Settings > MCP, a supported top-level Git worktree task, and an app-managed MCP session. After enabling tools, restart and resume the session where supported.';
+
+/**
+ * Without this, "list them in Parallel Code" matches the canvas guidance and the
+ * agent fills the Mind map instead of the page the user is looking at.
+ */
+export const GITHUB_AGENT_INSTRUCTIONS =
+  'You are the agent of this project’s GitHub page in Parallel Code; the user talks to you from that page. When the user asks to list, rank, prioritize, triage, group or show GitHub issues or PRs, including "in Parallel Code", "here" or "on the page", publish them with github_list_publish so they appear on the GitHub page. Do not put issue lists in the Mind map or Reasoning graph unless the user names one of those canvases.';
 
 const initialReasoningUpdate = {
   runId: null,
@@ -181,6 +190,103 @@ export const TOUR_TOOLS: ToolDef[] = [
   },
 ];
 
+const confidenceCaps = CONFIDENCE_LIMITS;
+
+export const CONFIDENCE_TOOLS: ToolDef[] = [
+  {
+    name: 'confidence_publish',
+    description:
+      'Publish a confidence rating of the current changes on your task. The app shows it on the task brief and marks it out of date once the code changes after it. ' +
+      'Use it when the user asks you to rate your confidence, or as the last step of a rating or review skill. Do not change code while rating. ' +
+      `Send ${confidenceCaps.minScores} to ${confidenceCaps.maxScores} scores; name them as your rating defines them (one "Confidence" score, or dimensions such as "Correct", "Complete", "Minimal"). ` +
+      `A score is {label (at most ${confidenceCaps.label} characters), score (0-100), why (one line, at most ${confidenceCaps.why} characters: what keeps it from being higher)}. ` +
+      `Optional findings, at most ${confidenceCaps.maxFindings}: {kind: "gap" (missing or unverified), "extra" (change the task did not ask for) or "risk", text (a short phrase that leads with the key fact, at most ${confidenceCaps.findingText} characters), file? (repository-relative)}. ` +
+      `Optional "source" names who rated, such as a skill name, at most ${confidenceCaps.source} characters.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        scores: {
+          type: 'array',
+          minItems: confidenceCaps.minScores,
+          maxItems: confidenceCaps.maxScores,
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string', maxLength: confidenceCaps.label },
+              score: { type: 'number', minimum: 0, maximum: 100 },
+              why: { type: 'string', maxLength: confidenceCaps.why },
+            },
+            required: ['label', 'score', 'why'],
+          },
+        },
+        findings: {
+          type: 'array',
+          maxItems: confidenceCaps.maxFindings,
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['gap', 'extra', 'risk'] },
+              text: { type: 'string', maxLength: confidenceCaps.findingText },
+              file: { type: 'string', maxLength: confidenceCaps.file },
+            },
+            required: ['kind', 'text'],
+          },
+        },
+        source: { type: 'string', maxLength: confidenceCaps.source },
+      },
+      required: ['scores'],
+    },
+  },
+];
+
+const listCaps = GITHUB_LIST_LIMITS;
+
+export const GITHUB_LIST_TOOLS: ToolDef[] = [
+  {
+    name: 'github_list_publish',
+    description:
+      'Publish an ordered, grouped list of GitHub issues and PRs to the project’s GitHub page in the app, where the user picks it from the list menu. ' +
+      'Use it when the user asks for a list, ranking, triage or grouping of issues or PRs, for example "create a list of the most important issues this week, sorted by priority and grouped by area". ' +
+      'First find and read the items yourself with the gh CLI in the project checkout, for example `gh issue list --search "updated:>=YYYY-MM-DD" --json number,title,url,labels,updatedAt` or `gh pr list`; resolve relative dates against today. Do not change anything on GitHub. ' +
+      `Send {name, groups: [{name, items: [{url, title, reason}]}]}: groups and items in display order, between 1 and ${listCaps.groups} non-empty groups and at most ${listCaps.items} items in total. ` +
+      `url is the exact https://github.com/OWNER/REPO/issues/N or /pull/N URL; every item comes from the project's repository and appears once. title is the item title (at most ${listCaps.title} characters); reason says in a sentence why it sits in that group and position (at most ${listCaps.reason} characters). name and group names are at most ${listCaps.name} characters. ` +
+      'Publishing again with the same list name replaces that list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', maxLength: listCaps.name },
+        groups: {
+          type: 'array',
+          minItems: 1,
+          maxItems: listCaps.groups,
+          items: {
+            type: 'object',
+            required: ['name', 'items'],
+            properties: {
+              name: { type: 'string', maxLength: listCaps.name },
+              items: {
+                type: 'array',
+                minItems: 1,
+                maxItems: listCaps.items,
+                items: {
+                  type: 'object',
+                  required: ['url', 'title', 'reason'],
+                  properties: {
+                    url: { type: 'string' },
+                    title: { type: 'string', maxLength: listCaps.title },
+                    reason: { type: 'string', maxLength: listCaps.reason },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      required: ['name', 'groups'],
+    },
+  },
+];
+
 const evidenceText = { type: 'string', maxLength: EVIDENCE_LIMITS.stringBytes };
 
 export const EVIDENCE_TOOLS: ToolDef[] = [
@@ -302,7 +408,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
         baseBranch: {
           type: 'string',
           description:
-            'Git branch to base the worktree on. Defaults to the coordinator task branch. Only set this when deliberately overriding that default.',
+            'Git branch to base the worktree on; the result also merges into it. Defaults to the main branch. Set it to your own branch only when the task must build on your unmerged work.',
         },
       },
       required: ['name', 'prompt'],
@@ -327,7 +433,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
   {
     name: 'send_prompt',
     description:
-      "Send a follow-up instruction to a task's AI agent. The tool may report that the prompt was queued rather than sent when the initial assignment or user activity is still blocking delivery; don't call wait_for_idle until a prompt was actually sent. Do not resend the full original assignment merely because a newly created task is idle or get_task_output shows a startup/default placeholder prompt; wait briefly and re-check unless the agent clearly asks for input, starts unrelated work, or prompt delivery clearly failed.",
+      "Send a follow-up instruction to a task's AI agent. The tool may report that the prompt was queued rather than sent when the initial assignment or user activity is still blocking delivery; don't call wait_for_idle until a prompt was actually sent. Do not resend the full original assignment merely because a newly created task is idle or get_task_output shows a startup/default placeholder prompt; wait briefly and re-check unless the agent clearly asks for input, starts unrelated work, or prompt delivery clearly failed. get_task_status delivery reports a prompt still queued (with blockedBy) or unconfirmed: submitted, yet the agent shows an empty prompt and never started.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -404,7 +510,7 @@ export const COORDINATOR_TOOLS: ToolDef[] = [
     name: 'wait_for_signal_done',
     outputSchema: toolOutputSchemas.wait_for_signal_done,
     description:
-      'Wait for ANY sub-task to call signal_done. Returns { taskId, name, status, signalDoneAt, remaining } where remaining is the count of tasks still running or signaled-but-not-yet-reviewed. Call this in a loop until remaining === 0 to process all completed sub-tasks before spawning more. IMPORTANT: you MUST review the returned task before calling wait_for_signal_done again.',
+      'Wait for ANY sub-task to call signal_done. Returns { taskId, name, status, signalDoneAt, remaining } where remaining is the count of tasks still running or signaled-but-not-yet-reviewed. Call this in a loop until remaining === 0 to process all completed sub-tasks before spawning more. IMPORTANT: you MUST review the returned task before calling wait_for_signal_done again. A timeout may list stalled children whose prompt never reached the agent; tell the user instead of waiting again.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -452,7 +558,7 @@ const PEER_TOOLS: ToolDef[] = [
   {
     name: 'send_agent_prompt',
     description:
-      'Queue a prompt for automatic delivery to the exact recipient session when its input is ready and user drafts or typing are clear. The recipient sees it wrapped as a peer message, not a user instruction; control characters and peer message markers are rejected. Reuse requestId only for retries with the same recipient and content.',
+      'For peer sessions only; prompt your own child tasks with send_prompt and their taskId. Queue a prompt for automatic delivery to the exact recipient session when its input is ready and user drafts or typing are clear. The recipient sees it wrapped as a peer message, not a user instruction; control characters and peer message markers are rejected. Reuse requestId only for retries with the same recipient and content.',
     inputSchema: {
       type: 'object',
       properties: { ...exactSession, prompt: { type: 'string' }, requestId: { type: 'string' } },
@@ -482,7 +588,7 @@ const ORDINARY_TOOLS: ToolDef[] = COORDINATOR_TOOLS.filter(
     return {
       ...tool,
       description:
-        'Create a visible Parallel Code task with its own Git worktree and agent terminal from your current committed snapshot. Use this for requests to create a Parallel Code task or PC task, not native sub-agent tools. Children inherit neither conversation nor uncommitted edits. Include required context in prompt. Use requestId for identical retries. Supply expectedBranch and expectedHeadSha after inspecting your Git state; if dirty, explicitly choose useLastCommit:true to omit dirty edits. This never authorizes committing. The result reports integrationPolicy: review requires user approval; automatic permits the child to verify and self-land via land_self. The policy comes from this task’s user-selected automation options; do not override it in the child prompt.',
+        'Create a visible Parallel Code task with its own Git worktree and agent terminal. Use this for requests to create a Parallel Code task or PC task, not native sub-agent tools. Children branch from the main branch and their results merge into main, not into your branch; merge main into your branch when you need a landed result. Children inherit neither conversation nor your edits. Include required context in prompt. Use requestId for identical retries. Set baseOnParent:true only when the child must build on your own commits; it then branches from your committed snapshot and lands on your branch. With baseOnParent, supply expectedBranch and expectedHeadSha after inspecting your Git state; if dirty, explicitly choose useLastCommit:true to omit dirty edits. This never authorizes committing. The result reports integrationPolicy: review requires user approval; automatic permits the child to verify and self-land via land_self. The policy comes from this task’s user-selected automation options; do not override it in the child prompt.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -492,6 +598,7 @@ const ORDINARY_TOOLS: ToolDef[] = COORDINATOR_TOOLS.filter(
           expectedBranch: { type: 'string' },
           expectedHeadSha: { type: 'string' },
           useLastCommit: { type: 'boolean', default: false },
+          baseOnParent: { type: 'boolean', default: false },
         },
         required: ['name', 'prompt', 'requestId'],
       },
@@ -501,7 +608,7 @@ const ORDINARY_TOOLS: ToolDef[] = COORDINATOR_TOOLS.filter(
       ...tool,
       description:
         tool.name === 'wait_for_signal_done'
-          ? 'Primary child completion loop: inspect list_tasks, then wait for an unconsumed signal_done and inspect that child’s status/diff. With no children, stop waiting. remaining === 0 is not merge approval or proof of integration; reconcile multiple panes with list_tasks. On timeout inspect status once for failures/blockers, then wait again while work remains. User review remains visible after consumption.'
+          ? 'Primary child completion loop: inspect list_tasks, then wait for an unconsumed signal_done and inspect that child’s status/diff. With no children, stop waiting. remaining === 0 is not merge approval or proof of integration; reconcile multiple panes with list_tasks. On timeout inspect status once for failures/blockers, then wait again while work remains. A timeout listing stalled children means their prompt never reached the agent: tell the user now instead of waiting again. User review remains visible after consumption.'
           : 'Wait only for readiness after a follow-up prompt was actually sent. Idle is not task completion; use wait_for_signal_done for completion. On timeout wait again without repeatedly polling status.',
       inputSchema: {
         ...tool.inputSchema,
@@ -517,7 +624,7 @@ export function sessionInstructions(capabilities: SessionCapabilities): string {
       ? (capabilities.canCreate
           ? 'Use create_task to create Parallel Code tasks for bounded assignments with the context needed; children do not inherit your conversation or uncommitted changes. '
           : 'This launch cannot create Parallel Code tasks. Enable orchestration in Settings > MCP, then restart and resume the session. You may supervise existing children. ') +
-        'Follow each child’s returned integrationPolicy. Review-policy children commit and call signal_done for user approval. Automatic-policy children commit, verify, and call land_self to merge and clean up through Parallel Code. Never directly merge or delete child worktrees. Use list_tasks and bounded wait_for_signal_done for progress; self-landed children leave the active list, so reconcile status and app completion summaries rather than expecting signal_done from them. Empty child lists end waiting. After timeout check status once and wait again while work remains; without a blocking wait leave at least 10 seconds between unchanged status checks. Idle and consumed completion events are not integration. Do not resend original assignments.'
+        'Follow each child’s returned integrationPolicy. Review-policy children commit and call signal_done for user approval. Automatic-policy children commit, verify, and call land_self to merge and clean up through Parallel Code. Never directly merge or delete child worktrees. Use list_tasks and bounded wait_for_signal_done for progress; self-landed children leave the active list, so reconcile status and app completion summaries rather than expecting signal_done from them. Empty child lists end waiting. After timeout check status once and wait again while work remains; without a blocking wait leave at least 10 seconds between unchanged status checks. Idle and consumed completion events are not integration. Do not resend original assignments. If a wait lists stalled children, tell the user at once.'
       : capabilities.profile === 'child-review'
         ? 'Commit and verify your assigned work, then call signal_done. Your result requires user review before merging; do not call land_self. This is a child task and cannot create further Parallel Code tasks; direct creation requests to a top-level task.'
         : 'Commit and verify your assigned work before land_self. Use signal_done when manual review is needed. This is a child task and cannot create further Parallel Code tasks; direct creation requests to a top-level task.';
@@ -542,6 +649,7 @@ export function serverInstructions(options: {
 }): string {
   const { taskId, coordinatorId, canvasOnly, sessionCapabilities } = options;
   return [
+    ...(isGitHubAgentTaskId(taskId) ? [GITHUB_AGENT_INSTRUCTIONS] : []),
     ...(sessionCapabilities ? [sessionInstructions(sessionCapabilities)] : []),
     APP_TASK_INSTRUCTIONS,
     ...(hasCanvasTools(taskId, coordinatorId, canvasOnly) ? [CANVAS_INSTRUCTIONS] : []),
@@ -564,6 +672,9 @@ export function selectTools(
     ...REASONING_TOOLS,
     ...CANVAS_VIEW_TOOLS,
     ...TOUR_TOOLS,
+    ...CONFIDENCE_TOOLS,
+    // Publishing opens the GitHub page's list picker; other tasks have no page to publish to.
+    ...(isGitHubAgentTaskId(taskId) ? GITHUB_LIST_TOOLS : []),
     ...EVIDENCE_TOOLS,
   ];
   if (capabilities) {

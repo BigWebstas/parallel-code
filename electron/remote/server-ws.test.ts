@@ -11,10 +11,14 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+// The server's PTY event listeners, so a test can respawn an agent.
+const ptyListeners = vi.hoisted(() => new Map<string, (agentId: string, data?: unknown) => void>());
+
 vi.mock('../ipc/pty.js', () => ({
   writeToAgent: vi.fn(),
   resizeAgent: vi.fn(),
   setAgentRemoteSize: vi.fn(),
+  scrollAgent: vi.fn(),
   killAgent: vi.fn(),
   subscribeToAgent: vi.fn(),
   subscribeToAgentRendered: vi.fn(() => null),
@@ -24,7 +28,10 @@ vi.mock('../ipc/pty.js', () => ({
   getAgentMeta: vi.fn(() => null),
   getAgentCols: vi.fn(() => 80),
   getAgentRows: vi.fn(() => 24),
-  onPtyEvent: vi.fn(() => vi.fn()), // returns an unsubscribe fn
+  onPtyEvent: vi.fn((event: string, listener: (agentId: string, data?: unknown) => void) => {
+    ptyListeners.set(event, listener);
+    return vi.fn(); // the unsubscribe fn
+  }),
 }));
 
 const pty = await import('../ipc/pty.js');
@@ -185,6 +192,14 @@ describe('mobile token over WebSocket', () => {
     expect(pty.setAgentRemoteSize).not.toHaveBeenCalled();
   });
 
+  it('rejects scroll with 4003 and sends nothing to the PTY', async () => {
+    const ws = await connectAndAuth(mobileToken);
+    const closed = waitForClose(ws);
+    ws.send(JSON.stringify({ type: 'scroll', agentId: 'agent-1', lines: -3, col: 10, row: 5 }));
+    expect(await closed).toBe(4003);
+    expect(pty.scrollAgent).not.toHaveBeenCalled();
+  });
+
   it('rejects kill with 4003 and does not kill the agent', async () => {
     const ws = await connectAndAuth(mobileToken);
     const closed = waitForClose(ws);
@@ -220,6 +235,76 @@ describe('subscribe snapshot', () => {
   });
 });
 
+describe('agent respawned under the same ID', () => {
+  // Switching a task back from chat to terminal starts a new PTY with the old
+  // agent ID. The phone never unsubscribed, so it does not subscribe again.
+  beforeEach(() => {
+    vi.mocked(pty.subscribeToAgentRendered).mockImplementation(() => null);
+  });
+
+  function snapshots(ws: WebSocket): unknown[] {
+    const seen: unknown[] = [];
+    ws.on('message', (raw) => {
+      const msg = JSON.parse(String(raw)) as { type: string };
+      if (msg.type === 'scrollback') seen.push(msg);
+    });
+    return seen;
+  }
+
+  async function subscribeWithoutPty(ws: WebSocket, agentId: string): Promise<void> {
+    ws.send(JSON.stringify({ type: 'subscribe', agentId }));
+    await vi.waitFor(() =>
+      expect(pty.subscribeToAgentRendered).toHaveBeenCalledWith(
+        agentId,
+        expect.any(Function),
+        expect.any(Function),
+      ),
+    );
+  }
+
+  function respawnWithSnapshot(): void {
+    vi.mocked(pty.subscribeToAgentRendered).mockImplementation((_id, onSnapshot) => {
+      onSnapshot({ data: 'bmV3', cols: 80, rows: 24 });
+      return vi.fn();
+    });
+  }
+
+  it('streams the new PTY to a phone that was watching the agent', async () => {
+    const ws = await connectAndAuth(mobileToken);
+    const seen = snapshots(ws);
+    await subscribeWithoutPty(ws, 'agent-1');
+
+    respawnWithSnapshot();
+    ptyListeners.get('spawn')?.('agent-1');
+
+    await vi.waitFor(() =>
+      expect(seen).toEqual([
+        { type: 'scrollback', agentId: 'agent-1', data: 'bmV3', cols: 80, rows: 24 },
+      ]),
+    );
+    ws.close();
+  });
+
+  it('leaves phones that unsubscribed, and reattached PTYs, alone', async () => {
+    const ws = await connectAndAuth(mobileToken);
+    const seen = snapshots(ws);
+    await subscribeWithoutPty(ws, 'agent-1');
+    await subscribeWithoutPty(ws, 'agent-2');
+    ws.send(JSON.stringify({ type: 'unsubscribe', agentId: 'agent-1' }));
+    // Messages are handled in order, so this round trip settles the unsubscribe.
+    await subscribeWithoutPty(ws, 'agent-3');
+
+    respawnWithSnapshot();
+    vi.mocked(pty.subscribeToAgentRendered).mockClear();
+    ptyListeners.get('spawn')?.('agent-1');
+    ptyListeners.get('spawn')?.('agent-2', { reattached: true });
+
+    expect(pty.subscribeToAgentRendered).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+    ws.close();
+  });
+});
+
 describe('paired phone view size', () => {
   it('sizes the PTY and hands it back when the phone disconnects', async () => {
     const ws = await connectAndAuth(await pair());
@@ -250,6 +335,15 @@ describe('paired phone view size', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(pty.setAgentRemoteSize).toHaveBeenCalledTimes(1);
     owner.close();
+  });
+});
+
+describe('paired phone scroll', () => {
+  it('turns the wheel over the agent screen', async () => {
+    const ws = await connectAndAuth(await pair());
+    ws.send(JSON.stringify({ type: 'scroll', agentId: 'agent-1', lines: -3, col: 10, row: 5 }));
+    await vi.waitFor(() => expect(pty.scrollAgent).toHaveBeenCalledWith('agent-1', -3, 10, 5));
+    ws.close();
   });
 });
 

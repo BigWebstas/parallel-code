@@ -70,3 +70,21 @@ export function extractGitHubUrl(text: string): string | null {
   const matches = text.match(/https?:\/\/[^\s)>\]"']+/gi) ?? [];
   return matches.find((url) => parseGitHubUrl(url) !== null) ?? null;
 }
+
+/** Issue numbers are only unique within a repository; ignore URL decoration when linking. */
+export function sameGitHubIssue(left: string | undefined, right: string): boolean {
+  if (!left) return false;
+  const a = parseGitHubUrl(left);
+  const b = parseGitHubUrl(right);
+  return (
+    !!a &&
+    !!b &&
+    (a.type === 'issues' || a.type === 'pull') &&
+    a.type === b.type &&
+    !!a.number &&
+    /^\d+$/.test(a.number) &&
+    a.number === b.number &&
+    a.org.toLowerCase() === b.org.toLowerCase() &&
+    a.repo.toLowerCase() === b.repo.toLowerCase()
+  );
+}

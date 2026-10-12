@@ -13,21 +13,23 @@ const GH_TIMEOUT_MS = 30_000;
 const GH_MAX_BUFFER = 8 * 1024 * 1024;
 
 /** Runs `gh` and returns stdout. Failures throw with a user-facing message. */
-export async function runGh(args: string[], cwd?: string): Promise<string> {
+export async function runGh(args: string[], cwd?: string, input?: string): Promise<string> {
   try {
-    const { stdout } = await exec('gh', args, {
+    const pending = exec('gh', args, {
       cwd,
       timeout: GH_TIMEOUT_MS,
       maxBuffer: GH_MAX_BUFFER,
     });
+    if (input !== undefined) pending.child.stdin?.end(input);
+    const { stdout } = await pending;
     return stdout;
   } catch (err) {
     throw new Error(describeGhError(err));
   }
 }
 
-export async function runGhJson(args: string[], cwd?: string): Promise<unknown> {
-  return JSON.parse(await runGh(args, cwd)) as unknown;
+export async function runGhJson(args: string[], cwd?: string, input?: string): Promise<unknown> {
+  return JSON.parse(await runGh(args, cwd, input)) as unknown;
 }
 
 /** Maps a failed `gh` invocation to a message the user can act on. */

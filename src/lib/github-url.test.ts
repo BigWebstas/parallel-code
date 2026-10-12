@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseGitHubUrl, extractGitHubUrl, taskNameFromGitHubUrl } from './github-url';
+import {
+  parseGitHubUrl,
+  extractGitHubUrl,
+  sameGitHubIssue,
+  taskNameFromGitHubUrl,
+} from './github-url';
 
 describe('enterprise PR URLs', () => {
   it('recognizes PRs on arbitrary hosts for task naming', () => {
@@ -24,5 +29,26 @@ describe('enterprise PR URLs', () => {
   it('keeps public GitHub repository and issue parsing', () => {
     expect(parseGitHubUrl('https://github.com/o/r')).toEqual({ org: 'o', repo: 'r' });
     expect(parseGitHubUrl('https://github.com/o/r/issues/4')?.number).toBe('4');
+  });
+});
+
+describe('issue task identity', () => {
+  it('matches repository case and decorated issue links', () => {
+    expect(
+      sameGitHubIssue(
+        'https://github.com/Owner/Repo/issues/7#comment-1',
+        'https://github.com/owner/repo/issues/7',
+      ),
+    ).toBe(true);
+  });
+  it.each([
+    undefined,
+    'https://github.com/other/repo/issues/7',
+    'https://github.com/owner/other/issues/7',
+    'https://github.com/owner/repo/issues/8',
+    'https://github.com/owner/repo/pull/7',
+    'https://evil.test/owner/repo/issues/7',
+  ])('does not link %s to another issue', (url) => {
+    expect(sameGitHubIssue(url, 'https://github.com/owner/repo/issues/7')).toBe(false);
   });
 });

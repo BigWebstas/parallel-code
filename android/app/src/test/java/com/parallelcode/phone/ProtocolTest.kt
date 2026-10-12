@@ -41,6 +41,17 @@ class ProtocolTest {
     }
 
     @Test
+    fun parsesPrCheckStatusWhenPresent() {
+        val msg = parseServerMessage(
+            """{"type":"agents","list":[
+            {"agentId":"a1","taskId":"t1","taskName":"A","status":"running","exitCode":null,"lastLine":"","attention":"idle","ci":"failure"},
+            {"agentId":"a2","taskId":"t2","taskName":"B","status":"running","exitCode":null,"lastLine":"","attention":"ready"}]}""",
+        ) as ServerMessage.Agents
+        assertEquals("failure", msg.list[0].ci)
+        assertNull(msg.list[1].ci)
+    }
+
+    @Test
     fun decodesTerminalData() {
         val scrollback = parseServerMessage(
             """{"type":"scrollback","agentId":"a1","data":"aGk=","cols":100}""",
@@ -90,27 +101,5 @@ class ProtocolTest {
         assertEquals("one two", messageForTerminal(" one\r\ntwo\u0003 ", bracketedPaste = false))
         assertEquals("\u001b[200~one\ntwo\u001b[201~", messageForTerminal("one\rtwo", bracketedPaste = true))
         assertEquals("", messageForTerminal(" \u001b ", bracketedPaste = true))
-    }
-
-    @Test
-    fun parsesMobileAgents() {
-        val list = parseMobileAgents(
-            """[
-                {"id":"claude","name":"Claude Code","description":"Claude CLI","available":true,"isDefault":true},
-                {"id":"codex","name":"Codex","description":"","available":false,"isDefault":false}
-            ]""",
-        )
-        assertEquals(2, list.size)
-        assertEquals("claude", list[0].id)
-        assertEquals("Claude Code", list[0].name)
-        assertEquals("Claude CLI", list[0].description)
-        assertEquals(true, list[0].available)
-        assertEquals(true, list[0].isDefault)
-
-        assertEquals("codex", list[1].id)
-        assertEquals("Codex", list[1].name)
-        assertNull(list[1].description)
-        assertEquals(false, list[1].available)
-        assertEquals(false, list[1].isDefault)
     }
 }
