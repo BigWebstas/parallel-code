@@ -51,7 +51,6 @@ interface TaskTitleBarProps {
   task: Task;
   isActive: boolean;
   onClose: () => void;
-  onCommit: () => void;
   /** Opens the finish dialog: evidence, tour, then merge or push. */
   onFinish: () => void;
   pushing: boolean;
@@ -270,17 +269,6 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
       <div class="task-title-actions">
         <div class="task-action-group" role="group" aria-label="Task actions">
           <Show when={canFinish()}>
-            <button
-              type="button"
-              class="task-finish-btn"
-              title="Commit changes"
-              onClick={(e) => {
-                e.stopPropagation();
-                props.onCommit();
-              }}
-            >
-              Commit
-            </button>
             <button
               type="button"
               class="task-finish-btn"

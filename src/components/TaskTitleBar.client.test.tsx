@@ -53,7 +53,6 @@ beforeEach(() => {
         isActive
         onClose={() => undefined}
         onFinish={onFinish}
-        onCommit={() => undefined}
         pushing={pushing()}
         pushSuccess={pushSuccess()}
         onTitleEditRef={() => undefined}
@@ -197,14 +196,7 @@ it('orders task decisions, view controls, and close', () => {
   const labels = [...container.querySelectorAll('.task-title-actions button')].map(
     (item) => item.getAttribute('aria-label') ?? item.textContent?.trim(),
   );
-  expect(labels).toEqual([
-    'Commit',
-    'Finish',
-    'Later',
-    'Open canvas',
-    'Focus on this task',
-    'Close task',
-  ]);
+  expect(labels).toEqual(['Finish', 'Later', 'Open canvas', 'Focus on this task', 'Close task']);
 });
 
 it('offers running snooze presets directly in a submenu without a dialog', () => {
