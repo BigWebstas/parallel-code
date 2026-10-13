@@ -8,7 +8,7 @@
 //
 // Runs after the app is packed and before the deb and AppImage targets read it.
 // Files the targets generate themselves (the desktop entry, changelog) come
-// later and are covered by the `umask 022` in the `build` script instead.
+// later and are covered by the `umask 022` set by `scripts/with-umask.mjs` in the `build` script instead.
 
 const fs = require('fs');
 const path = require('path');
