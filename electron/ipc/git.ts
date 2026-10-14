@@ -1913,6 +1913,8 @@ export async function getChangedFiles(
   worktreePath: string,
   baseBranch?: string,
 ): Promise<ChangedFile[]> {
+  // Started first so the status launch overlaps the diff-base work and the diff.
+  const snapshotPromise = readStatusSnapshot(worktreePath).catch(() => null);
   const headHash = await pinHead(worktreePath);
 
   // Use the picked merge-base as the stats anchor so the file list matches
@@ -1939,33 +1941,14 @@ export async function getChangedFiles(
     previousPathMap: finalPreviousPathMap,
   } = parseDiffRawNumstat(finalDiffStr);
 
-  // git diff --raw --numstat <headHash> — tracked uncommitted changes (HEAD vs working tree).
-  // Compares HEAD tree directly to the working tree, so it does not need the index
-  // write lock and works reliably even while an agent holds it.
-  // git ls-files --others --exclude-standard — untracked files (no index lock needed).
-  // Both commands run in parallel since they are independent.
-  const [uncommittedResult, untrackedResult] = await Promise.all([
-    exec('git', ['diff', '--raw', '--numstat', '-z', headHash], {
-      cwd: worktreePath,
-      maxBuffer: MAX_BUFFER,
-    }).catch(() => ({ stdout: '' })),
-    exec('git', ['ls-files', '--others', '--exclude-standard'], {
-      cwd: worktreePath,
-      maxBuffer: MAX_BUFFER,
-    }).catch(() => ({ stdout: '' })),
-  ]);
+  // Which files differ from HEAD (staged, unstaged, untracked) comes from the same
+  // `git status` the worktree-status poll runs, so a task costs one status launch
+  // per cycle instead of two extra ones here (`diff HEAD` and `ls-files --others`).
+  const snapshot = await snapshotPromise;
+  const uncommittedPaths = snapshot?.changedPaths ?? new Set<string>();
+  const untrackedPaths = snapshot?.untrackedPaths ?? new Set<string>();
 
-  const { statusMap: uncommittedStatusMap, numstatMap: uncommittedNumstatMap } =
-    parseDiffRawNumstat(uncommittedResult.stdout);
-
-  const untrackedPaths = new Set<string>();
-  for (const line of untrackedResult.stdout.split('\n')) {
-    const p = normalizeStatusPath(line);
-    if (p) untrackedPaths.add(p);
-  }
-
-  const isCommitted = (p: string) =>
-    !uncommittedNumstatMap.has(p) && !uncommittedStatusMap.has(p) && !untrackedPaths.has(p);
+  const isCommitted = (p: string) => !uncommittedPaths.has(p) && !untrackedPaths.has(p);
 
   const files = changedFilesFromMaps({
     statusMap: finalStatusMap,
@@ -2338,6 +2321,82 @@ export function parseStatusV2(out: string): {
   return { currentBranch, headSha, hasUncommittedChanges };
 }
 
+interface StatusSnapshot {
+  currentBranch: string | null;
+  headSha: string | null;
+  hasUncommittedChanges: boolean;
+  /** Tracked paths that differ from HEAD in the index or the working tree. */
+  changedPaths: Set<string>;
+  untrackedPaths: Set<string>;
+}
+
+/** Parse `git status --porcelain=v2 --branch -z --untracked-files=all` output. */
+export function parseStatusV2Z(out: string): StatusSnapshot {
+  const snapshot: StatusSnapshot = {
+    currentBranch: null,
+    headSha: null,
+    hasUncommittedChanges: false,
+    changedPaths: new Set(),
+    untrackedPaths: new Set(),
+  };
+  // Number of space-separated fields before the path, by entry type.
+  const pathAfter: Record<string, number> = { '1': 8, '2': 9, u: 10 };
+  const entries = out.split(' ');
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.startsWith('# branch.head ')) {
+      const head = entry.slice('# branch.head '.length);
+      snapshot.currentBranch = head === '(detached)' ? null : head;
+    } else if (entry.startsWith('# branch.oid ')) {
+      const oid = entry.slice('# branch.oid '.length);
+      snapshot.headSha = oid === '(initial)' ? null : oid;
+    } else if (entry.startsWith('? ')) {
+      snapshot.hasUncommittedChanges = true;
+      snapshot.untrackedPaths.add(entry.slice(2));
+    } else if (entry.length > 0 && !entry.startsWith('#') && !entry.startsWith('! ')) {
+      snapshot.hasUncommittedChanges = true;
+      const fields = pathAfter[entry[0]];
+      if (fields === undefined) continue;
+      snapshot.changedPaths.add(entry.split(' ').slice(fields).join(' '));
+      // A rename or copy is followed by an entry holding the original path.
+      if (entry[0] === '2') i++;
+    }
+  }
+  return snapshot;
+}
+
+const statusInFlight = new Map<string, Promise<StatusSnapshot>>();
+
+/**
+ * One `git status` for a worktree, shared by everyone asking while it runs.
+ * Both the status poll and the changed-files poll need it, and a launch costs
+ * ~0.5 s here. Skips the opportunistic index refresh so it never takes
+ * index.lock while agents run git in the same worktree; `--no-ahead-behind`
+ * skips the upstream count nobody reads.
+ */
+function readStatusSnapshot(worktreePath: string): Promise<StatusSnapshot> {
+  const key = cacheKey(worktreePath);
+  const running = statusInFlight.get(key);
+  if (running) return running;
+  const promise = exec(
+    'git',
+    [
+      '--no-optional-locks',
+      'status',
+      '--porcelain=v2',
+      '--branch',
+      '--no-ahead-behind',
+      '--untracked-files=all',
+      '-z',
+    ],
+    { cwd: worktreePath, maxBuffer: MAX_BUFFER },
+  )
+    .then(({ stdout }) => parseStatusV2Z(stdout))
+    .finally(() => statusInFlight.delete(key));
+  statusInFlight.set(key, promise);
+  return promise;
+}
+
 export async function getWorktreeStatus(
   worktreePath: string,
   baseBranch?: string,
@@ -2345,23 +2404,14 @@ export async function getWorktreeStatus(
   if (!fs.existsSync(worktreePath)) {
     return UNREADABLE_WORKTREE_STATUS;
   }
-  let statusOut: string;
+  let snapshot: StatusSnapshot;
   try {
-    // Polled every few seconds while agents run git in the same worktree:
-    // skip status's opportunistic index refresh so it never takes index.lock
-    // (agents would see "index.lock: File exists") or rewrites the index.
-    // `--branch` also reports HEAD's branch and sha, saving two git spawns per
-    // poll; `--no-ahead-behind` skips the upstream count this doesn't use.
-    ({ stdout: statusOut } = await exec(
-      'git',
-      ['--no-optional-locks', 'status', '--porcelain=v2', '--branch', '--no-ahead-behind'],
-      { cwd: worktreePath, maxBuffer: MAX_BUFFER },
-    ));
+    snapshot = await readStatusSnapshot(worktreePath);
   } catch {
     // Worktree removed between existsSync and exec (race condition)
     return UNREADABLE_WORKTREE_STATUS;
   }
-  const { currentBranch, headSha, hasUncommittedChanges } = parseStatusV2(statusOut);
+  const { currentBranch, headSha, hasUncommittedChanges } = snapshot;
 
   // Resolved base branch name, so the frontend can tell "agent switched to a
   // feature branch" (adoptable) apart from "agent is sitting on main" (not).

@@ -613,6 +613,23 @@ function buildWorktreeMockHandler(opts: {
       return;
     }
 
+    // git status --porcelain=v2 -z --untracked-files=all: the shared snapshot that
+    // tells getChangedFiles which paths differ from HEAD, derived from the same
+    // options the old `diff HEAD` and `ls-files --others` mocks answered.
+    if (args.includes('status') && args.includes('-z') && args.includes('--untracked-files=all')) {
+      const entries = [`# branch.oid ${HEAD_HASH}`, '# branch.head task/mock'];
+      for (const match of (opts.uncommittedRawNumstat ?? '').matchAll(
+        /:\d+ \d+ \w+ \w+ (?:[RC]\d*\0[^\0]+\0|[A-Z]\d*\0)([^\0]+)\0/g,
+      )) {
+        entries.push(`1 .M N... 100644 100644 100644 aaa bbb ${match[1]}`);
+      }
+      for (const line of (opts.untrackedFiles ?? '').split('\n')) {
+        if (line) entries.push(`? ${line}`);
+      }
+      cb(null, entries.join('\0') + '\0', '');
+      return;
+    }
+
     // git status --porcelain
     if (cmd === 'status' && args.includes('--porcelain')) {
       cb(null, opts.statusPorcelain ?? '', '');
