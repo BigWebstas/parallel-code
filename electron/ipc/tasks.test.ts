@@ -8,8 +8,9 @@ const mocks = vi.hoisted(() => ({
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
   killAgent: vi.fn(),
+  forceKillSurvivingAgent: vi.fn((_agentId: string) => false),
   notifyAgentListChanged: vi.fn(),
-  waitForAgentExit: vi.fn(async () => {}),
+  waitForAgentExit: vi.fn(async (_agentId: string, _timeoutMs?: number) => {}),
   cancelVerify: vi.fn(),
   stopPlanWatcher: vi.fn(),
   stopPlanWatchersForPath: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock('./git.js', async (importOriginal) => ({
 }));
 vi.mock('./pty.js', () => ({
   killAgent: mocks.killAgent,
+  forceKillSurvivingAgent: mocks.forceKillSurvivingAgent,
   notifyAgentListChanged: mocks.notifyAgentListChanged,
   waitForAgentExit: mocks.waitForAgentExit,
 }));
@@ -115,6 +117,37 @@ describe('deleteTask', () => {
       true,
       undefined,
     );
+  });
+
+  it('ends an agent that outlived the tree kill, and waits again, before removing', async () => {
+    const order: string[] = [];
+    mocks.waitForAgentExit.mockImplementation(async (id: string, ms?: number) => {
+      order.push(`wait ${id}${ms ? ` ${ms}` : ''}`);
+    });
+    mocks.forceKillSurvivingAgent.mockImplementation((id: string) => {
+      order.push(`force ${id}`);
+      return id === 'stuck';
+    });
+    mocks.removeWorktree.mockImplementation(async () => {
+      order.push('remove');
+    });
+
+    await deleteTask({
+      taskId: 't-1',
+      agentIds: ['stuck', 'gone'],
+      branchName: 'task/x',
+      deleteBranch: true,
+      projectRoot: '/nonexistent-root',
+    });
+
+    expect(order).toEqual([
+      'wait stuck',
+      'wait gone',
+      'force stuck',
+      'force gone',
+      'wait stuck 3000',
+      'remove',
+    ]);
   });
 });
 

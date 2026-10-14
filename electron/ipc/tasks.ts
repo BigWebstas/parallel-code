@@ -1,6 +1,11 @@
 import { randomUUID } from 'crypto';
 import { createWorktree, removeWorktree, worktreePathFor } from './git.js';
-import { killAgent, notifyAgentListChanged, waitForAgentExit } from './pty.js';
+import {
+  forceKillSurvivingAgent,
+  killAgent,
+  notifyAgentListChanged,
+  waitForAgentExit,
+} from './pty.js';
 import { stopPlanWatcher, stopPlanWatchersForPath } from './plans.js';
 import { verificationRunner } from './verify.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
@@ -143,6 +148,12 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
   // Removing the worktree before the processes exit fails with EPERM/EBUSY and
   // leaves the task stuck in its closing state, so wait (bounded) first.
   await Promise.all(opts.agentIds.map((agentId) => waitForAgentExit(agentId)));
+  // An agent still registered here survived the tree kill (taskkill blocked or
+  // failed). End it directly rather than failing on its locked worktree.
+  const survivors = opts.agentIds.filter((agentId) => forceKillSurvivingAgent(agentId));
+  if (survivors.length > 0) {
+    await Promise.all(survivors.map((agentId) => waitForAgentExit(agentId, 3000)));
+  }
   // Windows ends process trees in the background; grandchildren can outlive the PTY.
   await waitForProcessTreeKills();
   // Yield to the event loop macrotask queue so libuv can process uv_close callbacks

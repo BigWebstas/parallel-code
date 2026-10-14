@@ -1,7 +1,14 @@
 import { app } from 'electron';
 import os from 'os';
-import { createCpuSampler, groupProcesses, readProcessTable } from './process-stats.js';
+import {
+  createCpuSampler,
+  groupProcesses,
+  readProcessTable,
+  type ProcRow,
+} from './process-stats.js';
+import { debug as logDebug } from '../log.js';
 import { getPtyProcessRoots } from './pty.js';
+import { readWindowsProcessTable } from './windows-process-table.js';
 import type { ResourceSnapshot } from './shared-types.js';
 
 // CPU deltas over a few milliseconds are tick-quantisation noise, so callers
@@ -12,11 +19,35 @@ const sampleCpu = createCpuSampler();
 let inFlight: Promise<ResourceSnapshot> | null = null;
 let last: ResourceSnapshot | null = null;
 
+/**
+ * Fallback when the Windows process table cannot be read: Electron still reports
+ * CPU and memory for the app's own processes, so the footer shows those alone
+ * (no agent or subprocess trees) rather than nothing.
+ */
+function appMetricRows(metrics: Electron.ProcessMetric[]): ProcRow[] {
+  return metrics.map((metric) => ({
+    pid: metric.pid,
+    ppid: metric.pid === process.pid ? 0 : process.pid,
+    name: metric.name ?? metric.type,
+    memoryBytes: metric.memory.workingSetSize * 1024,
+    cpuPercent: metric.cpu.percentCPUUsage,
+  }));
+}
+
 async function takeSnapshot(): Promise<ResourceSnapshot> {
   const sampledAt = Date.now();
-  const rows = await readProcessTable();
+  const metrics = app.getAppMetrics();
+  const rows =
+    process.platform === 'win32'
+      ? await readWindowsProcessTable().catch((err: unknown) => {
+          logDebug('resources', 'process table unavailable, using app metrics only', {
+            err: err instanceof Error ? err.message : String(err),
+          });
+          return appMetricRows(metrics);
+        })
+      : await readProcessTable();
   const appProcesses = new Map(
-    app.getAppMetrics().map((metric) => [metric.pid, metric.name ?? metric.type] as const),
+    metrics.map((metric) => [metric.pid, metric.name ?? metric.type] as const),
   );
   return {
     groups: groupProcesses({

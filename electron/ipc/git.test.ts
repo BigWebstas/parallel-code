@@ -27,6 +27,14 @@ vi.mock('child_process', () => {
   };
 });
 
+// The in-process ref reader would consume this file's fs mocks; null makes git.ts
+// use the mocked git commands, which is what these tests exercise.
+vi.mock('./git-refs.js', () => ({
+  readHeadSha: vi.fn(async () => null),
+  readBranchTips: vi.fn(async () => null),
+  refExists: vi.fn(async () => null),
+}));
+
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   const mockStat = vi.fn().mockRejectedValue(new Error('ENOENT'));

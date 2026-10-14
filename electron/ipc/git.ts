@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Notify } from './notify.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
+import { readBranchTips, readHeadSha, refExists } from './git-refs.js';
 import { appendGitInfoExcludeBlockAtPath, normalizeExcludeLine } from './git-exclude.js';
 import {
   findForeignOwnedEntries,
@@ -73,12 +74,15 @@ interface PickedMergeBase {
 interface DiffBaseCacheEntry {
   value: PickedMergeBase;
   expiresAt: number;
+  /** Branch tips the value was computed from; see `diffBaseSignature`. */
+  signature?: string;
 }
 
 const mainBranchCache = new Map<string, CacheEntry>();
 const diffBaseCache = new Map<string, DiffBaseCacheEntry>();
 const MAIN_BRANCH_TTL = 60_000; // 60s
 const DIFF_BASE_TTL = 30_000; // 30s
+const SIGNED_DIFF_BASE_TTL = 10 * 60_000; // upper bound when the branch tips are tracked
 const MAX_BUFFER = 10 * 1024 * 1024; // 10MB
 const STDERR_CAP = 4096; // cap for stderr buffers in spawned git processes
 /** Git's well-known empty tree SHA — used to diff the initial commit against nothing. */
@@ -287,6 +291,8 @@ async function resolveOriginHead(repoRoot: string): Promise<string | null> {
 
 /** Check whether the remote-tracking ref origin/<branch> exists locally. */
 async function remoteTrackingRefExists(repoRoot: string, branch: string): Promise<boolean> {
+  const direct = await refExists(repoRoot, `refs/remotes/origin/${branch}`);
+  if (direct !== null) return direct;
   try {
     await exec('git', ['rev-parse', '--verify', `refs/remotes/origin/${branch}`], {
       cwd: repoRoot,
@@ -299,6 +305,8 @@ async function remoteTrackingRefExists(repoRoot: string, branch: string): Promis
 
 /** Check whether a local branch ref exists. */
 async function localBranchExists(repoRoot: string, branch: string): Promise<boolean> {
+  const direct = await refExists(repoRoot, `refs/heads/${branch}`);
+  if (direct !== null) return direct;
   try {
     await exec('git', ['rev-parse', '--verify', `refs/heads/${branch}`], {
       cwd: repoRoot,
@@ -779,9 +787,16 @@ async function detectDiffBase(
   const requestedHead = head ?? 'HEAD';
   const headRef = requestedHead === 'HEAD' ? await pinHead(repoRoot) : requestedHead;
   const key = `${cacheKey(repoRoot)}:${branch}:${headRef}`;
+  const signature = await diffBaseSignature(repoRoot, branch, headRef);
   const cached = diffBaseCache.get(key);
   if (cached) {
-    if (cached.expiresAt > Date.now()) return cached.value;
+    // A signed entry is valid for as long as the branch tips it was computed
+    // from stay put, so it neither re-runs ~10 git commands every TTL nor lags
+    // behind a base that just moved. Unsigned entries keep the plain TTL.
+    const fresh = cached.signature
+      ? cached.signature === signature && cached.expiresAt > Date.now()
+      : cached.expiresAt > Date.now();
+    if (fresh) return cached.value;
     diffBaseCache.delete(key);
   }
 
@@ -864,8 +879,33 @@ async function detectDiffBase(
     });
     if (folded) refined = { sha: folded, ref: folded };
   }
-  diffBaseCache.set(key, { value: refined, expiresAt: Date.now() + DIFF_BASE_TTL });
+  diffBaseCache.set(key, {
+    value: refined,
+    expiresAt: Date.now() + (signature ? SIGNED_DIFF_BASE_TTL : DIFF_BASE_TTL),
+    signature: signature ?? undefined,
+  });
   return refined;
+}
+
+/**
+ * What a diff base was computed from besides the head: the tips of the base
+ * branch and of the main branch (both feed it), read from files. Null when the
+ * head is not a commit id or the refs cannot be read in-process.
+ */
+async function diffBaseSignature(
+  repoRoot: string,
+  branch: string,
+  headRef: string,
+): Promise<string | null> {
+  if (!/^[0-9a-f]{40}$/.test(headRef)) return null;
+  const main = await detectMainBranch(repoRoot).catch(() => null);
+  if (!main) return null;
+  const [base, mainTips] = await Promise.all([
+    readBranchTips(repoRoot, branch),
+    main === branch ? Promise.resolve(undefined) : readBranchTips(repoRoot, main),
+  ]);
+  if (!base || mainTips === null) return null;
+  return [base.local, base.origin, mainTips?.local ?? '', mainTips?.origin ?? ''].join('\0');
 }
 
 /**
@@ -900,6 +940,8 @@ async function detectOneWayDiffRange(
 }
 
 async function pinHead(worktreePath: string): Promise<string> {
+  const direct = await readHeadSha(worktreePath);
+  if (direct) return direct;
   try {
     const { stdout } = await exec('git', ['rev-parse', 'HEAD'], { cwd: worktreePath });
     return stdout.trim();
@@ -1284,7 +1326,9 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
     // On Windows, if fs.rmSync failed, try native Windows rmdir fallback
     if (process.platform === 'win32' && fs.existsSync(dirPath)) {
       try {
-        await exec('cmd.exe', ['/d', '/s', '/c', `rmdir /s /q "${dirPath}"`]);
+        // Separate args: execFile escapes embedded quotes as \", which cmd.exe
+        // rejects ("syntax is incorrect") and so made this fallback never work.
+        await exec('cmd.exe', ['/d', '/c', 'rmdir', '/s', '/q', dirPath]);
         if (!fs.existsSync(dirPath)) {
           logDebug(
             'git',
@@ -2332,16 +2376,32 @@ export async function getWorktreeStatus(
   if (mergeBase && headSha && mergeBase === headSha) {
     hasCommittedChanges = false;
   } else {
-    try {
-      // One commit is enough to answer "any?"; don't list the whole branch.
-      const { stdout: logOut } = await exec(
-        'git',
-        ['log', '-1', '--format=%H', `${mergeBase}..HEAD`],
-        { cwd: worktreePath },
-      );
-      hasCommittedChanges = logOut.trim().length > 0;
-    } catch {
-      /* ignore */
+    // The answer depends only on these two commits, so a poll that finds them
+    // unchanged skips the git launch.
+    const memoKey = cacheKey(worktreePath);
+    const memoSignature = headSha ? `${headSha}\0${mergeBase}` : null;
+    const memo = committedChangesMemo.get(memoKey);
+    if (memoSignature && memo?.signature === memoSignature) {
+      hasCommittedChanges = memo.value;
+    } else {
+      try {
+        // One commit is enough to answer "any?"; don't list the whole branch.
+        const { stdout: logOut } = await exec(
+          'git',
+          ['log', '-1', '--format=%H', `${mergeBase}..HEAD`],
+          { cwd: worktreePath },
+        );
+        hasCommittedChanges = logOut.trim().length > 0;
+        if (memoSignature) {
+          if (committedChangesMemo.size >= BRANCH_COMMITS_MEMO_MAX) committedChangesMemo.clear();
+          committedChangesMemo.set(memoKey, {
+            signature: memoSignature,
+            value: hasCommittedChanges,
+          });
+        }
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -2832,12 +2892,41 @@ export async function isGitRepo(dirPath: string): Promise<boolean> {
 
 // --- Per-commit operations ---
 
+// The UI polls getBranchCommits every few seconds per visible task, and each
+// uncached answer costs a handful of git launches. The answer only depends on
+// HEAD and the base branch's tips, which are read from files, so an unchanged
+// signature returns the previous answer without running git.
+const branchCommitsMemo = new Map<string, { signature: string; commits: CommitInfo[] }>();
+const BRANCH_COMMITS_MEMO_MAX = 200;
+const committedChangesMemo = new Map<string, { signature: string; value: boolean }>();
+
 export async function getBranchCommits(
   worktreePath: string,
   baseBranch?: string,
   recentFallback?: number,
 ): Promise<CommitInfo[]> {
   if (!fs.existsSync(worktreePath)) return [];
+  const head = await readHeadSha(worktreePath);
+  const base = baseBranch ?? (head ? await detectMainBranch(worktreePath) : undefined);
+  const tips = head && base ? await readBranchTips(worktreePath, base) : null;
+  if (!head || !tips) return computeBranchCommits(worktreePath, baseBranch, recentFallback);
+
+  const memoKey = `${cacheKey(worktreePath)}\0${baseBranch ?? ''}\0${recentFallback ?? 0}`;
+  const signature = `${head}\0${tips.local}\0${tips.origin}`;
+  const memo = branchCommitsMemo.get(memoKey);
+  if (memo?.signature === signature) return memo.commits;
+
+  const commits = await computeBranchCommits(worktreePath, baseBranch, recentFallback);
+  if (branchCommitsMemo.size >= BRANCH_COMMITS_MEMO_MAX) branchCommitsMemo.clear();
+  branchCommitsMemo.set(memoKey, { signature, commits });
+  return commits;
+}
+
+async function computeBranchCommits(
+  worktreePath: string,
+  baseBranch?: string,
+  recentFallback?: number,
+): Promise<CommitInfo[]> {
   const headHash = await pinHead(worktreePath);
   const mergeBase = await detectMergeBase(worktreePath, headHash, baseBranch);
   if (!recentFallback && mergeBase === headHash) return [];

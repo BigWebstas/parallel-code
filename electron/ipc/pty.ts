@@ -41,7 +41,7 @@ import {
 import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
 import { commandExistsOnPath, isExplicitCommandPath } from './command-path.js';
-import { signalProcessGroup } from '../process-group.js';
+import { signalProcessGroup, terminatePid } from '../process-group.js';
 import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1341,6 +1341,19 @@ export function killAgent(agentId: string): void {
     }
     killPtyProc(session);
   }
+}
+
+/**
+ * Second attempt for an agent that outlived `killAgent` (taskkill was blocked or
+ * failed): end its process directly. Returns false when it has already exited.
+ */
+export function forceKillSurvivingAgent(agentId: string): boolean {
+  const session = sessions.get(agentId);
+  const pid = session?.proc.pid;
+  if (!session || typeof pid !== 'number') return false;
+  logWarn('pty', `agent ${agentId} outlived killAgent, ending pid ${pid} directly`);
+  terminatePid(pid);
+  return true;
 }
 
 export function countRunningAgents(): number {
