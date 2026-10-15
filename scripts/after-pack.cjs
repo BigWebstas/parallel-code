@@ -33,7 +33,27 @@ function normalizePermissions(target) {
   }
 }
 
+// node-pty's conpty.node looks for conpty/conpty.dll next to itself. When
+// electron-builder rebuilds node-pty from source, the .node files land in
+// build/Release but the conpty/ folder (dll + OpenConsole.exe) only ships in
+// prebuilds/, so spawning fails with "Cannot find conpty.dll". Copy it across.
+function fixWindowsConpty(context) {
+  const ptyDir = path.join(
+    context.appOutDir,
+    'resources',
+    'app.asar.unpacked',
+    'node_modules',
+    'node-pty',
+  );
+  const arch = context.arch === 3 ? 'arm64' : 'x64'; // electron-builder Arch: 1=x64, 3=arm64
+  const source = path.join(ptyDir, 'prebuilds', `win32-${arch}`, 'conpty');
+  const releaseDir = path.join(ptyDir, 'build', 'Release');
+  if (!fs.existsSync(source) || !fs.existsSync(releaseDir)) return;
+  fs.cpSync(source, path.join(releaseDir, 'conpty'), { recursive: true });
+}
+
 exports.default = async function afterPack(context) {
+  if (context.electronPlatformName === 'win32') fixWindowsConpty(context);
   if (context.electronPlatformName !== 'linux') return;
 
   normalizePermissions(context.appOutDir);
