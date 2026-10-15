@@ -20,6 +20,9 @@ import { inspectDocumentFolder } from './setup.js';
 import type { DocumentRunEvent, DocumentRunRecord } from './types.js';
 import { writeFakeAgent } from './fake-agent-harness.js';
 
+// Process spawns cost ~0.5 s each on a Windows machine with endpoint security.
+const SLOW = process.platform === 'win32' ? 4 : 1;
+
 /**
  * Exercises the whole proposal lifecycle against a real temporary repository
  * with a fake "claude" script standing in for the CLI: it rewrites the scoped
@@ -62,7 +65,7 @@ function waitForRunFinish(runId: string): Promise<DocumentRunRecord> {
           e.type === 'run' && e.run.id === runId && e.run.status !== 'running',
       );
       if (done) return resolve(done.run);
-      if (Date.now() - started > 20_000) return reject(new Error('run did not finish'));
+      if (Date.now() - started > 20_000 * SLOW) return reject(new Error('run did not finish'));
       setTimeout(tick, 50);
     };
     tick();
@@ -112,7 +115,7 @@ afterAll(() => {
 });
 
 // Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
-describe('document workspace lifecycle', { timeout: 30_000 }, () => {
+describe('document workspace lifecycle', { timeout: 30_000 * SLOW }, () => {
   it('combines concurrent independent revisions and rejects an overlapping revision without losing work', async () => {
     const parallelRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-parallel-'));
     const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-docws-parallel-bin-'));
@@ -312,7 +315,7 @@ emit({ type: 'result', subtype: 'success', result: 'Revised the passage.' });`,
     const slow = writeFakeAgent(
       binDir,
       'slow',
-      'await new Promise((resolve) => setTimeout(resolve, 3000));',
+      `await new Promise((resolve) => setTimeout(resolve, ${3000 * SLOW}));`,
     );
     const base = {
       projectRoot: root,

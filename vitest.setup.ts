@@ -20,3 +20,16 @@ const REPO_POINTING_VARS = [
 ] as const;
 
 for (const name of REPO_POINTING_VARS) Reflect.deleteProperty(process.env, name);
+
+/**
+ * A developer's global `core.autocrlf=true` (the Git for Windows default) turns
+ * every file a test writes into CRLF once git touches it, so exact-content
+ * assertions fail on that machine only. CI pins it to false; do the same here.
+ * Environment config yields to a repository's own settings, so tests that set
+ * autocrlf themselves keep working.
+ */
+if (!process.env.GIT_CONFIG_COUNT) {
+  process.env.GIT_CONFIG_COUNT = '1';
+  process.env.GIT_CONFIG_KEY_0 = 'core.autocrlf';
+  process.env.GIT_CONFIG_VALUE_0 = 'false';
+}

@@ -373,7 +373,8 @@ describe('createWorktree', () => {
       return result;
     });
     try {
-      await vi.waitFor(() => expect(copySpy).toHaveBeenCalled());
+      // Worktree creation runs several git commands first; give a slow machine time.
+      await vi.waitFor(() => expect(copySpy).toHaveBeenCalled(), { timeout: 60_000 });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(finished).toBe(false);
     } finally {

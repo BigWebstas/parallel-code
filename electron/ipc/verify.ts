@@ -1,8 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import { existsSync } from 'fs';
-import path from 'path';
 import { promisify } from 'util';
-import { resolveUserShell } from '../user-shell.js';
+import { resolveUserShell, shellSpawnArgs } from '../user-shell.js';
 import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
 import { stripAnsi } from '../shared/prompt-detect.js';
 import { pendingVerificationRun } from '../shared/verification-run.js';
@@ -136,20 +135,6 @@ function formatTimeout(ms: number): string {
 function exitOutcome(code: number | null, signal: NodeJS.Signals | null): EndReason {
   if (code === 0) return { status: 'passed' };
   return { status: 'failed', ...(signal ? { message: `Killed by ${signal}.` } : {}) };
-}
-
-/**
- * Shell-specific argv for running `command`. POSIX shells take `-c`;
- * cmd.exe needs `/d /s /c` (`/d` skips AutoRun, `/s` keeps quoting sane) and
- * PowerShell needs `-Command`. Without this, `cmd.exe -c "..."` treats `-c`
- * as a file name and the run fails on Windows.
- */
-export function shellSpawnArgs(shell: string, command: string): string[] {
-  const base = path.win32.basename(shell).toLowerCase();
-  if (base === 'cmd.exe' || base === 'cmd') return ['/d', '/s', '/c', command];
-  if (base === 'powershell.exe' || base === 'powershell' || base === 'pwsh.exe' || base === 'pwsh')
-    return ['-NoLogo', '-NoProfile', '-Command', command];
-  return ['-c', command];
 }
 
 function spawnCommand(request: VerifyRequest, deps: SpawnDeps): Child {

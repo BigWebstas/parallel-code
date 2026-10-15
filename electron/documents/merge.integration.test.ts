@@ -7,6 +7,9 @@ import type { BrowserWindow } from 'electron';
 import { dispatchDocumentRun, listDocumentRuns } from './runs.js';
 import { writeFakeAgent } from './fake-agent-harness.js';
 
+// Process spawns cost ~0.5 s each on a Windows machine with endpoint security.
+const SLOW = process.platform === 'win32' ? 4 : 1;
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -21,96 +24,105 @@ async function statusOf(root: string, runId: string) {
 }
 
 // Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
-describe('merging proposals with an agent', { timeout: 30_000 }, () => {
-  it('hands the agent every chosen proposal as a diff and records the lineage', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-'));
-    roots.push(root);
-    git(root, 'init', '-q', '-b', 'main');
-    git(root, 'config', 'user.name', 'Test');
-    git(root, 'config', 'user.email', 'test@example.com');
-    fs.writeFileSync(path.join(root, 'plan.md'), '# Plan\n\nOriginal.\n');
-    git(root, 'add', '.');
-    git(root, 'commit', '-qm', 'Initial');
-    const baseSha = git(root, 'rev-parse', 'HEAD');
-    const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-agent-'));
-    roots.push(bin);
-    // Each candidate signs its worktree's name so the two proposals differ.
-    const propose = writeFakeAgent(
-      bin,
-      'propose',
-      "fs.appendFileSync('plan.md', `\\nFrom ${process.cwd().split(/[\\\\/]/).pop()}.\\n`);",
-    );
-    // The merging agent keeps its prompt (the claude-code layout: `-p <prompt>`) for the test to read.
-    const promptFile = path.join(bin, 'prompt.txt');
-    const merge = writeFakeAgent(
-      bin,
-      'merge',
-      `fs.writeFileSync(${JSON.stringify(promptFile)}, process.argv[3]);
+describe('merging proposals with an agent', { timeout: 30_000 * SLOW }, () => {
+  it(
+    'hands the agent every chosen proposal as a diff and records the lineage',
+    async () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-'));
+      roots.push(root);
+      git(root, 'init', '-q', '-b', 'main');
+      git(root, 'config', 'user.name', 'Test');
+      git(root, 'config', 'user.email', 'test@example.com');
+      fs.writeFileSync(path.join(root, 'plan.md'), '# Plan\n\nOriginal.\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-qm', 'Initial');
+      const baseSha = git(root, 'rev-parse', 'HEAD');
+      const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-merge-agent-'));
+      roots.push(bin);
+      // Each candidate signs its worktree's name so the two proposals differ.
+      const propose = writeFakeAgent(
+        bin,
+        'propose',
+        "fs.appendFileSync('plan.md', `\\nFrom ${process.cwd().split(/[\\\\/]/).pop()}.\\n`);",
+      );
+      // The merging agent keeps its prompt (the claude-code layout: `-p <prompt>`) for the test to read.
+      const promptFile = path.join(bin, 'prompt.txt');
+      const merge = writeFakeAgent(
+        bin,
+        'merge',
+        `fs.writeFileSync(${JSON.stringify(promptFile)}, process.argv[3]);
 fs.appendFileSync('plan.md', '\\nMerged.\\n');`,
-    );
-    const win = { isDestroyed: () => true } as unknown as BrowserWindow;
-    const spec = (id: string, label: string, command: string) => ({
-      id,
-      label,
-      agentId: 'claude-code',
-      agentName: 'Test',
-      command,
-      isMain: false,
-    });
-    const args = {
-      projectRoot: root,
-      documentPath: 'plan.md',
-      instruction: 'Improve the plan',
-      scope: { wholeDocument: true },
-      candidates: [spec('c1', 'A', propose), spec('c2', 'B', propose)],
-    };
-    const first = await dispatchDocumentRun(win, args);
-    // Each wait covers real agent processes and Git; the 1 s poll and 5 s test defaults are too
-    // tight on a busy runner.
-    await expect.poll(() => statusOf(root, first.id), { timeout: 8_000 }).toBe('finished');
+      );
+      const win = { isDestroyed: () => true } as unknown as BrowserWindow;
+      const spec = (id: string, label: string, command: string) => ({
+        id,
+        label,
+        agentId: 'claude-code',
+        agentName: 'Test',
+        command,
+        isMain: false,
+      });
+      const args = {
+        projectRoot: root,
+        documentPath: 'plan.md',
+        instruction: 'Improve the plan',
+        scope: { wholeDocument: true },
+        candidates: [spec('c1', 'A', propose), spec('c2', 'B', propose)],
+      };
+      const first = await dispatchDocumentRun(win, args);
+      // Each wait covers real agent processes and Git; the 1 s poll and 5 s test defaults are too
+      // tight on a busy runner.
+      await expect.poll(() => statusOf(root, first.id), { timeout: 8_000 * SLOW }).toBe('finished');
 
-    const lineage = { runId: first.id, candidateIds: ['c1', 'c2'] };
-    const merged = await dispatchDocumentRun(win, {
-      ...args,
-      instruction: 'Keep both additions',
-      candidates: [{ ...spec('c1', 'A', merge), isMain: true, sessionId: 'warm' }],
-      merge: lineage,
-    });
-    await expect.poll(() => statusOf(root, merged.id), { timeout: 8_000 }).toBe('finished');
-    const record = (await listDocumentRuns(root)).find((r) => r.id === merged.id);
-    if (!record) throw new Error('Merge run not found');
-    expect(record.merge).toEqual(lineage);
-    expect(record.baseSha).toBe(baseSha);
-    expect(record.scope.wholeDocument).toBe(true);
-    // Never the warm main session: the merge starts fresh.
-    expect(record.candidates[0].isMain).toBe(false);
-    expect(git(root, 'show', `${record.candidates[0].commitSha}:plan.md`)).toBe(
-      '# Plan\n\nOriginal.\n\nMerged.',
-    );
-    const prompt = fs.readFileSync(promptFile, 'utf8');
-    expect(prompt).toContain('2 candidates proposed changes');
-    expect(prompt).toContain('> Improve the plan');
-    expect(prompt).toContain('### Candidate A (Test)');
-    expect(prompt).toContain('### Candidate B (Test)');
-    expect(prompt).toMatch(/\+From .*-a\./);
-    expect(prompt).toMatch(/\+From .*-b\./);
-    expect(prompt).toContain('Instruction:\nKeep both additions');
-
-    await expect(
-      dispatchDocumentRun(win, { ...args, merge: { runId: first.id, candidateIds: ['c1'] } }),
-    ).rejects.toThrow(/two proposals/);
-    await expect(
-      dispatchDocumentRun(win, {
+      const lineage = { runId: first.id, candidateIds: ['c1', 'c2'] };
+      const merged = await dispatchDocumentRun(win, {
         ...args,
+        instruction: 'Keep both additions',
+        candidates: [{ ...spec('c1', 'A', merge), isMain: true, sessionId: 'warm' }],
         merge: lineage,
-        refinement: { runId: first.id, candidateId: 'c1' },
-      }),
-    ).rejects.toThrow(/not both/);
-    await expect(
-      dispatchDocumentRun(win, { ...args, merge: { runId: first.id, candidateIds: ['c1', 'c9'] } }),
-    ).rejects.toThrow(/c9/);
-    await expect(
-      dispatchDocumentRun(win, { ...args, documentPath: 'other.md', merge: lineage }),
-    ).rejects.toThrow(/document/);
-  }, 20_000);
+      });
+      await expect
+        .poll(() => statusOf(root, merged.id), { timeout: 8_000 * SLOW })
+        .toBe('finished');
+      const record = (await listDocumentRuns(root)).find((r) => r.id === merged.id);
+      if (!record) throw new Error('Merge run not found');
+      expect(record.merge).toEqual(lineage);
+      expect(record.baseSha).toBe(baseSha);
+      expect(record.scope.wholeDocument).toBe(true);
+      // Never the warm main session: the merge starts fresh.
+      expect(record.candidates[0].isMain).toBe(false);
+      expect(git(root, 'show', `${record.candidates[0].commitSha}:plan.md`)).toBe(
+        '# Plan\n\nOriginal.\n\nMerged.',
+      );
+      const prompt = fs.readFileSync(promptFile, 'utf8');
+      expect(prompt).toContain('2 candidates proposed changes');
+      expect(prompt).toContain('> Improve the plan');
+      expect(prompt).toContain('### Candidate A (Test)');
+      expect(prompt).toContain('### Candidate B (Test)');
+      expect(prompt).toMatch(/\+From .*-a\./);
+      expect(prompt).toMatch(/\+From .*-b\./);
+      expect(prompt).toContain('Instruction:\nKeep both additions');
+
+      await expect(
+        dispatchDocumentRun(win, { ...args, merge: { runId: first.id, candidateIds: ['c1'] } }),
+      ).rejects.toThrow(/two proposals/);
+      await expect(
+        dispatchDocumentRun(win, {
+          ...args,
+          merge: lineage,
+          refinement: { runId: first.id, candidateId: 'c1' },
+        }),
+      ).rejects.toThrow(/not both/);
+      await expect(
+        dispatchDocumentRun(win, {
+          ...args,
+          merge: { runId: first.id, candidateIds: ['c1', 'c9'] },
+        }),
+      ).rejects.toThrow(/c9/);
+      await expect(
+        dispatchDocumentRun(win, { ...args, documentPath: 'other.md', merge: lineage }),
+      ).rejects.toThrow(/document/);
+    },
+    20_000 * SLOW,
+  );
 });
