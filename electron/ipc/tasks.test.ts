@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
   killAgent: vi.fn(),
+  getAgentPid: vi.fn((_agentId: string): number | undefined => undefined),
+  snapshotDescendants: vi.fn(async (_pids: number[]) => [] as unknown[]),
+  endLeftovers: vi.fn(async (_rows: unknown[]) => [] as unknown[]),
   forceKillSurvivingAgent: vi.fn((_agentId: string) => false),
   notifyAgentListChanged: vi.fn(),
   waitForAgentExit: vi.fn(async (_agentId: string, _timeoutMs?: number) => {}),
@@ -23,7 +26,12 @@ vi.mock('./git.js', async (importOriginal) => ({
   createWorktree: mocks.createWorktree,
   removeWorktree: mocks.removeWorktree,
 }));
+vi.mock('./agent-descendants.js', () => ({
+  snapshotDescendants: mocks.snapshotDescendants,
+  endLeftovers: mocks.endLeftovers,
+}));
 vi.mock('./pty.js', () => ({
+  getAgentPid: mocks.getAgentPid,
   killAgent: mocks.killAgent,
   forceKillSurvivingAgent: mocks.forceKillSurvivingAgent,
   notifyAgentListChanged: mocks.notifyAgentListChanged,

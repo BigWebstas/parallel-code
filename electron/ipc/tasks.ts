@@ -1,7 +1,9 @@
 import { randomUUID } from 'crypto';
 import { createWorktree, removeWorktree, worktreePathFor } from './git.js';
+import { endLeftovers, snapshotDescendants } from './agent-descendants.js';
 import {
   forceKillSurvivingAgent,
+  getAgentPid,
   killAgent,
   notifyAgentListChanged,
   waitForAgentExit,
@@ -136,6 +138,8 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
   if (targetWorktree) {
     stopPlanWatchersForPath(targetWorktree);
   }
+  const agentPids = opts.agentIds.flatMap((agentId) => getAgentPid(agentId) ?? []);
+  const descendants = await snapshotDescendants(agentPids);
   for (const agentId of opts.agentIds) {
     try {
       killAgent(agentId);
@@ -156,6 +160,10 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
   }
   // Windows ends process trees in the background; grandchildren can outlive the PTY.
   await waitForProcessTreeKills();
+  // Helpers orphaned before the tree kill still run and still hold the worktree.
+  if ((await endLeftovers(descendants)).length > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
   // Yield to the event loop macrotask queue so libuv can process uv_close callbacks
   // for any closed watchers and killed processes before attempting directory removal.
   await new Promise((resolve) => setTimeout(resolve, 50));

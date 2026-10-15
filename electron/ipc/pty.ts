@@ -1347,6 +1347,12 @@ export function killAgent(agentId: string): void {
  * Second attempt for an agent that outlived `killAgent` (taskkill was blocked or
  * failed): end its process directly. Returns false when it has already exited.
  */
+/** Process id of a running agent, or undefined when it has none. */
+export function getAgentPid(agentId: string): number | undefined {
+  const pid = sessions.get(agentId)?.proc.pid;
+  return typeof pid === 'number' ? pid : undefined;
+}
+
 export function forceKillSurvivingAgent(agentId: string): boolean {
   const session = sessions.get(agentId);
   const pid = session?.proc.pid;

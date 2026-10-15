@@ -22,6 +22,13 @@ describe('parseLockerOutput', () => {
     ]);
   });
 
+  it('keeps how a holder was found when the scanner reports it', () => {
+    expect(parseLockerOutput('123\tclaude\tcwd\r\n456\tnode\tcommand line\n')).toEqual([
+      { pid: 123, name: 'claude', via: 'cwd' },
+      { pid: 456, name: 'node', via: 'command line' },
+    ]);
+  });
+
   it('returns nothing for empty output', () => {
     expect(parseLockerOutput('')).toEqual([]);
   });
@@ -105,5 +112,26 @@ describe.runIf(process.platform === 'win32')('worktree lockers on Windows', () =
     await killWorktreeLockers(found.filter((l) => l.pid === inRoot || l.pid === inNested));
     await new Promise((resolve) => setTimeout(resolve, 500));
     expect((await findWorktreeLockers(root)).map((l) => l.pid)).toEqual([]);
+  }, 60_000);
+
+  it('finds a process that only names the folder in its arguments', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-lockers-args-'));
+    tempDirs.push(root);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-lockers-out-'));
+    tempDirs.push(outside);
+    const child = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)', path.join(root, 'x')],
+      {
+        cwd: outside,
+        stdio: 'ignore',
+        windowsHide: true,
+      },
+    );
+    if (child.pid === undefined) throw new Error('holder did not start');
+    children.push(child);
+
+    const found = await findWorktreeLockers(root);
+    expect(found).toContainEqual(expect.objectContaining({ pid: child.pid, via: 'command line' }));
   }, 60_000);
 });

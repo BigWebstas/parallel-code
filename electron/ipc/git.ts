@@ -1359,6 +1359,12 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
  */
 async function removeLockedWorktreeDir(worktreePath: string, rmError: unknown): Promise<void> {
   const { killable, kept } = partitionLockers(await findWorktreeLockers(worktreePath));
+  logWarn('git', 'Worktree removal blocked', {
+    worktreePath,
+    err: rmError instanceof Error ? rmError.message : String(rmError),
+    killable,
+    kept,
+  });
   if (killable.length === 0) throw lockedRemovalError(worktreePath, rmError, kept);
 
   await killWorktreeLockers(killable);

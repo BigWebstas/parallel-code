@@ -22,6 +22,8 @@ export interface WorktreeLocker {
   pid: number;
   /** Process name without extension, as Windows reports it. */
   name: string;
+  /** How it was found: its working directory, or the folder named in its command line. */
+  via?: string;
 }
 
 /**
@@ -68,12 +70,22 @@ Add-Type -TypeDefinition @'
 ${CWD_READER}
 '@
 $root = [IO.Path]::GetFullPath($env:PC_LOCK_ROOT).TrimEnd('\\')
+$seen = @{}
 foreach ($p in [Diagnostics.Process]::GetProcesses()) {
   try { $cwd = [PcCwd]::Get($p.Id) } catch { continue }
   if (-not $cwd) { continue }
   $cwd = $cwd.TrimEnd('\\')
   if ($cwd -eq $root -or $cwd.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) {
-    "$($p.Id)\`t$($p.ProcessName)"
+    $seen[$p.Id] = $true
+    "$($p.Id)\`t$($p.ProcessName)\`tcwd"
+  }
+}
+# Processes whose working directory cannot be read (started at a higher
+# privilege, or by another account) still name the folder in their arguments.
+foreach ($c in Get-CimInstance Win32_Process -Property ProcessId,Name,CommandLine) {
+  if ($c.ProcessId -eq $PID -or $seen.ContainsKey([int]$c.ProcessId)) { continue }
+  if ($c.CommandLine -and $c.CommandLine.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+    "$($c.ProcessId)\`t$($c.Name -replace '\\.exe$', '')\`tcommand line"
   }
 }`;
 
@@ -97,12 +109,18 @@ function describeExecFailure(err: unknown): Record<string, unknown> {
   };
 }
 
-/** Parse the scanner's `pid<TAB>name` lines, ignoring anything else it printed. */
+/** Parse the scanner's `pid<TAB>name[<TAB>via]` lines, ignoring anything else it printed. */
 export function parseLockerOutput(stdout: string): WorktreeLocker[] {
   const lockers: WorktreeLocker[] = [];
   for (const line of stdout.split(/\r?\n/)) {
-    const match = /^(\d+)\t(.+)$/.exec(line.trim());
-    if (match) lockers.push({ pid: Number(match[1]), name: match[2] });
+    const match = /^(\d+)\t([^\t]+)(?:\t([^\t]+))?$/.exec(line.trim());
+    if (match) {
+      lockers.push({
+        pid: Number(match[1]),
+        name: match[2],
+        ...(match[3] ? { via: match[3] } : {}),
+      });
+    }
   }
   return lockers;
 }
@@ -184,7 +202,12 @@ export async function killWorktreeLockers(lockers: WorktreeLocker[]): Promise<vo
 
 /** `name (pid 123), other (pid 456)` for error messages. */
 function describeLockers(lockers: WorktreeLocker[]): string {
-  return lockers.map((l) => `${l.name} (pid ${l.pid})`).join(', ');
+  return lockers
+    .map(
+      (l) =>
+        `${l.name} (pid ${l.pid}${l.via === 'command line' ? ', named in its arguments' : ''})`,
+    )
+    .join(', ');
 }
 
 /**
@@ -199,7 +222,7 @@ export function lockedRemovalError(
   const detail = cause instanceof Error ? cause.message : String(cause);
   const who =
     holders.length > 0
-      ? `Processes with that folder as their working directory: ${describeLockers(holders)}. `
+      ? `Processes holding that folder: ${describeLockers(holders)}. `
       : 'A process (agent, editor, or terminal) may still hold files open inside it. ';
   return new Error(
     `Cannot remove worktree "${worktreePath}": ${detail}. ${who}` +
