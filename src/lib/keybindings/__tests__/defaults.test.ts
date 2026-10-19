@@ -21,12 +21,17 @@ const APP_LAYER_IDS = [
   'app.new-task-alt',
   'app.toggle-sidebar',
   'app.toggle-focus-mode',
+  'app.switch-document',
   'app.toggle-help',
   'app.toggle-help-f1',
   'app.toggle-settings',
   'app.close-dialogs',
+  'app.zoom-in',
+  'app.zoom-out',
   'app.reset-zoom',
   ...Array.from({ length: 9 }, (_, i) => `app.nav.jump-to-task-${i + 1}`),
+  'app.nav.task-switcher',
+  'app.nav.task-switcher-linux',
 ];
 
 const TERMINAL_LAYER_IDS = [

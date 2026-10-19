@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onCleanup, type JSX } from 'solid-js';
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from 'solid-js';
 import { Dynamic, Portal } from 'solid-js/web';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
@@ -12,15 +12,25 @@ import {
   briefTargetAgentName,
   changeBriefDecision,
   keepBriefDecision,
+  markBriefRead,
   refreshTaskBrief,
   reopenBriefDecision,
   refreshCodeFingerprint,
   requestConfidenceRating,
 } from '../store/task-brief';
 import { showNotification } from '../store/notification';
-import { store } from '../store/core';
 import type { Task } from '../store/types';
-import { AlertIcon, CheckIcon, DiffIcon, PlusIcon, ShieldIcon } from './icons';
+import {
+  AlertIcon,
+  CheckIcon,
+  CircleCheckIcon,
+  CloseIcon,
+  DiffIcon,
+  PlusIcon,
+  ScreenNormalIcon,
+  ShieldIcon,
+  TargetIcon,
+} from './icons';
 
 /** Scores below this are the one score colour on the card; sections colour only their icons. */
 const LOW_SCORE = 60;
@@ -38,12 +48,34 @@ function findingItems(findings: readonly ConfidenceFinding[], kinds: string[]): 
     .map((f) => ({ text: f.text, ...(f.file && { file: f.file }), fromRating: true }));
 }
 
+/** Open questions plus the rating's gaps and risks, as the card lists them. */
+function openItems(task: Task): CardItem[] {
+  const findings = task.confidence?.findings ?? [];
+  return [...(task.brief?.brief?.open ?? []), ...findingItems(findings, ['gap', 'risk'])];
+}
+
+// Decisions the user has kept or changed no longer need their attention.
+function hasPendingDecisions(task: Task): boolean {
+  return task.brief?.brief?.decided.some((item) => !task.brief?.decisions[item.text]) ?? false;
+}
+
+// The bar is dense, so the usual scores show as icons; any other label stays as text.
+const SCORE_ICONS = new Map<string, SectionIcon>([
+  ['correct', TargetIcon],
+  ['complete', CircleCheckIcon],
+  ['minimal', ScreenNormalIcon],
+]);
+
 function scoreColor(score: number, stale: boolean): string {
   if (stale) return theme.fgSubtle;
   return score < LOW_SCORE ? theme.warning : theme.fg;
 }
 
-type SectionIcon = (props: { size?: number; style?: JSX.CSSProperties }) => JSX.Element;
+type SectionIcon = (props: {
+  size?: number;
+  title?: string;
+  style?: JSX.CSSProperties;
+}) => JSX.Element;
 
 /**
  * An icon and colour per section, so each list is recognisable at a glance. The
@@ -51,6 +83,7 @@ type SectionIcon = (props: { size?: number; style?: JSX.CSSProperties }) => JSX.
  * sections are routine.
  */
 const SECTIONS = {
+  unbacked: { label: 'Not in diff', icon: CloseIcon, color: theme.warning },
   changed: { label: 'Changed', icon: DiffIcon, color: theme.success },
   extra: { label: 'Extra', icon: PlusIcon, color: theme.info },
   open: { label: 'Open', icon: AlertIcon, color: theme.warning },
@@ -164,10 +197,16 @@ export function TaskBriefBar(props: TaskBriefBarProps) {
     document.removeEventListener('pointerdown', onPointerDown, true);
     document.removeEventListener('keydown', onKeyDown, true);
   });
+  // Also covers a brief that arrives while the card is open.
+  createEffect(() => {
+    if (open() && props.task.brief?.unread) markBriefRead(props.task.id);
+  });
+  // Routine briefs stay quiet; a claim the diff does not back needs a look now.
+  const urgent = () => !!props.task.brief?.brief.unbacked.length;
+  const unread = () => !!props.task.brief?.unread;
 
   const headline = () => {
     const brief = props.task.brief?.brief;
-    if (!store.taskBriefs) return props.task.confidence ? 'Confidence rating' : 'Rate confidence…';
     if (brief) return brief.headline || brief.goal;
     if (props.task.briefStatus?.state === 'generating') return 'Writing the brief…';
     return 'The brief appears after the agent finishes a turn';
@@ -203,8 +242,9 @@ export function TaskBriefBar(props: TaskBriefBarProps) {
           'min-width': '0',
           padding: '7px 12px',
           margin: '6px 8px',
-          border: `1px solid ${theme.border}`,
+          border: `1px solid ${urgent() ? theme.warning : theme.border}`,
           'border-radius': 'var(--radius-md)',
+          ...(urgent() && { background: `color-mix(in srgb, ${theme.warning} 10%, transparent)` }),
           color: props.task.brief ? theme.fg : theme.fgMuted,
           'font-size': sf(12),
           'line-height': '1.4',
@@ -215,11 +255,31 @@ export function TaskBriefBar(props: TaskBriefBarProps) {
           'white-space': 'nowrap',
         }}
       >
+        {/* Space is kept while hidden, so the headline does not shift when a brief arrives. */}
+        <span
+          class="task-brief-unread"
+          role="img"
+          aria-label="New brief"
+          aria-hidden={!unread()}
+          title="New brief"
+          style={{
+            visibility: unread() ? 'visible' : 'hidden',
+            width: '6px',
+            height: '6px',
+            'border-radius': '50%',
+            background: theme.accent,
+            'flex-shrink': '0',
+          }}
+        />
         {/* Two lines fit most headlines; the full brief is one click away. */}
         <span
           style={{
             flex: '1',
             'min-width': '0',
+            // Larger than the info bar above it, so it reads as content rather than chrome.
+            'font-size': sf(14),
+            // Always, not only while unread: bold is wider, and the clamped lines would reflow.
+            'font-weight': props.task.brief ? '600' : undefined,
             overflow: 'hidden',
             'white-space': 'normal',
             'overflow-wrap': 'anywhere',
@@ -230,16 +290,45 @@ export function TaskBriefBar(props: TaskBriefBarProps) {
         >
           {headline()}
         </span>
-        <For each={props.task.confidence?.scores ?? []}>
-          {(score) => (
-            <span style={{ 'flex-shrink': '0', color: theme.fgMuted }}>
-              {score.label}{' '}
-              <span style={{ 'font-family': MONO, color: scoreColor(score.score, stale()) }}>
-                {score.score}%
-              </span>
+        {/* Counts above scores, so the icons share the headline's two lines. */}
+        <span
+          style={{
+            display: 'flex',
+            'flex-direction': 'column',
+            'align-items': 'flex-end',
+            gap: '2px',
+            'flex-shrink': '0',
+          }}
+        >
+          <BriefCounts task={props.task} />
+          <Show when={props.task.confidence?.scores.length}>
+            <span style={{ display: 'flex', gap: '8px' }}>
+              <For each={props.task.confidence?.scores ?? []}>
+                {(score) => (
+                  <span
+                    role="img"
+                    aria-label={`${score.label} ${score.score}%`}
+                    title={score.label}
+                    style={{
+                      'flex-shrink': '0',
+                      display: 'inline-flex',
+                      'align-items': 'center',
+                      gap: '4px',
+                      color: theme.fgMuted,
+                    }}
+                  >
+                    <Show when={SCORE_ICONS.get(score.label.toLowerCase())} fallback={score.label}>
+                      {(icon) => <Dynamic component={icon()} size={11} />}
+                    </Show>
+                    <span style={{ 'font-family': MONO, color: scoreColor(score.score, stale()) }}>
+                      {score.score}%
+                    </span>
+                  </span>
+                )}
+              </For>
             </span>
-          )}
-        </For>
+          </Show>
+        </span>
         <Show when={stale()}>
           <span style={{ 'flex-shrink': '0', color: theme.fgSubtle, 'font-style': 'italic' }}>
             out of date
@@ -298,6 +387,55 @@ export function TaskBriefBar(props: TaskBriefBarProps) {
   );
 }
 
+/**
+ * Section counts on the closed bar, so a brief with items to read is visible
+ * without opening it. Icons match the card's section headings.
+ */
+function BriefCounts(props: { task: Task }) {
+  const counts = () => {
+    const brief = props.task.brief?.brief;
+    if (!brief) return [];
+    const all = [
+      { kind: 'unbacked', count: brief.unbacked.length },
+      { kind: 'changed', count: brief.changed.length },
+      { kind: 'open', count: openItems(props.task).length },
+      { kind: 'decided', count: brief.decided.length },
+    ] as const;
+    return all.filter((c) => c.count > 0);
+  };
+  const label = () =>
+    counts()
+      .map((c) => `${c.count} ${c.kind}`)
+      .join(', ');
+  // Decisions already handled quieten their icon, as they do on the card.
+  const iconColor = (kind: keyof typeof SECTIONS) =>
+    kind === 'decided' && !hasPendingDecisions(props.task) ? theme.fgMuted : SECTIONS[kind].color;
+
+  return (
+    <Show when={counts().length}>
+      <span
+        role="img"
+        aria-label={label()}
+        title={label()}
+        style={{ display: 'flex', gap: '8px', 'flex-shrink': '0', color: theme.fgMuted }}
+      >
+        <For each={counts()}>
+          {(c) => (
+            <span style={{ display: 'inline-flex', 'align-items': 'center', gap: '3px' }}>
+              <Dynamic
+                component={SECTIONS[c.kind].icon}
+                size={11}
+                style={{ color: iconColor(c.kind) }}
+              />
+              <span style={{ 'font-family': MONO }}>{c.count}</span>
+            </span>
+          )}
+        </For>
+      </span>
+    </Show>
+  );
+}
+
 function ItemList(props: { items: CardItem[]; onFileClick?: (file: string) => void }) {
   return (
     <ul
@@ -321,7 +459,7 @@ function ItemList(props: { items: CardItem[]; onFileClick?: (file: string) => vo
               gap: '3px 8px',
             }}
           >
-            <span style={{ 'font-size': sf(12), 'line-height': '1.45' }}>{item.text}</span>
+            <span style={{ 'font-size': sf(13), 'line-height': '1.45' }}>{item.text}</span>
             <Show when={item.file || item.fromRating}>
               <span
                 style={{ display: 'flex', gap: '6px', 'align-items': 'center', 'min-width': '0' }}
@@ -369,10 +507,22 @@ function Section(props: {
   count: number;
   /** Overrides the section colour, e.g. to quieten decisions already handled. */
   color?: string;
+  /** Makes the heading a toggle; the items show only while expanded. */
+  expanded?: boolean;
+  onToggle?: () => void;
   children: JSX.Element;
 }) {
   const meta = () => SECTIONS[props.kind];
   const color = () => props.color ?? meta().color;
+  const heading = () => (
+    <>
+      <Dynamic component={meta().icon} size={12} style={{ color: color(), 'flex-shrink': '0' }} />
+      {meta().label}
+      <span style={{ 'font-family': MONO, color: theme.fgSubtle, 'font-weight': '400' }}>
+        {props.count}
+      </span>
+    </>
+  );
   return (
     <section style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
       <h3
@@ -386,23 +536,40 @@ function Section(props: {
           'font-weight': '600',
         }}
       >
-        <Dynamic component={meta().icon} size={12} style={{ color: color(), 'flex-shrink': '0' }} />
-        {meta().label}
-        <span style={{ 'font-family': MONO, color: theme.fgSubtle, 'font-weight': '400' }}>
-          {props.count}
-        </span>
+        <Show when={props.onToggle} fallback={heading()}>
+          <button
+            type="button"
+            aria-expanded={!!props.expanded}
+            onClick={() => props.onToggle?.()}
+            style={{
+              ...linkButton,
+              ...sectionLabel,
+              'text-decoration': 'none',
+              'font-family': 'inherit',
+              'font-weight': '600',
+              display: 'inline-flex',
+              'align-items': 'center',
+              gap: '6px',
+            }}
+          >
+            {heading()}
+            <span aria-hidden="true">{props.expanded ? '▴' : '▾'}</span>
+          </button>
+        </Show>
       </h3>
-      {/* A rule in the section colour groups the items under their heading. */}
-      <div
-        style={{
-          'min-width': '0',
-          'margin-left': '5px',
-          'padding-left': '12px',
-          'border-left': `2px solid color-mix(in srgb, ${color()} 35%, transparent)`,
-        }}
-      >
-        {props.children}
-      </div>
+      <Show when={!props.onToggle || props.expanded}>
+        {/* A rule in the section colour groups the items under their heading. */}
+        <div
+          style={{
+            'min-width': '0',
+            'margin-left': '5px',
+            'padding-left': '12px',
+            'border-left': `2px solid color-mix(in srgb, ${color()} 35%, transparent)`,
+          }}
+        >
+          {props.children}
+        </div>
+      </Show>
     </section>
   );
 }
@@ -449,10 +616,10 @@ function DecisionRow(props: {
   };
 
   return (
-    <li style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+    <li class="brief-item" style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
       <span
         style={{
-          'font-size': sf(12),
+          'font-size': sf(13),
           'line-height': '1.45',
           color: state() === 'sent' ? theme.fgMuted : theme.fg,
           'text-decoration': state() === 'sent' ? 'line-through' : undefined,
@@ -461,7 +628,7 @@ function DecisionRow(props: {
         {props.item.text}
       </span>
       <Show when={!state() && !editing()}>
-        <span style={{ display: 'flex', gap: '6px' }}>
+        <span class="brief-item-actions" style={{ display: 'flex', gap: '6px' }}>
           <button
             type="button"
             style={quietButton}
@@ -537,6 +704,8 @@ function TaskBriefCard(props: {
   walkThroughDisabled?: boolean;
 }) {
   const [showTurns, setShowTurns] = createSignal(false);
+  // What changed is in the diff and the agent's message; what needs the user leads.
+  const [showChanged, setShowChanged] = createSignal(false);
   const [rating, setRating] = createSignal(false);
   const [decisionEdits, setDecisionEdits] = createSignal<Record<string, DecisionEdit>>({});
   const setDecisionEdit = (text: string, value: DecisionEdit | undefined) =>
@@ -550,11 +719,9 @@ function TaskBriefCard(props: {
   onCleanup(() => clearInterval(ticker));
   const brief = () => props.task.brief?.brief;
   const findings = () => props.task.confidence?.findings ?? [];
-  const open = () => [...(brief()?.open ?? []), ...findingItems(findings(), ['gap', 'risk'])];
+  const open = () => openItems(props.task);
   const extra = () => [...(brief()?.extra ?? []), ...findingItems(findings(), ['extra'])];
-  // Decisions the user has kept or changed no longer need their attention.
-  const pendingDecisions = () =>
-    brief()?.decided.some((item) => !props.task.brief?.decisions[item.text]) ?? false;
+  const pendingDecisions = () => hasPendingDecisions(props.task);
 
   const rate = async () => {
     if (rating()) return;
@@ -579,21 +746,19 @@ function TaskBriefCard(props: {
           'border-bottom': `1px solid ${theme.borderSubtle}`,
         }}
       >
-        <span style={{ 'font-size': sf(13), 'font-weight': '600' }}>{props.task.name}</span>
+        <span style={{ 'font-size': sf(14), 'font-weight': '600' }}>{props.task.name}</span>
         <Show
           when={brief()}
           fallback={
-            <span style={{ 'font-size': sf(12), color: theme.fgMuted, 'line-height': '1.45' }}>
+            <span style={{ 'font-size': sf(13), color: theme.fgMuted, 'line-height': '1.45' }}>
               {props.task.briefStatus?.state === 'failed'
                 ? `The brief could not be written: ${props.task.briefStatus.message}`
-                : store.taskBriefs
-                  ? 'The brief is written by the naming model after each agent turn.'
-                  : 'Turn on Write task briefs in Settings for a summary after each turn.'}
+                : 'The brief is written after each agent turn.'}
             </span>
           }
         >
           {(b) => (
-            <span style={{ 'font-size': sf(12), color: theme.fgMuted, 'line-height': '1.45' }}>
+            <span style={{ 'font-size': sf(13), color: theme.fgMuted, 'line-height': '1.45' }}>
               {b().goal}
             </span>
           )}
@@ -696,14 +861,9 @@ function TaskBriefCard(props: {
               gap: '14px',
             }}
           >
-            <Show when={b().changed.length}>
-              <Section kind="changed" count={b().changed.length}>
-                <ItemList items={b().changed} onFileClick={props.onFileClick} />
-              </Section>
-            </Show>
-            <Show when={extra().length}>
-              <Section kind="extra" count={extra().length}>
-                <ItemList items={extra()} onFileClick={props.onFileClick} />
+            <Show when={b().unbacked.length}>
+              <Section kind="unbacked" count={b().unbacked.length}>
+                <ItemList items={b().unbacked} onFileClick={props.onFileClick} />
               </Section>
             </Show>
             <Show when={open().length}>
@@ -738,6 +898,21 @@ function TaskBriefCard(props: {
                     )}
                   </For>
                 </ul>
+              </Section>
+            </Show>
+            <Show when={extra().length}>
+              <Section kind="extra" count={extra().length}>
+                <ItemList items={extra()} onFileClick={props.onFileClick} />
+              </Section>
+            </Show>
+            <Show when={b().changed.length}>
+              <Section
+                kind="changed"
+                count={b().changed.length}
+                expanded={showChanged()}
+                onToggle={() => setShowChanged((v) => !v)}
+              >
+                <ItemList items={b().changed} onFileClick={props.onFileClick} />
               </Section>
             </Show>
           </div>
@@ -798,16 +973,14 @@ function TaskBriefCard(props: {
             {showTurns() ? 'Hide turns' : `Turns (${props.task.brief?.turns.length ?? 0})`}
           </button>
         </Show>
-        <Show when={store.taskBriefs}>
-          <button
-            type="button"
-            style={linkButton}
-            disabled={props.task.briefStatus?.state === 'generating'}
-            onClick={() => void refreshTaskBrief(props.task.id, { force: true })}
-          >
-            Update now
-          </button>
-        </Show>
+        <button
+          type="button"
+          style={linkButton}
+          disabled={props.task.briefStatus?.state === 'generating'}
+          onClick={() => void refreshTaskBrief(props.task.id, { force: true })}
+        >
+          Update now
+        </button>
         <button type="button" style={linkButton} disabled={rating()} onClick={() => void rate()}>
           {props.task.confidence ? 'Re-rate confidence' : 'Rate confidence'}
           <Show when={briefTargetAgentName(props.task)}>{(name) => ` · ${name()}`}</Show>
@@ -837,7 +1010,7 @@ export function TaskBriefLine(props: { task: Task }) {
           title={headline()}
           style={{
             color: theme.fgSubtle,
-            'font-size': sf(10),
+            'font-size': sf(11),
             'line-height': '1.4',
             overflow: 'hidden',
             'text-overflow': 'ellipsis',

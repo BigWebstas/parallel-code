@@ -3,7 +3,7 @@ import { batch } from 'solid-js';
 import { createStore, reconcile } from 'solid-js/store';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ChatView, type ChatProps } from './ChatView';
-import type { AgentChatState } from '../../../electron/shared/agent-chat-types';
+import type { AgentChatState, ChatItem } from '../../../electron/shared/agent-chat-types';
 import { mod } from '../../lib/platform';
 
 let container: HTMLDivElement;
@@ -342,6 +342,99 @@ it('interrupts first and waits for confirmed idle before sending a follow-up', a
   expect(send).toHaveBeenCalledTimes(1);
 });
 
+it.each([{ key: 'Escape' }, { key: 'c', ctrlKey: true }])(
+  'interrupts with $key while preserving the draft and pausing queued messages',
+  async (shortcut) => {
+    await update({ state: { ...props.state, status: 'working' } });
+    await act(() => button('Queue message').click());
+    await update({ draft: 'Unsent follow-up' });
+    const event = new KeyboardEvent('keydown', {
+      ...shortcut,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => composer().dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(props.onStop).toHaveBeenCalledTimes(1);
+    expect(props.draft).toBe('Unsent follow-up');
+    await update({ state: { ...props.state, status: 'ready' } });
+    expect(send).not.toHaveBeenCalled();
+    expect(container.querySelector('.chat-queue')?.textContent).toContain('Queue paused');
+  },
+);
+
+it('keeps Ctrl+C available for copying selected draft text', async () => {
+  await update({ state: { ...props.state, status: 'working' } });
+  composer().setSelectionRange(0, 4);
+  const event = new KeyboardEvent('keydown', {
+    key: 'c',
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  await act(() => composer().dispatchEvent(event));
+  expect(event.defaultPrevented).toBe(false);
+  expect(props.onStop).not.toHaveBeenCalled();
+});
+
+it.each([
+  { key: 'Escape', isComposing: true },
+  { key: 'Escape', repeat: true },
+  { key: 'c', metaKey: true },
+  { key: 'c', ctrlKey: true, shiftKey: true },
+])('does not interrupt for composing, repeated, or other shortcuts: %j', async (shortcut) => {
+  await update({ state: { ...props.state, status: 'working' } });
+  await act(() =>
+    composer().dispatchEvent(
+      new KeyboardEvent('keydown', {
+        ...shortcut,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  expect(props.onStop).not.toHaveBeenCalled();
+});
+
+it('leaves Escape alone when idle and dismisses command completion before interrupting', async () => {
+  await act(() =>
+    composer().dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+      }),
+    ),
+  );
+  expect(props.onStop).not.toHaveBeenCalled();
+  await update({
+    draft: '/',
+    state: {
+      ...props.state,
+      status: 'working',
+      commands: [{ name: 'help', description: 'Help', argumentHint: '' }],
+    },
+  });
+  await act(() =>
+    composer().dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+      }),
+    ),
+  );
+  expect(props.onStop).not.toHaveBeenCalled();
+  expect(composer().getAttribute('aria-expanded')).toBe('false');
+  await act(() =>
+    composer().dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+      }),
+    ),
+  );
+  expect(props.onStop).toHaveBeenCalledTimes(1);
+});
+
 it('preserves the draft if interruption fails', async () => {
   await update({
     state: { ...props.state, status: 'working' },
@@ -481,6 +574,32 @@ it('opens failed activity and connects file actions to the existing review surfa
   expect(onReview).toHaveBeenCalledWith('src/app.ts');
   await act(() => button('src/app.ts').click());
   expect(onOpenFile).toHaveBeenCalledWith('src/app.ts');
+});
+
+it('names no placeholder model before the session reports its own', async () => {
+  await update({ state: { ...props.state, model: undefined, models: [] } });
+  const select = container.querySelector<HTMLSelectElement>('[aria-label="Model"]');
+  expect(select?.textContent).toBe('');
+});
+
+it('names no placeholder level before the session reports its own', async () => {
+  await update({
+    state: {
+      ...props.state,
+      model: 'model-a',
+      reasoningEffort: undefined,
+      models: [
+        {
+          model: 'model-a',
+          displayName: 'Model A',
+          supportedReasoningEfforts: [{ reasoningEffort: 'high', description: 'Thorough' }],
+        },
+      ],
+    },
+  });
+  const select = container.querySelector<HTMLSelectElement>('[aria-label="Reasoning effort"]');
+  expect(select?.value).toBe('');
+  expect(select?.textContent).toBe('High');
 });
 
 it('renders separate model, reasoning and permission settings in the composer', async () => {
@@ -655,6 +774,32 @@ it('completes slash commands and skills like a terminal', async () => {
   const option = container.querySelector<HTMLElement>('[role="option"]');
   await act(() => option?.click());
   expect(props.draft).toBe('/plugin:docx ');
+});
+
+it('completes Codex skills with dollar syntax from either trigger', async () => {
+  await update({
+    draft: '',
+    state: {
+      ...props.state,
+      commands: [{ name: 'review', description: 'Review code', argumentHint: '', prefix: '$' }],
+    },
+  });
+  expect(composer().placeholder).toContain('$ for skills');
+  await type('$re');
+  expect(suggestions()).toEqual([{ text: '$reviewReview code', selected: true }]);
+  await act(() => press('Tab'));
+  expect(props.draft).toBe('$review ');
+  await update({ draft: '' });
+  await type('/review');
+  await act(() => enter());
+  expect(props.draft).toBe('$review ');
+  expect(send).not.toHaveBeenCalled();
+  await act(() => enter());
+  expect(send).toHaveBeenLastCalledWith('$review', []);
+  await update({ draft: '' });
+  await type('$review');
+  await act(() => enter());
+  expect(send).toHaveBeenCalledTimes(2);
 });
 
 it('sends a fully typed command and leaves a dismissed or unmatched slash alone', async () => {
@@ -941,6 +1086,52 @@ it('keeps edits compact with numbered diffs available on demand', async () => {
   );
   await act(() => button('Review diff').click());
   expect(onReview).toHaveBeenCalledWith('src/app.ts');
+});
+
+it('offers a published tour beside the tool run that published it', async () => {
+  const onOpenTour = vi.fn();
+  const publish = (id: string, label: string, status: 'running' | 'completed' | 'failed') => ({
+    id,
+    kind: 'tool' as const,
+    text: '',
+    activity: { type: 'tool' as const, label, status },
+  });
+  const withItems = (items: ChatItem[]) => ({ ...props.state, items });
+  await update({
+    onOpenTour,
+    state: withItems([publish('t', 'mcp__parallel-code__tour_publish', 'running')]),
+  });
+  expect(container.textContent).not.toContain('Open tour');
+  await update({
+    onOpenTour,
+    state: withItems([publish('t', 'mcp__parallel-code__tour_publish', 'failed')]),
+  });
+  expect(container.textContent).not.toContain('Open tour');
+  // Codex labels MCP calls as `server / tool`.
+  await update({
+    onOpenTour,
+    state: withItems([publish('t', 'parallel-code / tour_publish', 'completed')]),
+  });
+  expect(button('Open tour ↗').closest('details')).toBeNull();
+  await act(() => button('Open tour ↗').click());
+  expect(onOpenTour).toHaveBeenCalledOnce();
+  // Only the newest publish is held, so an earlier run must not offer it.
+  await update({
+    onOpenTour,
+    state: withItems([
+      publish('t', 'mcp__parallel-code__tour_publish', 'completed'),
+      { id: 'a', kind: 'assistant', text: 'Published.' },
+      publish('u', 'mcp__parallel-code__tour_publish', 'completed'),
+    ]),
+  });
+  const groups = container.querySelectorAll('.chat-activity-group');
+  expect(groups[0].textContent).not.toContain('Open tour');
+  expect(groups[1].textContent).toContain('Open tour');
+  await update({
+    onOpenTour: undefined,
+    state: withItems([publish('t', 'mcp__parallel-code__tour_publish', 'completed')]),
+  });
+  expect(container.textContent).not.toContain('Open tour');
 });
 
 it('leaves a settled, highlighted answer alone while the agent works on', async () => {

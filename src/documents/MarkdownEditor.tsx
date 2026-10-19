@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
+import { Show, createEffect, createSignal, on, onCleanup, untrack } from 'solid-js';
 import { IPC } from '../../electron/ipc/channels';
 import { TaskCanvasEditor } from '../components/TaskCanvasEditor';
 import type { CanvasDraft, CanvasEditorApi, CanvasWrite } from '../components/TaskCanvasEditor';
@@ -19,6 +19,10 @@ interface MarkdownEditorProps {
   documentPath: string;
   source: string;
   missing: boolean;
+  /** Where to put the cursor; a new `seq` repeats the move to the same line. */
+  reveal?: { line: number; seq: number };
+  /** The move was made; the owner drops it so a remount does not repeat it. */
+  onRevealed?: () => void;
   onSaved: () => void | Promise<void>;
 }
 
@@ -83,6 +87,32 @@ function MarkdownEditorSession(
   let mounted = true;
   let latestDraft: CanvasDraft | null = initialDraft ?? null;
   const changedOnDisk = () => dirty() && (props.missing || props.source !== base());
+  const notice = () =>
+    [
+      error() || backupError(),
+      changedOnDisk()
+        ? 'The file changed on disk. Your draft is kept; copy it before reloading.'
+        : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+  // Reloading throws the draft away, so it takes a second click; the offer
+  // lapses on its own so a later stray click cannot complete it.
+  const [confirmReload, setConfirmReload] = createSignal(false);
+  let confirmTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(confirmTimer));
+  function reloadFromDisk() {
+    clearTimeout(confirmTimer);
+    if (!confirmReload()) {
+      setConfirmReload(true);
+      confirmTimer = setTimeout(() => setConfirmReload(false), 4000);
+      return;
+    }
+    setConfirmReload(false);
+    editor?.reload(props.source);
+    setBase(props.source);
+    setError('');
+  }
 
   function persistDraft(draft: CanvasDraft | null) {
     try {
@@ -99,6 +129,15 @@ function MarkdownEditorSession(
     latestDraft = draft;
     persistDraft(draft);
   }
+
+  // The editor mounts after this effect first runs, so `ref` replays the target.
+  const revealNow = () => {
+    const target = props.reveal;
+    if (!target || !editor) return;
+    editor.goToLine(target.line);
+    props.onRevealed?.();
+  };
+  createEffect(on(() => props.reveal?.seq, revealNow));
 
   createEffect(() => {
     const source = props.source;
@@ -141,8 +180,29 @@ function MarkdownEditorSession(
 
   return (
     <div class="docws-markdown-editor">
+      {/* Errors and the changed-on-disk notice share the status row instead of
+          banners above the editor, so a notice moves the text down only when it is
+          too long for the row and wraps. */}
       <div class="docws-editor-status">
+        <span
+          class="docws-editor-notice"
+          classList={{ 'is-error': !!(error() || backupError()) }}
+          role="alert"
+        >
+          {notice()}
+        </span>
         <span role="status">{saving() ? 'Saving…' : dirty() ? 'Unsaved edits' : 'Saved'}</span>
+        <Show when={changedOnDisk()}>
+          <button
+            type="button"
+            class="docws-btn docws-btn-sm"
+            disabled={saving() || props.missing}
+            onClick={reloadFromDisk}
+          >
+            <SyncIcon size={12} />
+            {confirmReload() ? 'Discard my draft?' : 'Reload from disk'}
+          </button>
+        </Show>
         <button
           type="button"
           class="docws-btn docws-btn-sm"
@@ -153,29 +213,6 @@ function MarkdownEditorSession(
           Save
         </button>
       </div>
-      <Show when={error() || backupError()}>
-        <div class="docws-banner docws-banner-error" role="alert">
-          {error() || backupError()}
-        </div>
-      </Show>
-      <Show when={changedOnDisk()}>
-        <div class="docws-older-banner" role="alert">
-          The file changed on disk. Your draft is kept; copy it before reloading.
-          <button
-            type="button"
-            class="docws-btn docws-btn-sm"
-            disabled={saving() || props.missing}
-            onClick={() => {
-              editor?.reload(props.source);
-              setBase(props.source);
-              setError('');
-            }}
-          >
-            <SyncIcon size={12} />
-            Reload and discard my draft
-          </button>
-        </div>
-      </Show>
       <TaskCanvasEditor
         documentPath={path}
         source={base()}
@@ -186,6 +223,7 @@ function MarkdownEditorSession(
         onSelect={() => {}}
         ref={(api) => {
           editor = api;
+          revealNow();
           props.onReady(api.save);
         }}
       />

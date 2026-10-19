@@ -3,9 +3,11 @@ import { openDialog } from '../lib/dialog';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { store, setStore } from './core';
-import type { Project } from './types';
+import type { Project, Task } from './types';
 import { sanitizeBranchPrefix } from '../lib/branch-name';
-import { documentAgentTaskId, githubAgentTaskId } from '../documents/task-id';
+import { projectHiddenAgentTaskIds } from '../documents/task-id';
+import { closeProjectPages } from './project-pages';
+import { forgetBlockEdits } from '../documents/block-edit-state';
 import { forgetGitHubLists } from './github-list-storage';
 import { clearAgentActivity } from './taskStatus';
 import { assignFreshSessionId } from './session-ids';
@@ -19,6 +21,13 @@ export function randomPastelColor(): string {
   return `hsl(${hue}, 70%, 75%)`;
 }
 
+const byName = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+
+/** Projects are listed alphabetically everywhere; the store array is that order. */
+export function sortProjects(projects: Project[]): void {
+  projects.sort((a, b) => byName.compare(a.name, b.name));
+}
+
 export function getProject(projectId: string): Project | undefined {
   return store.projects.find((p) => p.id === projectId);
 }
@@ -30,6 +39,7 @@ export function addProject(name: string, path: string, isGitRepo?: boolean): str
   setStore(
     produce((s) => {
       s.projects.push(project);
+      sortProjects(s.projects);
       s.lastProjectId = id;
     }),
   );
@@ -38,20 +48,40 @@ export function addProject(name: string, path: string, isGitRepo?: boolean): str
 
 /** A document project: a git repo plus one document inside it. */
 export function addDocumentProject(name: string, path: string, documentPath: string): string {
+  return pushDocumentProject({ name, path, documentPath });
+}
+
+/** A quick edit: a document project on the private copy of a file that lives elsewhere. */
+export function addQuickEditProject(target: {
+  projectRoot: string;
+  documentPath: string;
+  sourcePath: string;
+}): string {
+  return pushDocumentProject({
+    // `spec.md · docs`: quick edits of same-named files stay apart in the sidebar.
+    name: `${target.documentPath} · ${target.sourcePath.split('/').slice(-2, -1)[0] || '/'}`,
+    path: target.projectRoot,
+    documentPath: target.documentPath,
+    quickEditSource: target.sourcePath,
+  });
+}
+
+function pushDocumentProject(
+  fields: Pick<Project, 'name' | 'path' | 'documentPath' | 'quickEditSource'>,
+): string {
   const id = crypto.randomUUID();
   const project: Project = {
     id,
-    name,
-    path,
     color: randomPastelColor(),
     isGitRepo: true,
     kind: 'document',
-    documentPath,
+    ...fields,
   };
   // Not the default for new tasks: a document project has no task flow.
   setStore(
     produce((s) => {
       s.projects.push(project);
+      sortProjects(s.projects);
     }),
   );
   return id;
@@ -66,6 +96,16 @@ export function codeProjects(): Project[] {
   return store.projects.filter((project) => !isDocumentProject(project));
 }
 
+// A project added later at the same path would otherwise reopen stale editors.
+// Another document project in the same repo still shows them; a code project
+// never does.
+function forgetBlockEditsLeftBy(projectId: string, root: string): void {
+  const kept = store.projects.some(
+    (p) => p.id !== projectId && p.path === root && isDocumentProject(p),
+  );
+  if (!kept) forgetBlockEdits(root);
+}
+
 export function removeProject(projectId: string): void {
   // Guard: skip removal if any tasks still reference this project
   const allTaskIds = [...store.taskOrder, ...store.collapsedTaskOrder];
@@ -77,6 +117,14 @@ export function removeProject(projectId: string): void {
     return;
   }
 
+  const root = store.projects.find((p) => p.id === projectId)?.path;
+  if (root) forgetBlockEditsLeftBy(projectId, root);
+  const quickEditRoot = store.projects.find((p) => p.id === projectId && p.quickEditSource)?.path;
+  // A removed quick edit stops writing to its original; its copy stays for a later reopen.
+  if (quickEditRoot)
+    invoke(IPC.StopQuickEdit, { projectRoot: quickEditRoot }).catch((err: unknown) =>
+      console.error('Failed to stop quick edit sync:', err),
+    );
   setStore(
     produce((s) => {
       s.projects = s.projects.filter((p) => p.id !== projectId);
@@ -86,6 +134,7 @@ export function removeProject(projectId: string): void {
       delete s.missingProjectIds[projectId];
       // A stale id would keep task shortcuts disabled with no page shown.
       if (s.githubIssuesProjectId === projectId) s.githubIssuesProjectId = null;
+      if (s.kanbanProjectId === projectId) s.kanbanProjectId = null;
     }),
   );
   forgetGitHubLists(projectId);
@@ -115,7 +164,9 @@ export function updateProject(
       | 'documentModels'
       | 'documentTerminalAgentId'
       | 'documentOpenPath'
+      | 'documentRecentPaths'
       | 'documentZoom'
+      | 'documentPanelCollapsed'
     >
   >,
 ): void {
@@ -159,7 +210,12 @@ export function updateProject(
         s.projects[idx].documentTerminalAgentId = updates.documentTerminalAgentId;
       if (updates.documentOpenPath !== undefined)
         s.projects[idx].documentOpenPath = updates.documentOpenPath;
+      if (updates.documentRecentPaths !== undefined)
+        s.projects[idx].documentRecentPaths = updates.documentRecentPaths;
+      if (updates.documentPanelCollapsed !== undefined)
+        s.projects[idx].documentPanelCollapsed = updates.documentPanelCollapsed;
       if (updates.documentZoom !== undefined) s.projects[idx].documentZoom = updates.documentZoom;
+      if (updates.name !== undefined) sortProjects(s.projects);
     }),
   );
   if (
@@ -249,20 +305,28 @@ export async function relinkProject(projectId: string): Promise<boolean> {
   if (!exists) return false;
   const project = getProject(projectId);
   if (!project) return false;
-  const task =
-    store.tasks[
-      project.kind === 'document' ? documentAgentTaskId(projectId) : githubAgentTaskId(projectId)
-    ];
-  if (task && task.worktreePath !== newPath) {
+  if (project.path !== newPath) forgetBlockEditsLeftBy(projectId, project.path);
+  const moved = projectHiddenAgentTaskIds(project)
+    .map((id) => store.tasks[id])
+    .filter((task): task is Task => !!task && task.worktreePath !== newPath);
+  // The board reads its file from the project path it opened with.
+  if (store.kanbanProjectId === projectId && project.path !== newPath) {
+    setStore('kanbanProjectId', null);
+  }
+  if (moved.length) {
     // Unmount before stopping old PTYs; an attached process cannot change cwd.
     if (store.activeDocumentProjectId === projectId) setStore('activeDocumentProjectId', null);
-    if (store.githubIssuesProjectId === projectId) setStore('githubIssuesProjectId', null);
+    if (store.githubIssuesProjectId === projectId || store.kanbanProjectId === projectId) {
+      closeProjectPages();
+    }
     await Promise.all(
-      [...task.agentIds, ...task.shellAgentIds].map((agentId) =>
-        invoke(IPC.KillAgent, { agentId }),
+      moved.flatMap((task) =>
+        [...task.agentIds, ...task.shellAgentIds].map((agentId) =>
+          invoke(IPC.KillAgent, { agentId }),
+        ),
       ),
     );
-    for (const id of task.agentIds) clearAgentActivity(id);
+    for (const task of moved) for (const id of task.agentIds) clearAgentActivity(id);
   }
 
   setStore(
@@ -271,7 +335,7 @@ export async function relinkProject(projectId: string): Promise<boolean> {
       if (idx === -1) return;
       s.projects[idx].path = newPath;
       s.projects[idx].isGitRepo = isGitRepo;
-      if (task && task.worktreePath !== newPath) {
+      for (const task of moved) {
         s.tasks[task.id].worktreePath = newPath;
         for (const id of task.agentIds) {
           const agent = s.agents[id];

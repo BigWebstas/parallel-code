@@ -15,6 +15,8 @@ interface DialogProps {
   overlayStyle?: JSX.CSSProperties;
   /** Element id whose text labels this dialog (sets aria-labelledby). */
   labelledBy?: string;
+  /** Accessible name for dialogs without a visible title. */
+  ariaLabel?: string;
   /** Element id (or space-separated list) describing this dialog (aria-describedby). */
   describedBy?: string;
   children: JSX.Element;
@@ -47,6 +49,10 @@ export function Dialog(props: DialogProps) {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (!isTopmost(dialogId)) return;
+      // Solid delegates its handlers to document too, where stopPropagation
+      // cannot reach this listener: an Escape a control inside already took
+      // (e.g. cancelling a rename) is marked handled instead.
+      if (e.defaultPrevented) return;
       e.stopPropagation();
       props.onClose();
     };
@@ -87,6 +93,8 @@ export function Dialog(props: DialogProps) {
     onCleanup(() => el.removeEventListener('keydown', handler));
   });
 
+  let pressedBackdrop = false;
+
   return (
     <Portal>
       <Show when={props.open}>
@@ -102,16 +110,27 @@ export function Dialog(props: DialogProps) {
             'z-index': String(props.zIndex ?? 1000),
             ...props.overlayStyle,
           }}
+          // A drag between the panel and the backdrop, either way, clicks the
+          // backdrop too (their common ancestor); only a press that began and
+          // ended there closes.
+          onMouseDown={(e) => (pressedBackdrop = e.target === e.currentTarget)}
+          onMouseUp={(e) => {
+            if (e.target !== e.currentTarget) pressedBackdrop = false;
+          }}
           onClick={(e) => {
-            if (e.target === e.currentTarget) props.onClose();
+            const closes = e.target === e.currentTarget && pressedBackdrop;
+            pressedBackdrop = false;
+            if (closes) props.onClose();
           }}
         >
           <div
             ref={panelRef}
             tabIndex={0}
             role="dialog"
+            data-dialog-id={dialogId}
             aria-modal={isTopmost(dialogId) ? 'true' : undefined}
             aria-labelledby={props.labelledBy}
+            aria-label={props.labelledBy ? undefined : props.ariaLabel}
             aria-describedby={props.describedBy}
             class="dialog-panel"
             style={{

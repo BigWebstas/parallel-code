@@ -1,6 +1,6 @@
 import { createSignal } from 'solid-js';
 import { render } from 'solid-js/web';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentViewer, releasesSelection } from './DocumentViewer';
 import type { DocumentBlock } from './markdown-blocks';
 
@@ -123,25 +123,337 @@ describe('picking a passage', () => {
     el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
   }
 
-  it('keeps the passage picked when the block already picked is clicked again', () => {
-    const onSelect = vi.fn();
-    // The pane owns the selection, so a block already picked comes in as a prop.
-    const host = mountSelectable(onSelect, { start: 1, end: 1 });
-
-    mouseUp(host.querySelector('[data-block-index="1"]') as HTMLElement);
-
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ startBlock: 1, endBlock: 1 }));
-  });
-
-  it('moves the passage to another block', () => {
+  it('picks nothing for a plain click, so reading and copying are left alone', () => {
     const onSelect = vi.fn();
     const host = mountSelectable(onSelect);
 
     mouseUp(host.querySelector('[data-block-index="1"]') as HTMLElement);
-    mouseUp(host.querySelector('[data-block-index="0"]') as HTMLElement);
 
-    expect(onSelect).toHaveBeenLastCalledWith(expect.objectContaining({ startBlock: 0 }));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('keeps a picked passage when it is clicked again', () => {
+    const onSelect = vi.fn();
+    const host = mountSelectable(onSelect, { start: 1, end: 1 });
+
+    mouseUp(host.querySelector('[data-block-index="1"]') as HTMLElement);
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('scopes a selection inside one paragraph without clearing text selected for copying', () => {
+    const onSelect = vi.fn();
+    const host = mountSelectable(onSelect);
+    const paragraph = host.querySelector('[data-block-index="0"] p');
+    if (!paragraph) throw new Error('No paragraph');
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    mouseUp(paragraph);
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ startBlock: 0, endBlock: 0 }));
+    expect(window.getSelection()?.isCollapsed).toBe(false);
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('picks the passage when the selection is extended from the keyboard', () => {
+    const onSelect = vi.fn();
+    const host = mountSelectable(onSelect);
+    const paragraph = host.querySelector('[data-block-index="0"] p');
+    if (!paragraph) throw new Error('No paragraph');
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+
+    paragraph.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+    expect(onSelect).not.toHaveBeenCalled();
+    paragraph.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowRight', shiftKey: true, bubbles: true }),
+    );
+
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ startBlock: 0, endBlock: 0 }));
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('still picks the section from the § handle', () => {
+    const onSelect = vi.fn();
+    const host = mountSelectable(onSelect);
+
+    host.querySelector<HTMLButtonElement>('.docws-section-btn')?.click();
+
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ startBlock: 1 }));
+  });
+});
+
+describe('DocumentViewer click to comment', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function mountWithAction(
+    onAction: (kind: string, index: number, range?: unknown) => void,
+    opts: { composerOpen?: () => boolean; selection?: { start: number; end: number } } = {},
+  ) {
+    const host = document.createElement('div');
+    document.body.append(host);
+    disposers.push(
+      render(
+        () => (
+          <DocumentViewer
+            blocks={blocks}
+            renderKey="t"
+            selectable
+            composerOpen={opts.composerOpen?.()}
+            selection={opts.selection}
+            onSelect={() => {}}
+            onAction={onAction}
+          />
+        ),
+        host,
+      ),
+    );
+    return host;
+  }
+
+  /** A press; the comment opens once the press's other handlers have run. */
+  function press(el: Element | null, detail: number) {
+    el?.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail, button: 0 }),
+    );
+  }
+
+  function clickTimes(el: Element | null, detail: number) {
+    press(el, detail);
+    vi.runOnlyPendingTimers();
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  }
+
+  it('opens a comment on the pressed block without waiting for the release', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction);
+
+    press(host.querySelector('[data-block-index="1"] h2'), 1);
+    vi.runOnlyPendingTimers();
+
+    expect(onAction).toHaveBeenCalledWith('note', 1, undefined);
+    document.dispatchEvent(new MouseEvent('mouseup'));
+  });
+
+  it('leaves a Ctrl+click to the context menu it opens on macOS', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction);
+
+    host
+      .querySelector('[data-block-index="1"] h2')
+      ?.dispatchEvent(
+        new MouseEvent('mousedown', { bubbles: true, detail: 1, button: 0, ctrlKey: true }),
+      );
+    vi.runOnlyPendingTimers();
+
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('does not open another comment for the second click of a double-click', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction);
+    const heading = host.querySelector('[data-block-index="1"] h2');
+
+    clickTimes(heading, 1);
+    clickTimes(heading, 2);
+
+    expect(onAction).toHaveBeenCalledOnce();
+  });
+
+  it('edits the double-clicked block in place, without selecting a word', () => {
+    const onEditBlock = vi.fn();
+    const onDismissComment = vi.fn();
+    const [editing, setEditing] = createSignal<number | undefined>();
+    const host = document.createElement('div');
+    document.body.append(host);
+    disposers.push(
+      render(
+        () => (
+          <DocumentViewer
+            blocks={blocks}
+            renderKey="t"
+            selectable
+            onSelect={() => {}}
+            onAction={() => {}}
+            onEditBlock={onEditBlock}
+            onDismissComment={onDismissComment}
+            editingBlock={editing()}
+            blockEditor={() => <textarea aria-label="Block source" />}
+          />
+        ),
+        host,
+      ),
+    );
+    const heading = host.querySelector('[data-block-index="1"] h2');
+
+    clickTimes(heading, 1);
+    const second = new MouseEvent('mousedown', {
+      bubbles: true,
+      cancelable: true,
+      detail: 2,
+      button: 0,
+    });
+    heading?.dispatchEvent(second);
+
+    expect(onEditBlock).toHaveBeenCalledWith(1);
+    // The empty comment the first click opened makes way for the editor.
+    expect(onDismissComment).toHaveBeenCalledOnce();
+    expect(second.defaultPrevented).toBe(true);
+    setEditing(1);
+    const block = host.querySelector('[data-block-index="1"]');
+    expect(block?.querySelector('textarea[aria-label="Block source"]')).not.toBeNull();
+    expect(block?.querySelector('h2')).toBeNull();
+    document.dispatchEvent(new MouseEvent('mouseup'));
+  });
+
+  it('leaves links and controls alone', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction);
+
+    clickTimes(host.querySelector('a[href="#end"]'), 1);
+    clickTimes(host.querySelector('.docws-section-btn'), 1);
+
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('leaves page widgets and editable regions alone', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction);
+    const paragraph = host.querySelector('[data-block-index="0"] p');
+    const widget = document.createElement('span');
+    widget.setAttribute('role', 'button');
+    const editable = document.createElement('span');
+    editable.setAttribute('contenteditable', '');
+    paragraph?.append(widget, editable);
+
+    clickTimes(widget, 1);
+    clickTimes(editable, 1);
+
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('does not comment when text is selected', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction);
+    const paragraph = host.querySelector('[data-block-index="0"] p');
+    if (!paragraph) throw new Error('No paragraph');
+
+    const range = document.createRange();
+    range.selectNodeContents(paragraph);
+    window.getSelection()?.addRange(range);
+    clickTimes(paragraph, 1);
+
+    expect(onAction).not.toHaveBeenCalled();
+    window.getSelection()?.removeAllRanges();
+  });
+
+  it('comments on the whole picked passage when clicked inside it', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction, { selection: { start: 0, end: 1 } });
+
+    clickTimes(host.querySelector('[data-block-index="0"] p'), 1);
+
+    expect(onAction).toHaveBeenCalledWith('note', 1, { start: 0, end: 1 });
+  });
+
+  it('does not move an open composer', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction, { composerOpen: () => true });
+
+    clickTimes(host.querySelector('[data-block-index="1"] h2'), 1);
+
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('opens the next comment with the same click that closes one', () => {
+    const onAction = vi.fn();
+    const [open, setOpen] = createSignal(true);
+    const host = mountWithAction(onAction, { composerOpen: open });
+    const heading = host.querySelector('[data-block-index="1"] h2');
+
+    // The open comment shuts on the same press, in a handler of its own.
+    press(heading, 1);
+    setOpen(false);
+    vi.runOnlyPendingTimers();
+
+    expect(onAction).toHaveBeenCalledWith('note', 1, undefined);
+  });
+
+  it('puts the comment away when the press turns into a drag', () => {
+    const onAction = vi.fn();
+    const onDismissComment = vi.fn();
+    const host = document.createElement('div');
+    document.body.append(host);
+    disposers.push(
+      render(
+        () => (
+          <DocumentViewer
+            blocks={blocks}
+            renderKey="t"
+            selectable
+            onAction={onAction}
+            onDismissComment={onDismissComment}
+          />
+        ),
+        host,
+      ),
+    );
+    const heading = host.querySelector('[data-block-index="1"] h2');
+
+    press(heading, 1);
+    vi.runOnlyPendingTimers();
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 2, clientY: 0 }));
+    expect(onDismissComment).not.toHaveBeenCalled();
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 40, clientY: 0 }));
+
+    expect(onAction).toHaveBeenCalledOnce();
+    expect(onDismissComment).toHaveBeenCalledOnce();
+  });
+
+  it('forgets a press whose release the window never saw', () => {
+    const onDismissComment = vi.fn();
+    const host = document.createElement('div');
+    document.body.append(host);
+    disposers.push(
+      render(
+        () => (
+          <DocumentViewer
+            blocks={blocks}
+            renderKey="t"
+            selectable
+            onAction={() => {}}
+            onDismissComment={onDismissComment}
+          />
+        ),
+        host,
+      ),
+    );
+    for (const end of [
+      () => window.dispatchEvent(new Event('blur')),
+      () => document.dispatchEvent(new Event('dragend', { bubbles: true })),
+    ]) {
+      press(host.querySelector('[data-block-index="1"] h2'), 1);
+      vi.runOnlyPendingTimers();
+      end();
+      // Later moves belong to whatever comes next, not to that press.
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: 40, clientY: 0 }));
+    }
+    expect(onDismissComment).not.toHaveBeenCalled();
+  });
+
+  it('does not open a comment for a drag that starts before it would', () => {
+    const onAction = vi.fn();
+    const host = mountWithAction(onAction);
+
+    press(host.querySelector('[data-block-index="1"] h2'), 1);
+    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 40, clientY: 0 }));
+    vi.runOnlyPendingTimers();
+
+    expect(onAction).not.toHaveBeenCalled();
   });
 });
 
