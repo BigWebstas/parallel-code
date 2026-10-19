@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildClaudeHookSettings, detectWindowsHookShell } from './claude-settings.js';
+import {
+  buildClaudeHookSettings,
+  buildStatusLineSetting,
+  detectWindowsHookShell,
+} from './claude-settings.js';
 
 describe('buildClaudeHookSettings', () => {
   // Explicit platform so this POSIX expectation holds on Windows dev machines too.
@@ -93,5 +97,42 @@ describe('detectWindowsHookShell', () => {
     const env = { CLAUDE_CODE_GIT_BASH_PATH: 'D:\\tools\\bash.exe', PATH: '' };
     expect(detectWindowsHookShell(env, files('D:\\tools\\bash.exe'))).toBe('bash');
     expect(detectWindowsHookShell(env, files())).toBe('powershell');
+  });
+});
+
+describe('buildStatusLineSetting', () => {
+  const script = '/Users/me/App Support/statusline.sh';
+
+  it('runs the script alone when the user has no status line', () => {
+    expect(buildStatusLineSetting(script, null)).toEqual({
+      type: 'command',
+      command: "/bin/sh '/Users/me/App Support/statusline.sh'",
+    });
+  });
+
+  it("passes the user's command as one quoted argument and keeps their display options", () => {
+    expect(
+      buildStatusLineSetting(script, {
+        type: 'command',
+        command: "~/.claude/line.sh 'x'",
+        padding: 1,
+        refreshInterval: 5,
+        hideVimModeIndicator: true,
+      }),
+    ).toEqual({
+      type: 'command',
+      command: `/bin/sh '/Users/me/App Support/statusline.sh' '~/.claude/line.sh '\\''x'\\'''`,
+      padding: 1,
+      refreshInterval: 5,
+      hideVimModeIndicator: true,
+    });
+  });
+
+  it('adds the status line next to the hooks only when given one', () => {
+    expect(buildClaudeHookSettings('/hook.sh').statusLine).toBeUndefined();
+    const statusLine = buildStatusLineSetting(script, null);
+    expect(buildClaudeHookSettings('/hook.sh', 'darwin', undefined, statusLine).statusLine).toBe(
+      statusLine,
+    );
   });
 });

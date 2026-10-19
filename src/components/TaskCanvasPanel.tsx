@@ -26,8 +26,12 @@ import {
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { canvasTabKey, tabFromKey } from '../lib/canvas-tabs';
+import { isTourFilePath } from '../lib/tour-file';
 import { useFocusRegistration } from '../lib/focus-registration';
 import { openFileInEditor } from '../lib/shell';
+import { store } from '../store/core';
+import { editAsDocument as openAsDocument } from '../documents/store';
+import { joinFolderPath } from '../documents/add-project-plan';
 import { errMessage } from '../lib/log';
 import type { CanvasTab, Task } from '../store/types';
 import {
@@ -141,6 +145,9 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
     const key = active();
     return key !== undefined && (tabChars()[key] ?? 0) >= TOUR_MIN_DOCUMENT_CHARS;
   };
+  /** A saved tour opens as a tour however short it is. */
+  const activeIsSavedTour = () =>
+    markdownTabs().some((tab) => canvasTabKey(tab) === active() && isTourFilePath(tab.path));
 
   function requestCloseTab(key: string): void {
     if (dirtyTabs()[key]) setConfirmClose(key);
@@ -225,6 +232,11 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
     );
   }
 
+  /** The task's worktree is a code checkout, so the document opens as a quick edit. */
+  function editAsDocument(path: string): void {
+    openAsDocument(joinFolderPath(props.task.worktreePath, path));
+  }
+
   function openFullscreenEditor(path: string): void {
     setContextMenu(null);
     activateCanvasTab(props.task.id, canvasTabKey({ kind: 'markdown', path }));
@@ -276,8 +288,9 @@ export function TaskCanvasPanel(props: TaskCanvasPanelProps) {
           onEnterFullscreen={enterFullscreen}
           onExitFullscreen={() => setFullscreen(false)}
           onOpenInDefaultEditor={openDefaultEditor}
+          onEditAsDocument={store.documentWorkspacesEnabled ? editAsDocument : undefined}
           understanding={props.understanding}
-          onTakeTour={activeDocumentIsLong() ? props.onTakeTour : undefined}
+          onTakeTour={activeDocumentIsLong() || activeIsSavedTour() ? props.onTakeTour : undefined}
           tourKind={(path) => documentTourKind(props.task, path)}
         />
         <Show when={pickerOpen()}>

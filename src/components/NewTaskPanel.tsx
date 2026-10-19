@@ -1,7 +1,8 @@
 import { taskProjectFilter } from '../store/task-project-filter';
 import { createCanvasTask, validateCanvasTaskSource } from '../store/canvas-tasks';
-import type { AppStore, SpNewTaskSource } from '../store/types';
+import type { AppStore, KanbanNewTaskSource, SpNewTaskSource } from '../store/types';
 import { linkNewTaskToSp } from '../store/superProductivityOpen';
+import { linkNewTaskToKanbanCard } from '../store/kanban';
 import { nameTaskWithModel } from '../store/model-task-name';
 import {
   createSignal,
@@ -51,6 +52,7 @@ import {
 } from '../lib/branch-name';
 import { SegmentedButtons } from './SegmentedButtons';
 import { autoTaskNameFromPrompt, nextDefaultTaskName } from '../lib/clean-task-name';
+import { isAgentInstalled, pickDefaultAgent } from '../lib/default-agent';
 import { extractGitHubUrl } from '../lib/github-url';
 import { buildIssuePrompt, buildPrTaskPrompt, workItemTaskName } from '../lib/github-prompts';
 import { getGitHubIssue } from '../store/github';
@@ -63,6 +65,7 @@ import {
 import { theme, sectionLabelStyle, bannerStyle } from '../lib/theme';
 import { isMac } from '../lib/platform';
 import { AgentSelector } from './AgentSelector';
+import { FeatureHint } from './FeatureHint';
 import { BranchPrefixField } from './BranchPrefixField';
 import { BranchCombobox } from './BranchCombobox';
 import { ProjectSelect } from './ProjectSelect';
@@ -76,6 +79,12 @@ import {
   MAX_COORDINATOR_CONCURRENT_TASKS,
   MIN_COORDINATOR_CONCURRENT_TASKS,
 } from '../lib/coordinator-limits';
+
+/** Ends with a cue for the user's own goal, so the cursor lands where they type it. */
+const DELEGATION_EXAMPLE_PROMPT =
+  'Split the work below into independent parts. Start a Parallel Code task for each, with a ' +
+  'prompt that stands on its own. Wait for them to finish, then summarize what each one ' +
+  'changed.\n\nThe work: ';
 
 interface NewTaskPanelProps {
   open: boolean;
@@ -390,6 +399,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
   const [canvasPrefill, setCanvasPrefill] = createSignal<AppStore['newTaskPrefillPrompt']>(null);
   const [spSource, setSpSource] = createSignal<SpNewTaskSource | null>(null);
   const [spNotes, setSpNotes] = createSignal<string | undefined>(undefined);
+  const [kanbanSource, setKanbanSource] = createSignal<KanbanNewTaskSource | null>(null);
   const [prompt, setPrompt] = createSignal('');
   const [githubPickerOpen, setGithubPickerOpen] = createSignal(false);
   /** Open PR the task will check out instead of branching from the base branch. */
@@ -448,6 +458,12 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
   );
   const [branchPrefix, setBranchPrefix] = createSignal('');
   let promptRef!: HTMLTextAreaElement;
+  const hasOtherTasks = () => store.taskOrder.length + store.collapsedTaskOrder.length > 0;
+  function applyDelegationExample(): void {
+    setPrompt(DELEGATION_EXAMPLE_PROMPT);
+    promptRef.focus();
+    promptRef.setSelectionRange(promptRef.value.length, promptRef.value.length);
+  }
   const titleId = createUniqueId();
   const branchInputId = createUniqueId();
   const advancedOptionsId = createUniqueId();
@@ -588,6 +604,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
             const prefill = store.newTaskPrefillPrompt;
             setSpSource(prefill?.superProductivity ?? null);
             setSpNotes(prefill?.notes);
+            setKanbanSource(prefill?.kanban ?? null);
             if (prefill) {
               setPrompt(prefill.prompt);
               setName(prefill.name ?? 'Compare arena results');
@@ -598,14 +615,13 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
             setInitialPrompt(prompt());
             setInitialName(name());
 
-            if (store.availableAgents.length === 0) {
+            // Re-detect while nothing is installed, so a CLI installed after
+            // launch shows up on the next open instead of after a restart.
+            if (!store.availableAgents.some(isAgentInstalled)) {
               await loadAgents();
             }
             if (cancelled) return;
-            const lastAgent = store.lastAgentId
-              ? (store.availableAgents.find((a) => a.id === store.lastAgentId) ?? null)
-              : null;
-            setSelectedAgent(lastAgent ?? store.availableAgents[0] ?? null);
+            setSelectedAgent(pickDefaultAgent(store.availableAgents, store.lastAgentId));
           })().catch((err) => {
             if (!cancelled) setError(errMessage(err));
           });
@@ -1140,6 +1156,8 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
       }
       const source = spSource();
       if (source) linkNewTaskToSp(taskId, source, projectId, spNotes());
+      const card = kanbanSource();
+      if (card) void linkNewTaskToKanbanCard(taskId, card, projectId);
       if (!manualName && p) void nameTaskWithModel(taskId, p);
       toggleNewTaskPanel(false);
     } catch (err) {
@@ -1342,6 +1360,18 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
                 resize: 'vertical',
               }}
             />
+            <FeatureHint
+              id="delegate-subtasks"
+              when={orchestrationEnabled() && !prompt().trim() && hasOtherTasks()}
+              anchor={() => promptRef}
+              title="Let one agent split the work"
+              actions={[{ label: 'Use example prompt', run: applyDelegationExample }]}
+            >
+              {selectedAgent()?.name ?? 'This agent'} can start its own sub-tasks. Ask it to split a
+              change into parts: each part runs as its own task in its own worktree, and the agent
+              keeps track of them.
+              <Show when={!autoMergeChildren()}> You review each result before it merges.</Show>
+            </FeatureHint>
           </div>
 
           {/* Project selector */}
@@ -1363,6 +1393,25 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
             selectedAgent={selectedAgent()}
             onSelect={setSelectedAgent}
           />
+          <Show when={selectedAgent()?.available === false ? selectedAgent() : undefined}>
+            {(agent) => (
+              <InlineBanner color={theme.warning}>
+                <Show
+                  when={store.availableAgents.some(isAgentInstalled)}
+                  fallback={
+                    <>
+                      No coding agent CLI found on this machine. Install one, such as Claude Code (
+                      <code>claude</code>), Codex CLI (<code>codex</code>) or Gemini CLI (
+                      <code>gemini</code>), then reopen this panel.
+                    </>
+                  }
+                >
+                  {agent().name} was not found on this machine (<code>{agent().command}</code>).
+                  Unless it runs in a Docker image, pick an installed agent.
+                </Show>
+              </InlineBanner>
+            )}
+          </Show>
 
           <Show when={gitIsolation() === 'direct' && !isNonGitProject()}>
             <InlineBanner color={theme.warning}>

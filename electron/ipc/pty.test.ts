@@ -147,6 +147,7 @@ import {
   waitForAgentExit,
   writeToAgent,
   writeAgentPrompt,
+  getAgentInputBlocker,
 } from './pty.js';
 import { clearWindowsCommandCache } from '../windows-launch.js';
 
@@ -915,7 +916,7 @@ describe('PTY hook launch ownership', () => {
     const agentId = 'agent-hook-failed-spawn';
     const taskId = 'hook-task';
     setAgentHookRuntime({
-      claudeSettingsPath: '/hook-settings.json',
+      claudeSettingsPath: () => '/hook-settings.json',
       buildPtyEnv: (id, task, launchId) => ({
         PARALLEL_CODE_AGENT_ID: id,
         PARALLEL_CODE_TASK_ID: task,
@@ -1275,6 +1276,38 @@ describe('peer prompt delivery', () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(await next).toBe(true);
   });
+
+  it('delivers after pointer movement over a mouse-tracking TUI', async () => {
+    const { args, proc } = await launch();
+    writeToAgent(args.agentId, '\x1b[<35;10;5M');
+    proc.write.mockClear();
+    const delivery = writeAgentPrompt(args.agentId, 'hello', () => {});
+    expect(proc.write.mock.calls).toEqual([['\x1b[I'], ['\x1b[200~hello\x1b[201~']]);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await delivery).toBe(true);
+  });
+
+  it.each(['\x1b[5~', '\x1b[D', '\x1b[1;5C', '\x1bOH', '\x1b[3~', '\x1b[15~', '\x1bb', '\x1bf'])(
+    'delivers after navigation key %j once input pauses',
+    async (key) => {
+      const { args } = await launch();
+      writeToAgent(args.agentId, key);
+      expect(getAgentInputBlocker(args.agentId)).toBe('recent-input');
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(getAgentInputBlocker(args.agentId)).toBeNull();
+    },
+  );
+
+  it.each(['\x1b[A', '\x1bOB', '\x1b[1;2A', '\x1b[97u', 'x'])(
+    'keeps holding delivery after draft-creating input %j',
+    async (key) => {
+      const { args } = await launch();
+      writeToAgent(args.agentId, key);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(getAgentInputBlocker(args.agentId)).toBe('unsent-input');
+      expect(await writeAgentPrompt(args.agentId, 'hello', () => {})).toBe(false);
+    },
+  );
 
   it('uses the current mode and caps the multiline submit delay', async () => {
     const { args, proc } = await launch(false);
