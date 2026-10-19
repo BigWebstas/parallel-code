@@ -1,6 +1,6 @@
 import { matchesTaskProjectFilter } from './task-project-filter';
 import { batch } from 'solid-js';
-import { documentAgentTaskId, isGitHubAgentTaskId } from '../documents/task-id';
+import { documentAgentTaskId, isProjectPageAgentTaskId } from '../documents/task-id';
 import { store, setStore } from './core';
 import { info as logInfo } from '../lib/log';
 import {
@@ -12,6 +12,7 @@ import {
 import { showNotification } from './notification';
 import { pickAndAddProject } from './projects';
 import { reorderTask } from './tasks';
+import { closeProjectPages } from './project-pages';
 
 const AI_TERMINAL_PREFIX = 'ai-terminal:';
 
@@ -39,23 +40,36 @@ export function openPanelOrder(): string[] {
     : taskOrder;
 }
 
+/** Display name of an open item: a task, a terminal or the document workspace. */
+export function openItemName(id: string): string {
+  const documentProjectId = store.activeDocumentProjectId;
+  return (
+    (documentProjectId && id === documentAgentTaskId(documentProjectId)
+      ? store.projects.find((p) => p.id === documentProjectId)?.name
+      : undefined) ??
+    store.tasks[id]?.name ??
+    store.terminals[id]?.name ??
+    'Open item'
+  );
+}
+
 export function setActiveTask(id: string): void {
-  // Its panel lives on the GitHub page, which an active task would close.
-  if (isGitHubAgentTaskId(id)) return;
+  // Its panel lives on the GitHub page or the board, which an active task would close.
+  if (isProjectPageAgentTaskId(id)) return;
   const task = store.tasks[id];
   const terminal = store.terminals[id];
   const isDocument =
     store.activeDocumentProjectId && id === documentAgentTaskId(store.activeDocumentProjectId);
   if (!task && !terminal && !isDocument) return;
-  // Activating a CI-snoozed task returns it; the stack says which path did it.
-  if (task?.snoozedUntilCi && store.activeTaskId !== id) {
+  // Activating a snoozed task returns it; the stack says which path did it.
+  if ((task?.snoozedUntilCi || task?.snoozedUntil !== undefined) && store.activeTaskId !== id) {
     logInfo('background-tasks', 'activating snoozed task', {
       taskId: id,
       stack: new Error().stack,
     });
   }
   if (!isDocument && !matchesTaskProjectFilter(id)) setStore('taskProjectFilter', null);
-  setStore('githubIssuesProjectId', null);
+  closeProjectPages();
   setStore('newTaskPanelFocused', false);
   setStore('placeholderFocused', false);
   let activeAgentId: string | null = null;
@@ -114,7 +128,7 @@ export function moveActiveTask(direction: 'left' | 'right'): void {
 
 export function jumpToTask(index: number): void {
   // Index against visible panels so Cmd+N matches the left-to-right tile order
-  // shown in the main area (and the order Cmd+Left/Right cycles through).
+  // shown in the main area. Unlike Cmd+Left/Right, it can pick a snoozed tile.
   const id = openPanelOrder()[index];
   if (!id) return;
   setActiveTask(id);
@@ -132,7 +146,7 @@ export function toggleNewTaskPanel(show?: boolean): void {
     return;
   }
   if (shouldShow) {
-    setStore('githubIssuesProjectId', null);
+    closeProjectPages();
     setStore('sidebarFocused', false);
     setStore('placeholderFocused', false);
   } else {

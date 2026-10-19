@@ -1,7 +1,7 @@
 import { getLocalDateKey } from '../lib/date';
 import { reconcile } from 'solid-js/store';
 import { createMindMap } from '../graph/model';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentDef } from '../ipc/types';
 import type { PersistedTask } from './types';
 import { emptyWorkspace, updateDraft } from '../investigation/editing';
@@ -88,6 +88,9 @@ beforeEach(async () => {
   setStore('availableAgents', []);
   setStore('customAgents', []);
   setStore('coordinatorControlHintDismissed', false);
+  setStore('keybindingMigrationDismissed', false);
+  setStore('featureHintsEnabled', true);
+  setStore('seenFeatureHints', []);
   setStore('autoStartRemoteAccess', false);
   setStore('terminalScreenReaderMode', false);
   setStore('preferUiMode', false);
@@ -573,24 +576,48 @@ describe('reasoning profile persistence', () => {
   );
 });
 
-it('never writes a tour the agent published: it is runtime state only', async () => {
-  mockInvoke.mockResolvedValueOnce(
-    JSON.stringify({
-      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
-      taskOrder: ['task-1'],
-      tasks: { 'task-1': persistedTask(agentDef()) },
-    }),
+describe('agent tour persistence', () => {
+  const payload = {
+    subject: 'the retry bug',
+    gist: { title: 'Retries hide the failure' },
+    cards: [{ title: 'One idea' }],
+    context: 'The agent read the retry loop.',
+  };
+
+  it.each([false, true])(
+    'keeps the published tour across a restart without reopening it (collapsed: %s)',
+    async (collapsed) => {
+      mockInvoke.mockResolvedValueOnce(
+        JSON.stringify({
+          projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+          taskOrder: collapsed ? [] : ['task-1'],
+          collapsedTaskOrder: collapsed ? ['task-1'] : [],
+          tasks: { 'task-1': { ...persistedTask(agentDef()), collapsed, agentTour: payload } },
+        }),
+      );
+      await loadState();
+      // Revision 0 marks a restored tour, so the panel does not pop it open at startup.
+      expect(store.tasks['task-1'].agentTour).toEqual({ revision: 0, payload });
+      mockInvoke.mockClear();
+      mockInvoke.mockResolvedValueOnce(undefined);
+      await saveState();
+      const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
+      expect(JSON.parse(call?.[1].json).tasks['task-1'].agentTour).toEqual(payload);
+    },
   );
-  await loadState();
-  setStore('tasks', 'task-1', 'agentTour', {
-    revision: 1,
-    payload: { subject: 'the retry bug', gist: {}, cards: [{}] },
+
+  it('drops a saved tour that fails validation', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      JSON.stringify({
+        projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'blue' }],
+        taskOrder: ['task-1'],
+        tasks: { 'task-1': { ...persistedTask(agentDef()), agentTour: { subject: '' } } },
+      }),
+    );
+    await loadState();
+    expect(store.tasks['task-1']).toBeDefined();
+    expect(store.tasks['task-1'].agentTour).toBeUndefined();
   });
-  mockInvoke.mockClear();
-  mockInvoke.mockResolvedValueOnce(undefined);
-  await saveState();
-  const call = mockInvoke.mock.calls.find(([channel]) => channel === IPC.SaveAppState);
-  expect(JSON.parse(call?.[1].json).tasks['task-1']).not.toHaveProperty('agentTour');
 });
 
 describe('mind map persistence', () => {
@@ -1349,8 +1376,9 @@ describe('project task group collapsed persistence', () => {
 
     await loadState();
 
-    expect(store.projects[0].tasksCollapsed).toBe(true);
-    expect(store.projects[1].tasksCollapsed).toBeUndefined();
+    const byId = (id: string) => store.projects.find((p) => p.id === id);
+    expect(byId('p1')?.tasksCollapsed).toBe(true);
+    expect(byId('p2')?.tasksCollapsed).toBeUndefined();
   });
 
   it('persists collapsed task groups with their projects', async () => {
@@ -1391,6 +1419,59 @@ describe('UI mode preference persistence', () => {
       await loadState();
       expect(store.preferUiMode).toBe(enabled);
       expect(store.tasks['task-1'].mainAgentView).not.toBe('chat');
+    },
+  );
+});
+
+describe('Claude UI mode switch-off persistence', () => {
+  const claude = agentDef({ id: 'claude-code', name: 'Claude Code', command: 'claude' });
+  const sessionId = '11111111-2222-4333-8444-555555555555';
+
+  afterEach(() => setStore('disableClaudeUiMode', false));
+
+  it.each([true, false, undefined, 'true'])('restores only boolean true (%s)', async (value) => {
+    setStore('disableClaudeUiMode', true);
+    mockInvoke.mockResolvedValueOnce(basePayload({ disableClaudeUiMode: value }));
+    await loadState();
+    expect(store.disableClaudeUiMode).toBe(value === true);
+  });
+
+  it('saves the setting only when on', async () => {
+    setStore('disableClaudeUiMode', true);
+    await saveState();
+    expect(JSON.parse(mockInvoke.mock.calls.at(-1)?.[1].json).disableClaudeUiMode).toBe(true);
+    setStore('disableClaudeUiMode', false);
+    await saveState();
+    expect(JSON.parse(mockInvoke.mock.calls.at(-1)?.[1].json).disableClaudeUiMode).toBeUndefined();
+  });
+
+  it.each([
+    [true, claude, undefined],
+    [false, claude, 'chat'],
+    [true, agentDef(), 'chat'],
+  ] as const)(
+    'with chat off: %s, a %s task saved in chat restores to %s',
+    async (disabled, def, expected) => {
+      mockInvoke.mockResolvedValueOnce(
+        basePayload({
+          disableClaudeUiMode: disabled,
+          tasks: {
+            'task-1': {
+              ...persistedTask(def),
+              mainAgentView: 'chat',
+              claudeChatSessionId: sessionId,
+            },
+          },
+          taskOrder: ['task-1'],
+        }),
+      );
+      await loadState();
+      const task = store.tasks['task-1'];
+      expect(task.mainAgentView).toBe(expected);
+      if (expected === undefined) {
+        // The terminal resumes the conversation the chat had.
+        expect(task.agentSessionIds?.[task.agentIds[0]]).toBe(sessionId);
+      }
     },
   );
 });
@@ -1560,6 +1641,44 @@ describe('document full width persistence', () => {
   });
 });
 
+describe('feature tips persistence', () => {
+  function stateJson(extra: Record<string, unknown>): string {
+    return JSON.stringify({
+      projects: [],
+      taskOrder: [],
+      collapsedTaskOrder: [],
+      tasks: {},
+      ...extra,
+    });
+  }
+
+  async function lastSaved(): Promise<Record<string, unknown>> {
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await saveState();
+    const lastCall = mockInvoke.mock.calls[mockInvoke.mock.calls.length - 1];
+    return JSON.parse(lastCall[1].json) as Record<string, unknown>;
+  }
+
+  it('keeps tips off for an install that predates them', async () => {
+    mockInvoke.mockResolvedValueOnce(stateJson({}));
+    await loadState();
+    expect(store.featureHintsEnabled).toBe(false);
+    expect(store.seenFeatureHints).toEqual([]);
+    // Stored explicitly, so the next load does not mistake it for an older install.
+    expect((await lastSaved()).featureHintsEnabled).toBe(false);
+  });
+
+  it('round-trips seen tips and drops unknown ones', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      stateJson({ featureHintsEnabled: true, seenFeatureHints: ['change-tour', 'retired', 3] }),
+    );
+    await loadState();
+    expect(store.featureHintsEnabled).toBe(true);
+    expect(store.seenFeatureHints).toEqual(['change-tour']);
+    expect((await lastSaved()).seenFeatureHints).toEqual(['change-tour']);
+  });
+});
+
 describe('code Q&A model persistence', () => {
   function stateJson(extra: Record<string, unknown>): string {
     return JSON.stringify({
@@ -1614,6 +1733,20 @@ describe('code Q&A model persistence', () => {
     expect(store.askCodeProvider).toBe('codex');
     expect(store.askCodeModel).toBe('');
     expect((await lastSaved()).askCodeModel).toBeUndefined();
+  });
+
+  it('round-trips a reasoning level per provider and drops one the CLI would reject', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      stateJson({ askCodeEffort: { claude: 'max', codex: 'minimal', minimax: 'high' } }),
+    );
+    await loadState();
+    expect(store.askCodeEffort).toEqual({ claude: 'max', codex: 'minimal' });
+    expect((await lastSaved()).askCodeEffort).toEqual({ claude: 'max', codex: 'minimal' });
+
+    mockInvoke.mockResolvedValueOnce(stateJson({ askCodeEffort: { claude: 'minimal' } }));
+    await loadState();
+    expect(store.askCodeEffort).toEqual({});
+    expect((await lastSaved()).askCodeEffort).toBeUndefined();
   });
 
   it('replaces a model the newly chosen provider cannot run', async () => {

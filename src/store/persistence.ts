@@ -13,22 +13,26 @@ import { produce } from 'solid-js/store';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { isChatPermissionMode, restoreChatSessions } from '../../electron/shared/agent-chat-types';
+import { reopenClaudeChatInTerminal } from './agent-chat';
 import { isSessionId } from '../../electron/shared/session-record';
 import {
   defaultAskCodeModel,
+  isAskCodeEffort,
   isAskCodeModel,
   type AskCodeProvider,
 } from '../../electron/shared/ask-code-models';
 import { store, setStore } from './core';
 import { startRemoteAccess } from './remote';
 import { effectiveAgentId } from './agent-select';
-import { randomPastelColor } from './projects';
+import { randomPastelColor, sortProjects } from './projects';
 import { markAgentSpawned } from './taskStatus';
 import { clampCoordinatorConcurrentTasks } from '../lib/coordinator-limits';
 import { MAX_PROMPT_HISTORY } from '../lib/prompt-history';
+import { isFeatureHintId } from '../lib/feature-hints';
 import { normalizeReasoningProfile } from '../investigation/profiles';
 import { restoreReasoningWorkspaces } from '../investigation/editing';
 import { isValidSpId } from '../../electron/shared/super-productivity';
+import { parseAgentTourPayload } from '../../electron/shared/agent-tour';
 import { DEFAULT_TASK_NAME_MODEL, isTaskNameModelId } from '../../electron/shared/task-name-model';
 
 /** A map that fails validation is kept aside rather than crashing load or being overwritten
@@ -42,6 +46,17 @@ function restoreTaskMindMap(
   if (document) return { mindMap: document };
   unreadable.push(pt.name || 'a task');
   return { mindMapUnreadable: pt.mindMap };
+}
+
+/** Revision 0 marks a restored tour: its button comes back, but the viewer stays closed. */
+function restoreAgentTour(value: unknown): Task['agentTour'] {
+  if (value === undefined || value === null) return undefined;
+  try {
+    return { revision: 0, payload: parseAgentTourPayload(value) };
+  } catch (error) {
+    logWarn('persistence', 'Dropped an unreadable agent tour', { error: errMessage(error) });
+    return undefined;
+  }
 }
 
 // Hand-edited state files may hold anything; the IPC layer rejects non-integers.
@@ -69,6 +84,18 @@ import { showNotification, NOTIFICATION_ERROR_MS } from './notification';
 import { errMessage, warn as logWarn } from '../lib/log';
 import { canvasTabKey } from '../lib/canvas-tabs';
 import { hiddenAgentTaskIds, isHiddenAgentTaskId } from '../documents/task-id';
+
+/** Reasoning levels per provider, each one the CLI accepts; anything else is dropped. */
+function loadAskCodeEffort(value: unknown): Partial<Record<AskCodeProvider, string>> {
+  if (typeof value !== 'object' || value === null) return {};
+  const raw = value as Record<string, unknown>;
+  const efforts: Partial<Record<AskCodeProvider, string>> = {};
+  for (const provider of ['claude', 'codex'] as const) {
+    const effort = raw[provider];
+    if (isAskCodeEffort(provider, effort)) efforts[provider] = effort;
+  }
+  return efforts;
+}
 
 function restoredCodexHandoff(value: unknown): Task['codexChatHandoff'] {
   if (!value || typeof value !== 'object') return;
@@ -319,6 +346,7 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     browserUrl: task.browserUrl,
     canvasTaskLinks: task.canvasTaskLinks,
     mindMap: task.mindMap ?? task.mindMapUnreadable,
+    agentTour: task.agentTour?.payload,
     reasoningProfile: task.reasoningProfile,
     reasoningWorkspaces: task.reasoningWorkspaces,
     branchAdoptedFrom: task.branchAdoptedFrom,
@@ -413,10 +441,15 @@ export async function saveState(): Promise<void> {
       store.askCodeModel !== defaultAskCodeModel(store.askCodeProvider)
         ? store.askCodeModel
         : undefined,
+    askCodeEffort:
+      Object.keys(store.askCodeEffort).length > 0 ? { ...store.askCodeEffort } : undefined,
     customAgents: store.customAgents.length > 0 ? [...store.customAgents] : undefined,
     agentEnvFiles:
       Object.keys(store.agentEnvFiles).length > 0 ? { ...store.agentEnvFiles } : undefined,
     keybindingMigrationDismissed: store.keybindingMigrationDismissed || undefined,
+    // Always stored: a missing value marks an install that predates the tips.
+    featureHintsEnabled: store.featureHintsEnabled,
+    seenFeatureHints: store.seenFeatureHints.length > 0 ? [...store.seenFeatureHints] : undefined,
     focusMode: store.focusMode || undefined,
     verboseLogging: store.verboseLogging || undefined,
     coordinatorNotificationDelayMs:
@@ -435,6 +468,7 @@ export async function saveState(): Promise<void> {
     documentFullWidth: store.documentFullWidth || undefined,
     coordinatorControlHintDismissed: store.coordinatorControlHintDismissed || undefined,
     preferUiMode: store.preferUiMode || undefined,
+    disableClaudeUiMode: store.disableClaudeUiMode || undefined,
     defaultSkipPermissions: store.defaultSkipPermissions || undefined,
     defaultPropagateSkipPermissions: store.defaultPropagateSkipPermissions || undefined,
     // Default on: only an explicit opt-out is stored.
@@ -611,11 +645,14 @@ interface LegacyPersistedState {
   dockerImage?: unknown;
   askCodeProvider?: unknown;
   askCodeModel?: unknown;
+  askCodeEffort?: unknown;
   minimaxApiKey?: unknown;
   customAgents?: unknown;
   agentEnvFiles?: unknown;
   terminals?: unknown;
   keybindingMigrationDismissed?: unknown;
+  featureHintsEnabled?: unknown;
+  seenFeatureHints?: unknown;
   focusMode?: unknown;
   verboseLogging?: unknown;
   coordinatorNotificationDelayMs?: unknown;
@@ -632,6 +669,7 @@ interface LegacyPersistedState {
   documentFullWidth?: unknown;
   coordinatorControlHintDismissed?: unknown;
   preferUiMode?: unknown;
+  disableClaudeUiMode?: unknown;
   defaultSkipPermissions?: unknown;
   defaultPropagateSkipPermissions?: unknown;
   canvasOwnershipBadges?: unknown;
@@ -642,6 +680,8 @@ export async function loadState(): Promise<void> {
   stateLoaded = false;
   const json = await invoke<string | null>(IPC.LoadAppState);
   if (!json) {
+    // A new install has no shortcuts to migrate.
+    setStore('keybindingMigrationDismissed', true);
     await delegationRequest({ action: 'orchestrationSetting', enabled: true });
     stateLoaded = true;
     return;
@@ -683,6 +723,7 @@ export async function loadState(): Promise<void> {
       p.coverageReportPath = undefined;
     }
     p.tasksCollapsed = typeof p.tasksCollapsed === 'boolean' ? p.tasksCollapsed : undefined;
+    p.quickEditSource = typeof p.quickEditSource === 'string' ? p.quickEditSource : undefined;
     p.evidenceChecks = parseProjectChecks(p.evidenceChecks);
     p.evidenceModel = parseEvidenceModelSettings(p.evidenceModel);
     p.evidenceAutoBuild = p.evidenceAutoBuild === true ? true : undefined;
@@ -790,6 +831,7 @@ export async function loadState(): Promise<void> {
   setStore(
     produce((s) => {
       s.projects = projects;
+      sortProjects(s.projects);
       s.lastProjectId = lastProjectId;
       s.lastAgentId = lastAgentId;
       s.taskOrder = raw.taskOrder;
@@ -937,6 +979,7 @@ export async function loadState(): Promise<void> {
       s.coordinatorControlHintDismissed = raw.coordinatorControlHintDismissed === true;
 
       s.preferUiMode = raw.preferUiMode === true;
+      s.disableClaudeUiMode = raw.disableClaudeUiMode === true;
       s.defaultSkipPermissions = raw.defaultSkipPermissions === true;
       s.defaultPropagateSkipPermissions = raw.defaultPropagateSkipPermissions === true;
       s.canvasOwnershipBadges = raw.canvasOwnershipBadges !== false;
@@ -957,6 +1000,7 @@ export async function loadState(): Promise<void> {
       s.askCodeModel = isAskCodeModel(provider, raw.askCodeModel)
         ? raw.askCodeModel
         : defaultAskCodeModel(provider);
+      s.askCodeEffort = loadAskCodeEffort(raw.askCodeEffort);
 
       // Restore custom agents
       if (Array.isArray(raw.customAgents)) {
@@ -981,6 +1025,13 @@ export async function loadState(): Promise<void> {
       if (typeof raw.keybindingMigrationDismissed === 'boolean') {
         s.keybindingMigrationDismissed = raw.keybindingMigrationDismissed;
       }
+
+      // Users who set the app up before feature tips existed already found
+      // their way around; they can turn the tips on in Settings.
+      s.featureHintsEnabled = raw.featureHintsEnabled === true;
+      s.seenFeatureHints = Array.isArray(raw.seenFeatureHints)
+        ? raw.seenFeatureHints.filter(isFeatureHintId)
+        : [];
 
       // Make custom agents findable during task restoration
       for (const ca of s.customAgents) {
@@ -1062,6 +1113,7 @@ export async function loadState(): Promise<void> {
           planFileName: pt.planFileName,
           ...restoredCanvas(pt),
           ...restoreTaskMindMap(pt, unreadableMindMaps),
+          agentTour: restoreAgentTour(pt.agentTour),
           reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
           canvasTaskLinks: restoreCanvasTaskLinks(pt.canvasTaskLinks),
           reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),
@@ -1107,6 +1159,7 @@ export async function loadState(): Promise<void> {
           landingSummary: pt.landingSummary,
           landedMetadata: pt.landedMetadata,
         };
+        reopenClaudeChatInTerminal(task, agentDefs[0]?.id, s.disableClaudeUiMode);
 
         s.tasks[taskId] = task;
 
@@ -1208,6 +1261,7 @@ export async function loadState(): Promise<void> {
           planFileName: pt.planFileName,
           ...restoredCanvas(pt),
           ...restoreTaskMindMap(pt, unreadableMindMaps),
+          agentTour: restoreAgentTour(pt.agentTour),
           reasoningProfile: normalizeReasoningProfile(pt.reasoningProfile),
           canvasTaskLinks: restoreCanvasTaskLinks(pt.canvasTaskLinks),
           reasoningWorkspaces: restoreReasoningWorkspaces(pt.reasoningWorkspaces),

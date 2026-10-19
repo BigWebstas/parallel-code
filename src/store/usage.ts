@@ -3,9 +3,11 @@ import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import type { UsageProvider, UsageResult } from '../ipc/types';
 
-// Refresh every minute to keep meters current mid-session.
-const POLL_INTERVAL_MS = 60_000;
-const MIN_REFRESH_GAP_MS = 15_000;
+// The Codex usage endpoint rate-limits eager pollers, so refresh slowly and let
+// agent session exits and manual clicks fill in between ticks. Claude's numbers
+// come from its own sessions' status line, and the main process says when they move.
+const POLL_INTERVAL_MS = 5 * 60_000;
+const MIN_REFRESH_GAP_MS = 30_000;
 
 /** Render order of the providers in the status bar. */
 export const USAGE_PROVIDERS: readonly UsageProvider[] = ['claude', 'codex', 'antigravity'];
@@ -24,6 +26,7 @@ const AGENT_PROVIDERS: Record<string, UsageProvider> = {
 };
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let stopClaudeListener: (() => void) | null = null;
 const lastRequestAt: Record<UsageProvider, number> = { claude: 0, codex: 0, antigravity: 0 };
 const inFlight: Partial<Record<UsageProvider, Promise<void>>> = {};
 
@@ -96,6 +99,9 @@ function refreshAll(): void {
 
 export function startUsagePolling(): void {
   if (pollTimer) return;
+  stopClaudeListener = window.electron.ipcRenderer.on(IPC.ClaudeUsageChanged, () => {
+    void refreshUsage('claude', { force: true });
+  });
   refreshAll();
   pollTimer = setInterval(refreshAll, POLL_INTERVAL_MS);
 }
@@ -105,4 +111,6 @@ export function stopUsagePolling(): void {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  stopClaudeListener?.();
+  stopClaudeListener = null;
 }
