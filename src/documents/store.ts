@@ -22,6 +22,7 @@ import type {
   DocumentRunRecord,
   DocumentScope,
   DocumentSnapshot,
+  QuickEditTarget,
 } from './types';
 import {
   DEFAULT_DOCUMENT_MAIN_AGENT,
@@ -29,10 +30,12 @@ import {
   documentAgentSupport,
 } from '../../electron/documents/shared';
 import { store, setStore } from '../store/core';
-import { getProject, updateProject } from '../store/projects';
+import { addQuickEditProject, getProject, updateProject } from '../store/projects';
 import { showNotification } from '../store/notification';
 import type { DocumentModelChoice, Project } from '../store/types';
 import { afterSavingMarkdown, flushMarkdownEditor } from './markdown-editing';
+import { pushRecentPath } from './path-tree';
+import { closeProjectPages } from '../store/project-pages';
 
 export type DocumentView = 'document' | 'history';
 
@@ -52,7 +55,10 @@ export type ComposerMode = 'task' | 'proposals' | 'note' | 'question';
 
 /** What the composer opens with: a bubble turned into a task, or a block's hover action. */
 export interface ComposerDraft {
+  /** Stable across remounts and edits, also the ID of an automatically saved note. */
+  id?: string;
   text: string;
+  noteSaveStatus?: 'saving' | 'error';
   annotationId?: string;
   /** Opens the composer on this mode. */
   mode?: ComposerMode;
@@ -66,8 +72,8 @@ interface DocumentWorkspaceState {
   /** Documents left behind by links and file picks, oldest first; Back walks it. */
   documentTrail: string[];
   annotations: DocumentAnnotation[];
-  /** Last deleted bubble, kept for a single-step undo. */
-  lastDeleted: DocumentAnnotation | null;
+  /** Bubbles deleted while the undo offer is up, newest last; Undo restores them one by one. */
+  recentlyDeleted: DocumentAnnotation[];
   showResolved: boolean;
   composerDraft: ComposerDraft | null;
   snapshot: DocumentSnapshot | null;
@@ -80,6 +86,8 @@ interface DocumentWorkspaceState {
   view: DocumentView;
   compareRunId: string | null;
   compareCandidateId: string | null;
+  /** Run whose single proposal is under review inline, in the document itself. */
+  reviewRunId: string | null;
   selection: DocumentSelection | null;
   dispatching: boolean;
 }
@@ -93,7 +101,7 @@ const [docStore, setDocStore] = createStore<DocumentWorkspaceState>({
   documentPath: null,
   documentTrail: [],
   annotations: [],
-  lastDeleted: null,
+  recentlyDeleted: [],
   showResolved: false,
   composerDraft: null,
   snapshot: null,
@@ -105,11 +113,18 @@ const [docStore, setDocStore] = createStore<DocumentWorkspaceState>({
   view: 'document',
   compareRunId: null,
   compareCandidateId: null,
+  reviewRunId: null,
   selection: null,
   dispatching: false,
 });
 
 export { docStore as documentStore };
+
+/**
+ * Root of the open workspace's project, kept from when it opened: removing the
+ * project from the app drops it from the store, yet its edits still need saving.
+ */
+let openProjectRoot: string | null = null;
 
 function activeProject(): Project | undefined {
   return docStore.projectId ? getProject(docStore.projectId) : undefined;
@@ -156,7 +171,10 @@ export async function refreshDocumentSnapshot(): Promise<void> {
     if (stillOpen(project.id) && docStore.documentPath === documentPath) {
       setDocStore({ snapshot, error: null });
       if (!snapshot.missing && project.documentOpenPath !== documentPath)
-        updateProject(project.id, { documentOpenPath: documentPath });
+        updateProject(project.id, {
+          documentOpenPath: documentPath,
+          documentRecentPaths: pushRecentPath(project.documentRecentPaths ?? [], documentPath),
+        });
     }
   } catch (err) {
     if (stillOpen(project.id) && docStore.documentPath === documentPath)
@@ -209,15 +227,67 @@ function startWatcher(projectId: string, projectRoot: string, documentPath: stri
   });
 }
 
+/**
+ * Brings a quick edit's copy up to date with its original and keeps them in
+ * step. Asked on every open: the backend may have stopped the sync, and a
+ * running one makes this cheap. A missing original still opens the copy, so
+ * nothing written there is lost.
+ */
+async function syncQuickEdit(project: Project): Promise<void> {
+  const sourcePath = project.quickEditSource;
+  if (!sourcePath) return;
+  try {
+    notifyConflict(await invoke<QuickEditTarget>(IPC.OpenQuickEdit, { sourcePath }));
+  } catch (err) {
+    showNotification(`Showing the last copy of ${sourcePath}: ${errMessage(err)}`);
+  }
+}
+
+/** Both sides changed while nothing synced; the copy's version is in a file the user has to be told about. */
+function notifyConflict(target: QuickEditTarget): void {
+  if (target.warning) showNotification(target.warning);
+}
+
+/**
+ * Opens `sourcePath` as a quick edit, reusing the project it already has.
+ * `stillWanted` is asked once the copy is ready; false adds and opens nothing.
+ */
+export async function openQuickEdit(
+  sourcePath: string,
+  create = false,
+  stillWanted: () => boolean = () => true,
+): Promise<void> {
+  const target = await invoke<QuickEditTarget>(IPC.OpenQuickEdit, { sourcePath, create });
+  notifyConflict(target);
+  if (!stillWanted()) return;
+  const existing = store.projects.find(
+    (p) => p.quickEditSource === target.sourcePath && p.path === target.projectRoot,
+  );
+  await openDocumentWorkspace(existing?.id ?? addQuickEditProject(target));
+}
+
+/** Opens a path a task printed or lists as a quick edit, saying so if that fails. */
+export function editAsDocument(filePath: string): void {
+  openQuickEdit(filePath).catch((err: unknown) =>
+    showNotification(`Could not open ${filePath} as a document: ${errMessage(err)}`),
+  );
+}
+
 export async function openDocumentWorkspace(projectId: string): Promise<void> {
   const project = getProject(projectId);
   if (!project?.documentPath || !store.documentWorkspacesEnabled) return;
-  setStore('githubIssuesProjectId', null);
+  // Only quick edits wait: an await here would hold back the loading state of every open.
+  // An open one is already syncing, so switching back to it does not wait either.
+  if (project.quickEditSource && docStore.projectId !== projectId) await syncQuickEdit(project);
+  closeProjectPages();
   if (docStore.projectId === projectId) {
     setActiveTask(documentAgentTaskId(projectId));
     return;
   }
+  // Replacing an open project leaves its document like closing it does.
+  if (docStore.projectId) commitEditsOnLeave();
   stopCurrentWatcher();
+  openProjectRoot = project.path;
   const documentPath =
     typeof project.documentOpenPath === 'string' && project.documentOpenPath
       ? project.documentOpenPath
@@ -235,10 +305,11 @@ export async function openDocumentWorkspace(projectId: string): Promise<void> {
     view: 'document',
     compareRunId: null,
     compareCandidateId: null,
+    reviewRunId: null,
     selection: null,
     annotations: [],
-    lastDeleted: null,
-    composerDraft: null,
+    recentlyDeleted: [],
+    composerDraft: recoveredNoteDraft(project.path, documentPath),
   });
   setStore('activeDocumentProjectId', projectId);
   // Start watching before the first await so a quick close can stop it.
@@ -277,12 +348,14 @@ export async function goBackDocument(): Promise<void> {
 async function showDocument(documentPath: string, documentTrail: string[]): Promise<void> {
   const project = activeProject();
   if (!project) return;
+  commitEditsOnLeave();
   stopCurrentWatcher();
   setDocStore({
     documentPath,
     documentTrail,
     selection: null,
-    composerDraft: null,
+    reviewRunId: null,
+    composerDraft: recoveredNoteDraft(project.path, documentPath),
     snapshot: null,
     error: null,
   });
@@ -290,7 +363,34 @@ async function showDocument(documentPath: string, documentTrail: string[]): Prom
   await refreshDocumentSnapshot();
 }
 
+/**
+ * Versions happen on their own: leaving a document records its uncommitted
+ * tracked edits. Silent on success and never blocks the caller; the editor is
+ * flushed synchronously first because leaving unmounts it.
+ */
+function commitEditsOnLeave(): void {
+  const projectId = docStore.projectId;
+  const projectRoot = activeProject()?.path ?? openProjectRoot;
+  if (!projectId || !projectRoot || !docStore.documentPath) return;
+  const flushed = flushMarkdownEditor();
+  void (async () => {
+    try {
+      if (!(await flushed)) {
+        showNotification('Could not save your edits; your draft is kept.');
+        return;
+      }
+      // A no-op when nothing is dirty, so there is no check that could go
+      // stale while the next document loads.
+      await invoke(IPC.CommitDocumentEdits, { projectRoot });
+      if (stillOpen(projectId)) void refreshDocumentSnapshot();
+    } catch (err) {
+      showNotification(errMessage(err));
+    }
+  })();
+}
+
 export function closeDocumentWorkspace(): void {
+  commitEditsOnLeave();
   stopCurrentWatcher();
   setDocStore({
     projectId: null,
@@ -300,13 +400,202 @@ export function closeDocumentWorkspace(): void {
     view: 'document',
     compareRunId: null,
     compareCandidateId: null,
+    reviewRunId: null,
     composerDraft: null,
   });
   setStore('activeDocumentProjectId', null);
 }
 
+// Like Markdown drafts, notes survive navigation and failed writes. The memory
+// copy also preserves them for this session when browser storage is unavailable.
+const noteDraftBackups = new Map<string, ComposerDraft>();
+const noteDraftKey = (root: string, path: string) =>
+  `document-note-draft:${JSON.stringify([root, path])}`;
+
+function recoveredNoteDraft(root: string, path: string): ComposerDraft | null {
+  const key = noteDraftKey(root, path);
+  let draft = noteDraftBackups.get(key);
+  if (!draft) {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
+      if (
+        value &&
+        typeof value === 'object' &&
+        'id' in value &&
+        typeof value.id === 'string' &&
+        'text' in value &&
+        typeof value.text === 'string'
+      )
+        draft = { id: value.id, text: value.text, mode: 'note' };
+    } catch {
+      /* The in-memory draft remains available without browser storage. */
+    }
+  }
+  return draft
+    ? {
+        ...draft,
+        noteSaveStatus: draft.id && pendingNoteSaves.has(draft.id) ? 'saving' : undefined,
+      }
+    : null;
+}
+
+function backupNoteDraft(root: string, path: string, draft: ComposerDraft | null): void {
+  const key = noteDraftKey(root, path);
+  if (draft) noteDraftBackups.set(key, { id: draft.id, text: draft.text, mode: 'note' });
+  else noteDraftBackups.delete(key);
+  try {
+    if (draft) localStorage.setItem(key, JSON.stringify({ id: draft.id, text: draft.text }));
+    else localStorage.removeItem(key);
+  } catch {
+    /* Preserve the in-memory backup for this session. */
+  }
+}
+
+interface FailedNote {
+  draft: ComposerDraft;
+  selection: DocumentSelection | null;
+}
+// Comments whose save failed while another was being written. Each comes back,
+// oldest first, in place of a next empty comment.
+// shortcut: kept for the session only — persist like noteDraftBackups if a
+// restart between the failure and the next comment matters.
+const failedNotes = new Map<string, FailedNote[]>();
+
+function takeFailedNote(root: string, path: string): FailedNote | undefined {
+  return failedNotes.get(noteDraftKey(root, path))?.shift();
+}
+
 export function setDocumentComposerDraft(draft: ComposerDraft | null): void {
-  setDocStore('composerDraft', draft);
+  const project = activeProject();
+  const path = docStore.documentPath;
+  const opensEmpty =
+    !!project && !!path && draft?.mode === 'note' && !draft.text && !docStore.composerDraft;
+  // A comment still saving has just been put away; it is not a draft to resume.
+  const backup = opensEmpty && project && path ? recoveredNoteDraft(project.path, path) : null;
+  if (backup && backup.noteSaveStatus !== 'saving') draft = backup;
+  else if (opensEmpty && project && path) {
+    const failed = takeFailedNote(project.path, path);
+    if (failed) {
+      draft = { ...failed.draft, noteSaveStatus: 'error' };
+      // Back on the passage it was written about, so Retry saves it there.
+      if (failed.selection) setDocStore('selection', failed.selection);
+    }
+  }
+  // A save status belongs to the comment; another mode starts without one.
+  if (draft)
+    draft = {
+      ...draft,
+      id: draft.id ?? crypto.randomUUID(),
+      noteSaveStatus: draft.mode === 'note' ? draft.noteSaveStatus : undefined,
+    };
+  if (project && path && draft?.mode === 'note')
+    backupNoteDraft(project.path, path, draft.text.trim() ? draft : null);
+  // An unsaved comment, or one whose save failed, switched to Rewrite or Ask
+  // takes its text along; its backup would otherwise return later as a
+  // comment on another passage.
+  const previous = docStore.composerDraft;
+  if (
+    project &&
+    path &&
+    draft &&
+    draft.mode !== 'note' &&
+    previous?.mode === 'note' &&
+    previous.noteSaveStatus !== 'saving'
+  )
+    backupNoteDraft(project.path, path, null);
+  // The store merges an object into the previous draft, so keys a new draft
+  // leaves out are set explicitly to clear the old ones.
+  setDocStore(
+    'composerDraft',
+    draft
+      ? { ...draft, annotationId: draft.annotationId, noteSaveStatus: draft.noteSaveStatus }
+      : null,
+  );
+}
+
+const pendingNoteSaves = new Map<string, Promise<boolean>>();
+
+/**
+ * A comment put away while saving has failed. The empty comment that took its
+ * place gives way to it, back on its passage and with Retry. A comment already
+ * being written keeps its own text, and the failed one waits for the next.
+ */
+function keepFailedNote(
+  project: { id: string; path: string },
+  path: string,
+  failed: { draft: ComposerDraft; selection: DocumentSelection | null },
+) {
+  const open = docStore.composerDraft;
+  const here = stillOpen(project.id) && docStore.documentPath === path;
+  if (here && open?.mode === 'note' && !open.text.trim()) {
+    setDocStore({
+      composerDraft: {
+        ...open,
+        id: failed.draft.id,
+        text: failed.draft.text,
+        noteSaveStatus: 'error',
+      },
+      selection: failed.selection,
+    });
+    backupNoteDraft(project.path, path, failed.draft);
+  } else if (recoveredNoteDraft(project.path, path)?.id !== failed.draft.id) {
+    // Its own backup, still in place, already brings it back.
+    const key = noteDraftKey(project.path, path);
+    failedNotes.set(key, [...(failedNotes.get(key) ?? []), failed]);
+  }
+}
+
+/** Save on leaving a note. Shared by composer instances so remounting cannot duplicate it. */
+export function saveDocumentNoteDraft(anchor: DocumentAnchor): Promise<boolean> {
+  const draft = docStore.composerDraft;
+  if (!draft?.id || draft.mode !== 'note' || !draft.text.trim()) return Promise.resolve(false);
+  const pending = pendingNoteSaves.get(draft.id);
+  if (pending) return pending;
+  const { project, documentPath } = requireProject();
+  const id = draft.id;
+  const text = draft.text;
+  const selection = docStore.selection;
+  const isCurrent = () =>
+    stillOpen(project.id) &&
+    docStore.documentPath === documentPath &&
+    docStore.composerDraft?.id === id;
+  setDocStore('composerDraft', 'noteSaveStatus', 'saving');
+  const save = (async () => {
+    try {
+      const now = new Date().toISOString();
+      const saved = await invoke<DocumentAnnotation>(IPC.SaveDocumentAnnotation, {
+        projectRoot: project.path,
+        annotation: {
+          id,
+          kind: 'note',
+          anchor,
+          text: text.trim(),
+          createdAt: now,
+          updatedAt: now,
+          resolved: false,
+        },
+      });
+      if (stillOpen(project.id)) putAnnotation(saved);
+      const backup = recoveredNoteDraft(project.path, documentPath);
+      if (backup?.id === id && backup.text === text)
+        backupNoteDraft(project.path, documentPath, null);
+      if (isCurrent()) {
+        if (docStore.composerDraft?.mode === 'note' && docStore.composerDraft.text === text)
+          setDocStore({ composerDraft: null, selection: null });
+        else setDocStore('composerDraft', 'noteSaveStatus', undefined);
+      }
+      return true;
+    } catch (err) {
+      if (isCurrent()) setDocStore('composerDraft', 'noteSaveStatus', 'error');
+      else keepFailedNote(project, documentPath, { draft: { id, text, mode: 'note' }, selection });
+      showNotification(errMessage(err));
+      return false;
+    } finally {
+      pendingNoteSaves.delete(id);
+    }
+  })();
+  pendingNoteSaves.set(id, save);
+  return save;
 }
 
 export function setDocumentView(view: DocumentView): void {
@@ -317,15 +606,65 @@ export function setDocumentSelection(selection: DocumentSelection | null): void 
   setDocStore('selection', selection);
 }
 
-/** Opens the compare view, a modal over whatever tab is up. */
+/**
+ * Starts a review. One proposal is reviewed in the document itself; several
+ * need the compare view, a modal over whatever tab is up.
+ */
 export function openDocumentCompare(runId: string, candidateId?: string): void {
+  const run = reviewableRuns().find((r) => r.id === runId);
+  const proposals = run?.candidates.filter((c) => c.commitSha) ?? [];
+  const snapshot = docStore.snapshot;
+  // The inline view diffs against the run's base; only a clean, current base
+  // makes that what the reader sees as their document.
+  const inline =
+    run?.documentPath === docStore.documentPath &&
+    !!snapshot &&
+    !snapshot.dirty &&
+    snapshot.headSha === run.baseSha &&
+    proposals.length === 1 &&
+    (!candidateId || candidateId === proposals[0].id);
+  if (inline) {
+    afterSavingMarkdown(() =>
+      setDocStore({
+        reviewRunId: runId,
+        compareRunId: null,
+        compareCandidateId: null,
+        view: 'document',
+      }),
+    );
+  } else openDocumentCompareModal(runId, candidateId);
+}
+
+/** The compare view itself, whatever the number of proposals. */
+export function openDocumentCompareModal(runId: string, candidateId?: string): void {
   afterSavingMarkdown(() =>
-    setDocStore({ compareRunId: runId, compareCandidateId: candidateId ?? null }),
+    setDocStore({
+      compareRunId: runId,
+      compareCandidateId: candidateId ?? null,
+      reviewRunId: null,
+    }),
   );
 }
 
 export function closeDocumentCompare(): void {
   setDocStore({ compareRunId: null, compareCandidateId: null });
+}
+
+/** The run and proposal under inline review, while that review is open. */
+export function inlineReview():
+  | { run: DocumentRunRecord; candidate: DocumentCandidateRecord }
+  | undefined {
+  const run = reviewableRuns().find((r) => r.id === docStore.reviewRunId);
+  const proposals = run?.candidates.filter((c) => c.commitSha) ?? [];
+  if (!run || run.documentPath !== docStore.documentPath || proposals.length !== 1) return;
+  return { run, candidate: proposals[0] };
+}
+
+/** Leaves the inline review without deciding; false when none was open. */
+export function closeDocumentReview(): boolean {
+  const open = inlineReview() !== undefined;
+  if (docStore.reviewRunId) setDocStore('reviewRunId', null);
+  return open;
 }
 
 /** Runs with at least one proposal to look at. */
@@ -598,7 +937,7 @@ export async function acceptDocumentCandidate(
     showNotification(
       partial ? `Accepted ${partial.accepted} of ${partial.total} changes` : 'Proposal accepted',
     );
-    setDocStore({ compareRunId: null, compareCandidateId: null });
+    setDocStore({ compareRunId: null, compareCandidateId: null, reviewRunId: null });
   } catch (err) {
     showNotification(errMessage(err));
   }
@@ -679,6 +1018,7 @@ export async function rejectDocumentRun(runId: string): Promise<void> {
     upsertRun(run);
     if (docStore.compareRunId === runId)
       setDocStore({ compareRunId: null, compareCandidateId: null });
+    if (docStore.reviewRunId === runId) setDocStore('reviewRunId', null);
   } catch (err) {
     showNotification(errMessage(err));
   }
@@ -728,7 +1068,7 @@ export async function discardDocumentEdits(): Promise<boolean> {
   if (!(await flushMarkdownEditor()) || !stillOpen(project.id)) return false;
   try {
     await invoke(IPC.DiscardDocumentEdits, { projectRoot: project.path });
-    showNotification('Uncommitted edits discarded');
+    showNotification('Restored the last saved version');
     void refreshDocumentSnapshot();
     return true;
   } catch (err) {
@@ -743,7 +1083,7 @@ export async function commitDocumentEdits(): Promise<boolean> {
   if (!(await flushMarkdownEditor()) || !stillOpen(project.id)) return false;
   try {
     await invoke(IPC.CommitDocumentEdits, { projectRoot: project.path });
-    showNotification('Uncommitted edits committed');
+    showNotification('Version saved');
     void refreshDocumentSnapshot();
     return true;
   } catch (err) {
@@ -864,17 +1204,20 @@ export async function setDocumentAnnotationResolved(id: string, resolved: boolea
   }
 }
 
-export async function updateDocumentAnnotationText(id: string, text: string): Promise<void> {
+export async function updateDocumentAnnotationText(id: string, text: string): Promise<boolean> {
   const current = docStore.annotations.find((a) => a.id === id);
-  if (!current || current.text === text) return;
+  if (!current) return false;
+  if (current.text === text) return true;
   try {
     await persistAnnotation({ ...current, text });
+    return true;
   } catch (err) {
     showNotification(errMessage(err));
+    return false;
   }
 }
 
-/** One click removes a bubble; the last one removed can be brought back. */
+/** One click removes a bubble; Undo brings back the recent ones, newest first. */
 export async function deleteDocumentAnnotation(id: string): Promise<void> {
   const { project } = requireProject();
   const current = docStore.annotations.find((a) => a.id === id);
@@ -882,7 +1225,7 @@ export async function deleteDocumentAnnotation(id: string): Promise<void> {
   setDocStore(
     produce((s) => {
       s.annotations = s.annotations.filter((a) => a.id !== id);
-      s.lastDeleted = current;
+      s.recentlyDeleted = [...s.recentlyDeleted, current];
     }),
   );
   try {
@@ -890,14 +1233,14 @@ export async function deleteDocumentAnnotation(id: string): Promise<void> {
   } catch (err) {
     showNotification(errMessage(err));
     putAnnotation(current);
-    setDocStore('lastDeleted', null);
+    setDocStore('recentlyDeleted', (list) => list.filter((a) => a.id !== id));
   }
 }
 
 export async function undoDeleteDocumentAnnotation(): Promise<void> {
-  const last = docStore.lastDeleted;
+  const last = docStore.recentlyDeleted.at(-1);
   if (!last) return;
-  setDocStore('lastDeleted', null);
+  setDocStore('recentlyDeleted', (list) => list.slice(0, -1));
   try {
     await persistAnnotation(last);
   } catch (err) {
@@ -906,7 +1249,7 @@ export async function undoDeleteDocumentAnnotation(): Promise<void> {
 }
 
 export function dismissUndo(): void {
-  setDocStore('lastDeleted', null);
+  setDocStore('recentlyDeleted', []);
 }
 
 export function setShowResolvedAnnotations(show: boolean): void {
@@ -973,9 +1316,14 @@ export function initDocumentListeners(): () => void {
       if (hadSnapshot && previousHeadSha !== p.snapshot.headSha) void loadDocumentAnnotations();
     });
   });
+  const offWarning = window.electron.ipcRenderer.on(IPC.QuickEditWarning, (payload: unknown) => {
+    const message = (payload as { message?: unknown } | undefined)?.message;
+    if (typeof message === 'string') showNotification(message);
+  });
   return () => {
     offRun();
     offAnnotation();
     offChanged();
+    offWarning();
   };
 }

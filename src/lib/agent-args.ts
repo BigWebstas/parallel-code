@@ -196,6 +196,56 @@ export function buildTaskAgentArgs(
   ];
 }
 
+const MODEL_FLAGS = ['--model', '-m'];
+
+/** Whether `args[index]` is part of a model flag (`--model x`, `-m x`, `--model=x`). */
+export function isModelArg(args: readonly string[], index: number): boolean {
+  const arg = args[index];
+  return (
+    MODEL_FLAGS.includes(arg) ||
+    MODEL_FLAGS.includes(args[index - 1] ?? '') ||
+    /^(?:--model|-m)=/.test(arg)
+  );
+}
+
+/** Whether `args[index]` sets a reasoning level: Claude's `--effort`, Codex's config key. */
+export function isEffortArg(args: readonly string[], index: number): boolean {
+  const arg = args[index];
+  const prev = args[index - 1] ?? '';
+  const isConfig = (flag: string) => flag === '-c' || flag === '--config';
+  const isEffortKey = (value = '') => value.startsWith('model_reasoning_effort=');
+  return (
+    arg === '--effort' ||
+    prev === '--effort' ||
+    arg.startsWith('--effort=') ||
+    (isConfig(arg) && isEffortKey(args[index + 1])) ||
+    (isConfig(prev) && isEffortKey(arg))
+  );
+}
+
+/** The model a launch's own args set, if any; the last flag wins, as in the CLIs. */
+export function modelInArgs(args: readonly string[]): string {
+  let model = '';
+  args.forEach((arg, index) => {
+    if (MODEL_FLAGS.includes(args[index - 1] ?? '')) model = arg;
+    else model = /^(?:--model|-m)=(.+)$/.exec(arg)?.[1] ?? model;
+  });
+  return model;
+}
+
+/** The reasoning level a launch's own args set: Claude's flag or Codex's config key. */
+export function effortInArgs(args: readonly string[]): string {
+  let effort = '';
+  args.forEach((arg, index) => {
+    const prev = args[index - 1] ?? '';
+    const key = /^model_reasoning_effort="?([^"]*)"?$/.exec(arg)?.[1];
+    if (prev === '--effort') effort = arg;
+    else if (arg.startsWith('--effort=')) effort = arg.slice('--effort='.length);
+    else if ((prev === '-c' || prev === '--config') && key !== undefined) effort = key;
+  });
+  return effort;
+}
+
 /** Recognize the built-in picker launches without interpreting custom CLI options. */
 export function taskAgentOpensSessionPicker(
   ...launch: Parameters<typeof buildTaskAgentArgs>
@@ -208,9 +258,9 @@ export function taskAgentOpensSessionPicker(
       ? '--resume'
       : undefined;
   const configuredArgs = agentDef.resume_args?.length ? agentDef.resume_args : agentDef.args;
-  // Reviewer model overrides do not change whether the resume command opens a picker.
+  // Reviewer model and reasoning overrides do not change whether the resume command opens a picker.
   const configured = configuredArgs
-    .filter((arg, index) => arg !== '--model' && configuredArgs[index - 1] !== '--model')
+    .filter((_, index) => !isModelArg(configuredArgs, index) && !isEffortArg(configuredArgs, index))
     .join(' ');
   if (
     !selector ||

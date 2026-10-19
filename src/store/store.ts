@@ -29,7 +29,7 @@ export {
   removeCustomAgent,
   setAgentEnvFile,
 } from './agents';
-export { publishAgentTour } from './agent-tour';
+export { publishAgentTour, referenceTourCard } from './agent-tour';
 export {
   openCanvasDocument,
   openCanvasBrowser,
@@ -139,6 +139,7 @@ export {
   setTaskViewportVisibility,
   toggleSidebar,
   toggleArena,
+  openThinkingSpace,
   setDocumentWorkspacesEnabled,
   toggleFocusMode,
   toggleTaskFocusMode,
@@ -175,9 +176,11 @@ export {
   setShareDockerAgentAuth,
   setAskCodeProvider,
   setAskCodeModel,
+  setAskCodeEffort,
   setMinimaxApiKey,
   setWindowState,
   setPreferUiMode,
+  setDisableClaudeUiMode,
   setDefaultSkipPermissions,
   setCanvasOwnershipBadges,
   setDefaultPropagateSkipPermissions,

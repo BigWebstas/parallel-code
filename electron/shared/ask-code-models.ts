@@ -19,6 +19,12 @@ export const CODEX_MODEL_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 export interface CodexModelChoice {
   slug: string;
   displayName: string;
+  /** Reasoning levels the model takes, when the cache lists them. */
+  efforts?: string[];
+  /** The model the CLI runs when the app names none; requests pass it explicitly. */
+  isDefault?: true;
+  /** The level the CLI runs this model at when the app names none. */
+  defaultEffort?: string;
 }
 
 /** Guards a model before it becomes a `--model` or `-m` argument to a CLI. */
@@ -48,6 +54,13 @@ export function askCodeEnvFile(
   if (provider === 'claude') return envFiles['claude-code'];
   return provider === 'codex' ? envFiles.codex : undefined;
 }
+
+/**
+ * The level Claude tours, answers and reviewers run at when none is chosen.
+ * shortcut: fixed level — the CLI keeps its own default per full model id,
+ * which the aliases sent here do not name; read it if the CLI ever reports it.
+ */
+export const ASK_CODE_CLAUDE_EFFORT = 'medium';
 
 /**
  * Reasoning levels each CLI accepts, mirrored from the document runner so the

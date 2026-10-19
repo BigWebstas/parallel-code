@@ -33,6 +33,7 @@ import type {
 import type { DockerSource } from '../lib/docker';
 import type { LookPreset, AppearanceMode } from '../lib/look';
 import type { KeyBinding } from '../lib/keybindings';
+import type { FeatureHintId } from '../lib/feature-hints';
 import type { CustomTheme } from '../lib/custom-theme';
 import type { ReasoningProfile } from '../investigation/profiles';
 import type { MindMapDocument } from '../graph/model';
@@ -116,10 +117,17 @@ export interface Project {
   kind?: ProjectKind;
   /** Repo-relative path of the document a document project opens. */
   documentPath?: string;
+  /** Quick edit: the original file this document project's private copy syncs
+   *  to. The project path is then the copy's folder under the app's data. */
+  quickEditSource?: string;
   /** Last file read in the document workspace, relative to the project. */
   documentOpenPath?: string;
+  /** Files opened most recently in the document workspace, newest first. */
+  documentRecentPaths?: string[];
   /** Preview scale; independent of the app and terminal zoom. */
   documentZoom?: number;
+  /** Keep the agent, notes and files panel out of the reading area until needed. */
+  documentPanelCollapsed?: boolean;
   /** Agent that owns the project's warm main session. */
   documentMainAgentId?: string;
   /** Resumable main sessions per agent id, with the base sha each last saw. */
@@ -131,6 +139,14 @@ export interface Project {
   documentTerminalAgentId?: string;
   /** Super Productivity project that tasks of this project are tracked in. */
   superProductivityProjectId?: string;
+}
+
+/** The Kanban card a new task was started from; see src/store/kanban.ts. */
+export interface KanbanNewTaskSource {
+  projectId: string;
+  title: string;
+  column: string;
+  ref: { column: number; card: number };
 }
 
 /** A Super Productivity task the New Task form was opened from. */
@@ -270,9 +286,6 @@ export interface Task {
   planFileName?: string;
   /** Worktree-relative path of the plan file, for opening it on the canvas. Not persisted. */
   planPath?: string;
-  /** Path of the plan this session was seen writing, as opposed to one found
-   *  already on disk. Only this opens the canvas by itself. Not persisted. */
-  livePlanPath?: string;
   /** What is open in the task's canvas column, one tab each, in strip order. */
   canvasTabs?: CanvasTab[];
   /** Key (see canvasTabKey) of the tab in front. */
@@ -287,9 +300,10 @@ export interface Task {
   /** Runtime-only: bypass setup when this agent session opens the graph from chat. */
   reasoningCanvasRequest?: { agentId: string; generation: number };
   /**
-   * Runtime-only: the tour the agent last published through `tour_publish`. The
-   * revision bumps on every publish so the panel opens the viewer again even
-   * when the payload is unchanged. Not persisted.
+   * The tour the agent last published through `tour_publish`. The revision
+   * bumps on every publish so the panel opens the viewer again even when the
+   * payload is unchanged. Only the payload is persisted; a restored tour has
+   * revision 0, so it waits for its button instead of opening at startup.
    */
   agentTour?: { revision: number; payload: AgentTourPayload };
   reasoningWorkspaces?: Record<string, ReasoningWorkspace>;
@@ -415,6 +429,8 @@ export interface PersistedTask {
   canvasTaskLinks?: CanvasTaskLink[];
   /** Validated on load; an unreadable value is kept and written back unchanged. */
   mindMap?: unknown;
+  /** The published tour's payload; validated on load, dropped if unreadable. */
+  agentTour?: unknown;
   reasoningProfile?: ReasoningProfile;
   reasoningWorkspaces?: Record<string, ReasoningWorkspace>;
   branchAdoptedFrom?: string;
@@ -508,9 +524,12 @@ export interface PersistedState {
   shareDockerAgentAuth?: boolean;
   askCodeProvider?: AskCodeProvider;
   askCodeModel?: string;
+  askCodeEffort?: Partial<Record<AskCodeProvider, string>>;
   customAgents?: AgentDef[];
   agentEnvFiles?: Record<string, string>;
   keybindingMigrationDismissed?: boolean;
+  featureHintsEnabled?: boolean;
+  seenFeatureHints?: FeatureHintId[];
   focusMode?: boolean;
   verboseLogging?: boolean;
   activeCustomThemeId?: string | null;
@@ -525,6 +544,7 @@ export interface PersistedState {
   coordinatorNotificationDelayMs?: number;
   coordinatorControlHintDismissed?: boolean;
   preferUiMode?: boolean;
+  disableClaudeUiMode?: boolean;
   defaultSkipPermissions?: boolean;
   defaultPropagateSkipPermissions?: boolean;
   /** Show which canvas nodes the user owns (agents cannot edit them without override). */
@@ -642,6 +662,8 @@ export interface AppStore {
   askCodeProvider: AskCodeProvider;
   /** CLI model alias or slug used for code Q&A and tours; empty lets the CLI choose. */
   askCodeModel: string;
+  /** Reasoning level per provider for new reviewers; unset runs the CLI's own default. */
+  askCodeEffort: Partial<Record<AskCodeProvider, string>>;
   newTaskDropUrl: string | null;
   newTaskPrefillPrompt: {
     prompt: string;
@@ -654,17 +676,26 @@ export interface AppStore {
     githubPr?: import('../ipc/types').GitHubWorkItem;
     /** Set when the form was opened from a Super Productivity task. */
     superProductivity?: SpNewTaskSource;
+    /** Set when the form was opened from a Kanban card. */
+    kanban?: KanbanNewTaskSource;
   } | null;
   missingProjectIds: Record<string, true>;
   remoteAccess: RemoteAccess;
   /** Persisted: start the remote (Connect Phone) server automatically on launch. */
   autoStartRemoteAccess: boolean;
   githubIssuesProjectId: string | null;
+  /** Project whose Kanban board occupies the task area. */
+  kanbanProjectId: string | null;
   showArena: boolean;
+  /** The thinking space: how it opens, or null when closed. */
+  thinkingSpace: 'list' | 'new' | null;
   keybindingPreset: string;
   /** Per-preset user overrides. Outer key = preset ID, inner = binding ID → override. */
   keybindingOverridesByPreset: Record<string, Record<string, KeybindingOverride>>;
   keybindingMigrationDismissed: boolean;
+  /** One-time feature tips; on for new installs, off for installs that predate them. */
+  featureHintsEnabled: boolean;
+  seenFeatureHints: FeatureHintId[];
   focusMode: boolean;
   /** Per-task flag: true when the task is rendering its focus-mode two-column layout. */
   taskSplitMode: Record<string, boolean>;
@@ -685,6 +716,8 @@ export interface AppStore {
   coordinatorNotificationDelayMs: number;
   coordinatorControlHintDismissed: boolean;
   preferUiMode: boolean;
+  /** Keep Claude Code out of the chat view; its tasks run in the terminal only. */
+  disableClaudeUiMode: boolean;
   defaultSkipPermissions: boolean;
   defaultPropagateSkipPermissions: boolean;
   canvasOwnershipBadges: boolean;
