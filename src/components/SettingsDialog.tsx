@@ -49,17 +49,20 @@ import {
   setDocumentWorkspacesEnabled,
   setCoordinatorNotificationDelayMs,
   setPreferUiMode,
+  setDisableClaudeUiMode,
   setDefaultSkipPermissions,
   setCanvasOwnershipBadges,
   setDefaultPropagateSkipPermissions,
   updateStatus,
   checkForUpdates,
 } from '../store/store';
+import { setFeatureHintsEnabled } from '../store/onboarding';
 import { CustomAgentEditor } from './CustomAgentEditor';
 import { AgentEnvFileEditor } from './AgentEnvFileEditor';
 import { SuperProductivitySettings } from './SuperProductivitySettings';
 import { CopyIcon, PencilIcon, PlusIcon, SyncIcon } from './icons';
 import { mod } from '../lib/platform';
+import { modelToRun } from '../lib/ask-code-model';
 import { DEFAULT_COORDINATOR_CONCURRENT_TASKS } from '../lib/coordinator-limits';
 import { DEFAULT_DOCKER_IMAGE, PROJECT_DOCKERFILE_RELATIVE_PATH } from '../lib/docker';
 import { DEFAULT_CONFIDENCE_PROMPT } from '../lib/task-confidence';
@@ -516,7 +519,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               label="Write task briefs"
               checked={store.taskBriefs}
               onChange={setTaskBriefs}
-              description="After each agent turn, a cheap model summarises what changed, what is open and what the agent decided. Sends the turn's prompts, the agent's last message and the diff to that model's provider"
+              description="After each agent turn, a model summarises what needs you, what is open, what the agent decided and what changed, and flags claims the diff does not show. Uses Claude Sonnet when the model below is Claude. Sends the turn's prompts, the agent's last message and the diff to that model's provider"
             />
             <Show when={store.modelTaskNames || store.taskBriefs}>
               <label
@@ -531,7 +534,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 }}
               >
                 <span style={{ 'font-size': '13px', color: theme.fg, 'white-space': 'nowrap' }}>
-                  Naming and brief model
+                  Naming model
                 </span>
                 <select
                   value={store.taskNameModel}
@@ -553,40 +556,44 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 </select>
               </label>
             </Show>
-            <label
-              style={{
-                display: 'flex',
-                'flex-direction': 'column',
-                gap: '6px',
-                padding: '8px 12px',
-                'border-radius': 'var(--radius-md)',
-                background: theme.bgInput,
-                border: `1px solid ${theme.border}`,
-              }}
-            >
-              <span style={{ 'font-size': '13px', color: theme.fg }}>Confidence rating prompt</span>
-              <span style={{ 'font-size': '12px', color: theme.fgMuted }}>
-                Sent to the agent by Rate confidence on the task brief card. Leave empty for the
-                built-in audit, or name your own rating skill. It should end with the agent calling
-                confidence_publish.
-              </span>
-              <textarea
-                rows={3}
-                value={store.confidencePrompt}
-                placeholder={DEFAULT_CONFIDENCE_PROMPT}
-                onChange={(e) => setConfidencePrompt(e.currentTarget.value)}
+            <Show when={store.taskBriefs}>
+              <label
                 style={{
-                  resize: 'vertical',
-                  background: theme.taskPanelBg,
+                  display: 'flex',
+                  'flex-direction': 'column',
+                  gap: '6px',
+                  padding: '8px 12px',
+                  'border-radius': 'var(--radius-md)',
+                  background: theme.bgInput,
                   border: `1px solid ${theme.border}`,
-                  'border-radius': 'var(--radius-sm)',
-                  padding: '6px 10px',
-                  color: theme.fg,
-                  'font-size': '12px',
-                  'font-family': 'inherit',
                 }}
-              />
-            </label>
+              >
+                <span style={{ 'font-size': '13px', color: theme.fg }}>
+                  Confidence rating prompt
+                </span>
+                <span style={{ 'font-size': '12px', color: theme.fgMuted }}>
+                  Sent to the agent by Rate confidence on the task brief card. Leave empty for the
+                  built-in audit, or name your own rating skill. It should end with the agent
+                  calling confidence_publish.
+                </span>
+                <textarea
+                  rows={3}
+                  value={store.confidencePrompt}
+                  placeholder={DEFAULT_CONFIDENCE_PROMPT}
+                  onChange={(e) => setConfidencePrompt(e.currentTarget.value)}
+                  style={{
+                    resize: 'vertical',
+                    background: theme.taskPanelBg,
+                    border: `1px solid ${theme.border}`,
+                    'border-radius': 'var(--radius-sm)',
+                    padding: '6px 10px',
+                    color: theme.fg,
+                    'font-size': '12px',
+                    'font-family': 'inherit',
+                  }}
+                />
+              </label>
+            </Show>
             <SettingsCheckboxRow
               label="Show ownership badges on canvases"
               checked={store.canvasOwnershipBadges}
@@ -624,6 +631,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
               description="Keyboard shortcut hints at the bottom of the sidebar"
             />
             <SettingsCheckboxRow
+              label="Show feature tips"
+              checked={store.featureHintsEnabled}
+              onChange={setFeatureHintsEnabled}
+              description="One-time tips when a feature first becomes useful, such as change tours. Turning this on shows every tip again"
+            />
+            <SettingsCheckboxRow
               label="Font smoothing"
               checked={store.fontSmoothing}
               onChange={setFontSmoothing}
@@ -645,6 +658,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
               checked={store.preferUiMode}
               onChange={setPreferUiMode}
               description="Start new Claude and Codex tasks in Chat when supported. You can still switch each task to Terminal. Existing tasks keep their current view."
+            />
+            <SettingsCheckboxRow
+              label="Turn off UI mode for Claude Code"
+              checked={store.disableClaudeUiMode}
+              onChange={setDisableClaudeUiMode}
+              description="Run Claude Code in the terminal only. Tasks can no longer switch to Chat, and tasks saved in Chat reopen in the terminal on the same conversation. A chat open now keeps running until you switch it to Terminal."
             />
             <SettingsCheckboxRow
               label="Dangerously skip all confirms by default"
@@ -770,7 +789,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     Model
                   </span>
                   <select
-                    value={store.askCodeModel}
+                    value={modelToRun(store.askCodeProvider, store.askCodeModel)}
                     onChange={(e) => setAskCodeModel(e.currentTarget.value)}
                     style={{
                       flex: '1',
@@ -791,8 +810,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         </For>
                       }
                     >
-                      {/* Empty keeps whatever model the codex CLI defaults to. */}
-                      <option value="">CLI default</option>
                       <For each={codexModels()}>
                         {(model) => <option value={model.slug}>{model.displayName}</option>}
                       </For>
@@ -1387,7 +1404,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               label="Document workspaces"
               checked={store.documentWorkspacesEnabled}
               onChange={setDocumentWorkspacesEnabled}
-              description="Add document projects: a folder with one Markdown document, set up for you if it is not a Git repository yet. Select a passage, send the same instruction to one or more agents running headlessly in isolated worktrees, compare the proposals side by side, and accept one as a single readable commit. Adds Document project to the + button next to Projects."
+              description="Add document projects: a folder with one Markdown document, set up for you if it is not a Git repository yet. Select a passage, send the same instruction to one or more agents running headlessly in isolated worktrees, compare the proposals side by side, and accept one as a single readable commit. Adds Documents as an Open as choice when adding a project."
             />
           </SettingsSection>
         </div>

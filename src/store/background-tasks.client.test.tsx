@@ -257,17 +257,27 @@ it('returns for a new turn after an idle re-report', () => {
   expect(isTaskBackgrounded('one')).toBe(false);
 });
 
-it.each([
-  ['waiting', 'PermissionRequest'],
-  ['working', 'UserPromptSubmit'],
-] as const)('stays in the back when a %s hook claim goes stale', (state, event) => {
-  hook(state, event);
+it('stays in the back when a working hook claim goes stale', () => {
+  hook('working', 'UserPromptSubmit');
   sendTaskToBack('one');
   vi.advanceTimersByTime(AGENT_HOOK_STALE_MS);
   expect(getAgentHookStatus('one-agent')).toBeNull();
   expect(isTaskBackgrounded('one')).toBe(true);
 
   // Expiry re-baselines the task; later activity still wakes it.
+  hook('waiting', 'PermissionRequest');
+  expect(isTaskBackgrounded('one')).toBe(false);
+});
+
+it('stays in the back while a sent-back wait goes unanswered', () => {
+  hook('waiting', 'PermissionRequest');
+  sendTaskToBack('one');
+  vi.advanceTimersByTime(AGENT_HOOK_STALE_MS * 2);
+  expect(getAgentHookStatus('one-agent')?.state).toBe('waiting');
+  expect(isTaskBackgrounded('one')).toBe(true);
+
+  // A new ask still wakes it.
+  vi.advanceTimersByTime(1_000);
   hook('waiting', 'PermissionRequest');
   expect(isTaskBackgrounded('one')).toBe(false);
 });
@@ -436,6 +446,17 @@ it('replaces a snooze deadline and supports early manual restore', () => {
   vi.advanceTimersByTime(2 * 3_600_000);
   expect(isTaskBackgrounded('one')).toBe(true);
   expect(getTaskSnoozedUntil('one')).toBeUndefined();
+});
+
+it('keeps snoozed tasks behind tasks added while they wait', () => {
+  sendTaskToBack('one', 1);
+  setStore('tasks', 'four', task('four'));
+  // createTask, uncollapseTask and spawned subtasks all append to the order.
+  setStore('taskOrder', [...store.taskOrder, 'four']);
+  expect(store.taskOrder).toEqual(['two', 'three', 'four', 'one']);
+  expect(isTaskBackgrounded('one')).toBe(true);
+  setStore('taskOrder', (order) => order.filter((id) => id !== 'four'));
+  setStore('tasks', 'four', undefined as unknown as Task);
 });
 
 it('ends timed snooze when the task is selected', () => {
@@ -686,6 +707,17 @@ it.each([
 it('logs who activates a CI-snoozed task', () => {
   setPrChecks('one', { ...prChecks });
   snoozeTaskUntilCi('one');
+  vi.mocked(info).mockClear();
+  setActiveTask('one');
+  expect(info).toHaveBeenCalledWith(
+    'background-tasks',
+    'activating snoozed task',
+    expect.objectContaining({ taskId: 'one', stack: expect.stringContaining('setActiveTask') }),
+  );
+});
+
+it('logs who activates a timed-snoozed task', () => {
+  sendTaskToBack('one', 1);
   vi.mocked(info).mockClear();
   setActiveTask('one');
   expect(info).toHaveBeenCalledWith(

@@ -1,5 +1,13 @@
 import { expectDefined } from '../store/test-helpers';
-import { For, Show, createEffect, createSignal, onCleanup, type ComponentProps } from 'solid-js';
+import {
+  For,
+  Show,
+  createEffect,
+  createSignal,
+  onCleanup,
+  type ComponentProps,
+  type JSX,
+} from 'solid-js';
 import { render } from 'solid-js/web';
 import { createStore } from 'solid-js/store';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
@@ -16,6 +24,7 @@ import {
   showNotification,
   toggleFocusMode,
   setTaskFocusedPanel,
+  setTaskBriefs,
 } from '../store/store';
 import { GIST_LABEL } from '../lib/understanding-tour';
 import type { Task } from '../store/types';
@@ -57,6 +66,7 @@ vi.mock('../store/store', () => {
     taskViewportVisibility: {} as Record<string, string>,
     askCodeProvider: 'minimax',
     agentEnvFiles: {},
+    taskBriefs: true,
   });
   parentNavigation.setCollapsed = (value: boolean) =>
     setStore('tasks', 'parent', 'collapsed', value);
@@ -89,6 +99,7 @@ vi.mock('../store/store', () => {
     activateTaskFromPointer: (id: string) => setStore('activeTaskId', id),
     uncollapseTask: vi.fn(),
     toggleFocusMode: (on?: boolean) => setStore('focusMode', on ?? !store.focusMode),
+    setTaskBriefs: (on: boolean) => setStore('taskBriefs', on),
   };
 });
 vi.mock('../lib/theme', () => ({ theme: {} }));
@@ -103,8 +114,9 @@ vi.mock('../lib/ipc', () => ({
   },
 }));
 vi.mock('./TaskAITerminal', () => ({
-  TaskAITerminal: (props: { onReview?: (path?: string) => void }) => (
+  TaskAITerminal: (props: { onReview?: (path?: string) => void; brief?: JSX.Element }) => (
     <div class="test-terminal">
+      {props.brief}
       Scrollback
       <button
         class="test-chat-review"
@@ -119,6 +131,7 @@ vi.mock('./TaskAITerminal', () => ({
     </div>
   ),
 }));
+vi.mock('./TaskBrief', () => ({ TaskBriefBar: () => <div class="test-brief-bar" /> }));
 vi.mock('./PromptInput', () => ({
   PromptInput: () => <textarea class="test-prompt" value="Draft" />,
 }));
@@ -265,6 +278,32 @@ afterEach(() => {
   vi.mocked(invoke).mockReset();
   vi.mocked(invoke).mockResolvedValue(undefined);
   vi.useRealTimers();
+});
+
+it('hides the brief bar, and with it Rate confidence, while briefs are off', () => {
+  const task: Task = {
+    id: 'task',
+    name: 'Task',
+    projectId: 'project',
+    agentIds: ['agent'],
+    shellAgentIds: [],
+    notes: '',
+    gitIsolation: 'none',
+    branchName: '',
+    worktreePath: '/tmp/task',
+    lastPrompt: '',
+  };
+  const container = document.createElement('div');
+  document.body.append(container);
+  dispose = render(() => <TaskPanel task={task} isActive />, container);
+  const bar = () => container.querySelector('.test-brief-bar');
+  expect(bar()).not.toBeNull();
+  setTaskBriefs(false);
+  try {
+    expect(bar()).toBeNull();
+  } finally {
+    setTaskBriefs(true);
+  }
 });
 
 const tourCard = (title: string, label = 'KEY DECISION') => ({
@@ -532,6 +571,19 @@ it('does not reopen a dismissed agent tour when the panel remounts', () => {
   expect(tourState().open).toBe('true');
 });
 
+it('keeps a tour restored at startup closed until its button is pressed', () => {
+  const card = { label: 'KEY DECISION', title: 'One idea', body: 'Body text.' };
+  const payload = { subject: 'the retry bug', gist: card, cards: [card] };
+  const { setTask, click, tourState } = mountPlanTask();
+
+  setTask('agentTour', { revision: 0, payload });
+  expect(tourState().open).toBe('false');
+
+  click('.test-agent-tour');
+  expect(tourState().open).toBe('true');
+  expect(tourState().subject).toBe('the retry bug');
+});
+
 it('reports a published tour with a card the validator rejects', () => {
   const { setTask, tourState } = mountPlanTask();
   setTask('agentTour', {
@@ -599,6 +651,9 @@ it('sizes the focus support column to content until a shell opens, preserving it
     const column = expectDefined(notesCell.parentElement);
 
     expect(column.style.height).toBe('auto');
+    // Oversized pins must scroll inside the column instead of being clipped.
+    expect(column.style.maxHeight).toBe('100%');
+    expect(column.style.overflow).toBe('auto');
     expect(notesCell.style.minHeight).toBe('100px');
     setTask('shellAgentIds', ['shell']);
     expect(column.style.height).toBe('100%');

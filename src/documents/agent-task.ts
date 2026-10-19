@@ -24,7 +24,12 @@ import type { AgentDef } from '../ipc/types';
 import type { Project, Task } from '../store/types';
 import { documentMainAgentId } from './store';
 import { setRailTab } from './workspace-ui';
-import { documentAgentTaskId, githubAgentTaskId, isDocumentAgentTaskId } from './task-id';
+import {
+  documentAgentTaskId,
+  githubAgentTaskId,
+  isDocumentAgentTaskId,
+  kanbanAgentTaskId,
+} from './task-id';
 export { documentAgentTaskId, isDocumentAgentTaskId } from './task-id';
 
 function terminalAgentDef(project: Project): AgentDef | undefined {
@@ -88,6 +93,14 @@ export function rearmDocumentAgents(task: Task): void {
     if (agent.status === 'exited') restartAgent(id, true);
     else setStore('agents', id, 'attachExisting', true);
   }
+}
+
+/** The document agent waits for an answer: Claude says so through hooks, the rest through terminal output. */
+export function isDocumentAgentWaiting(projectId: string): boolean {
+  const agentIds = store.tasks[documentAgentTaskId(projectId)]?.agentIds ?? [];
+  return agentIds.some(
+    (id) => getAgentHookStatus(id)?.state === 'waiting' || isAgentAskingQuestion(id),
+  );
 }
 
 /**
@@ -157,7 +170,11 @@ export function releaseDocumentAgentTask(previousId: string | null): void {
  *  project is removed, since nothing else would ever kill these ptys. */
 export async function disposeHiddenAgentTasks(projectId: string): Promise<void> {
   await Promise.all(
-    [documentAgentTaskId(projectId), githubAgentTaskId(projectId)].map(disposeHiddenAgentTask),
+    [
+      documentAgentTaskId(projectId),
+      githubAgentTaskId(projectId),
+      kanbanAgentTaskId(projectId),
+    ].map(disposeHiddenAgentTask),
   );
 }
 

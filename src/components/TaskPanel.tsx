@@ -1,4 +1,5 @@
 import { DelegationPanel } from './DelegationPanel';
+import { DetachFromParentButton } from './DetachFromParentButton';
 import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
 import {
   Show,
@@ -26,9 +27,12 @@ import {
   showNotification,
   setTaskSplitMode,
   isTaskCanvasVisible,
+  referenceTourCard,
+  openCanvasDocument,
 } from '../store/store';
+import { markFeatureHintSeen } from '../store/onboarding';
 import { useFocusRegistration } from '../lib/focus-registration';
-import { scheduleTaskFocus } from '../store/focused-panel';
+import { isTaskColumnHighlighted, scheduleTaskFocus } from '../store/focused-panel';
 import { ResizablePanel, type PanelChild } from './ResizablePanel';
 import { CANVAS_DEFAULT_WIDTH, CANVAS_MIN_WIDTH } from '../lib/layout-sizes';
 import type { EditableTextHandle } from './EditableText';
@@ -77,6 +81,7 @@ import {
   type UnderstandingTourInput,
 } from '../lib/create-understanding-tour';
 import { parseAgentTour } from '../lib/understanding-tour';
+import { isTourFilePath, parseTourFile } from '../lib/tour-file';
 import { UnderstandingTourDialog } from './UnderstandingTourDialog';
 import { getTaskDiffBaseBranch } from '../lib/load-task-diff';
 
@@ -178,6 +183,7 @@ export function TaskPanel(props: TaskPanelProps) {
       selectedCommit: selectedCommit(),
     });
   const openOrGenerateTour = () => {
+    markFeatureHintSeen('change-tour');
     if (tour.stops().length === 0) return generateTour();
     setFinishAction(null);
     setStartTour(true);
@@ -262,11 +268,12 @@ export function TaskPanel(props: TaskPanelProps) {
     else showAgentTour();
   };
   // Every publish opens the viewer, including a second publish of the same subject.
+  // Revision 0 is a tour restored at startup; it opens from its button only.
   createEffect(
     on(
       () => props.task.agentTour?.revision,
       (revision) => {
-        if (revision === undefined) {
+        if (revision === undefined || revision === 0) {
           shownAgentTourRevisions.delete(props.task);
           return;
         }
@@ -292,11 +299,44 @@ export function TaskPanel(props: TaskPanelProps) {
       filePath,
     });
   /**
+   * Reopens a tour saved in the worktree, with every answer in it, and reads
+   * the text it explains so follow-ups still have their context.
+   */
+  const openSavedTour = async (path: string) => {
+    const { worktreePath, name: taskName } = props.task;
+    const read = (documentPath: string) =>
+      invoke<DocumentSnapshot>(IPC.ReadDocument, { projectRoot: worktreePath, documentPath });
+    const snapshot = await read(path);
+    if (snapshot.missing) throw new Error('the file is not in the worktree');
+    const file = parseTourFile(snapshot.content);
+    let sourceText: string | undefined;
+    if (file.source && (file.kind === 'plan' || file.kind === 'document')) {
+      const source = await read(file.source).catch(() => undefined);
+      if (source && !source.missing) sourceText = source.content;
+    }
+    await understanding.restore({
+      file,
+      text: snapshot.content,
+      savedPath: path,
+      worktreePath,
+      taskName,
+      sourceText,
+    });
+    setUnderstandingOpen(true);
+  };
+  /**
    * A document open on the canvas is read fresh, so an edited file gets a new
    * tour. The task's own plan takes the plan tour with the same text the notes
-   * button sends, so switching between the two never regenerates it.
+   * button sends, so switching between the two never regenerates it. A saved
+   * tour opens as itself, with no provider call.
    */
   const openDocumentTour = (path: string) => {
+    if (isTourFilePath(path)) {
+      openSavedTour(path).catch((error: unknown) =>
+        showNotification(`Could not open ${path}: ${errMessage(error)}`),
+      );
+      return;
+    }
     const kind = documentTourKind(props.task, path);
     if (kind === 'plan' && props.task.planContent) {
       openPlanTour();
@@ -572,16 +612,19 @@ export function TaskPanel(props: TaskPanelProps) {
                 });
               }
         }
+        onOpenTour={openAgentTour}
         task={props.task}
         isActive={props.isActive}
         selectedAgentId={selectedAgentId()}
         onSelectAgent={setActiveAgent}
         promptHandle={promptHandle}
         onTranscriptMarksReady={handleTranscriptMarks}
-        // Shown with briefs off too, so Rate confidence stays reachable; a task
+        // Turning briefs off hides the whole card, Rate confidence included; a task
         // without agents has no one to ask, unless a rating is already there.
         brief={
-          <Show when={props.task.agentIds.length > 0 || props.task.confidence}>
+          <Show
+            when={store.taskBriefs && (props.task.agentIds.length > 0 || props.task.confidence)}
+          >
             <TaskBriefBar
               task={props.task}
               onFileClick={(file) => setDiffScrollTarget(file)}
@@ -875,7 +918,13 @@ export function TaskPanel(props: TaskPanelProps) {
                     absorberIds={['shell-section']}
                     // An empty shell is just its toolbar. An auto-height column
                     // keeps the absorber from claiming the unused column space.
-                    style={{ height: props.task.shellAgentIds.length > 0 ? '100%' : 'auto' }}
+                    // Vertical pins don't shrink, so pinned or dragged panels can
+                    // outgrow the column; scroll keeps them and their handles reachable.
+                    style={{
+                      height: props.task.shellAgentIds.length > 0 ? '100%' : 'auto',
+                      'max-height': '100%',
+                      overflow: 'auto',
+                    }}
                     children={[
                       ...(isGitUnavailable() ? [] : [changedFilesChild]),
                       notesChild,
@@ -910,7 +959,7 @@ export function TaskPanel(props: TaskPanelProps) {
   return (
     <div
       ref={panelRef}
-      class={`task-column ${props.isActive ? 'active' : ''}${store.focusMode ? ' focus-mode' : ''}`}
+      class={`task-column ${isTaskColumnHighlighted(props.task.id) ? 'active' : ''}${store.focusMode ? ' focus-mode' : ''}`}
       style={{
         display: 'flex',
         'flex-direction': 'column',
@@ -949,7 +998,7 @@ export function TaskPanel(props: TaskPanelProps) {
         <div style={{ flex: '0 0 68px', overflow: 'hidden' }}>
           <TaskTitleBar
             task={props.task}
-            isActive={props.isActive}
+            isActive={isTaskColumnHighlighted(props.task.id)}
             onClose={() => setShowCloseConfirm(true)}
             onFinish={() => openFinish('merge')}
             pushing={pushing()}
@@ -996,17 +1045,20 @@ export function TaskPanel(props: TaskPanelProps) {
               }
             >
               {(parent) => (
-                <button
-                  class="delegation-button delegation-parent-link"
-                  title={`${parent().collapsed ? 'Resume and open parent' : 'Parent task'}: ${parent().name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    if (parent().collapsed) uncollapseTask(parent().id);
-                    activateTaskFromPointer(parent().id);
-                  }}
-                >
-                  {parent().collapsed ? 'Resume and open parent' : 'Parent task'}: {parent().name}
-                </button>
+                <span style={{ display: 'flex', gap: '6px', 'min-width': '0' }}>
+                  <button
+                    class="delegation-button delegation-parent-link"
+                    title={`${parent().collapsed ? 'Resume and open parent' : 'Parent task'}: ${parent().name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (parent().collapsed) uncollapseTask(parent().id);
+                      activateTaskFromPointer(parent().id);
+                    }}
+                  >
+                    {parent().collapsed ? 'Resume and open parent' : 'Parent task'}: {parent().name}
+                  </button>
+                  <DetachFromParentButton taskId={props.task.id} parentName={parent().name} />
+                </span>
               )}
             </Show>
             <Show
@@ -1209,6 +1261,17 @@ export function TaskPanel(props: TaskPanelProps) {
         open={understandingOpen()}
         onClose={() => setUnderstandingOpen(false)}
         worktreePath={props.task.worktreePath}
+        onReference={(reference) => {
+          // The prompt sits behind the tour, so the tour steps aside for it;
+          // reopening keeps the reader's place.
+          setUnderstandingOpen(false);
+          referenceTourCard(props.task.id, reference);
+        }}
+        onOpenFile={(path) => {
+          // The file opens on the canvas behind the tour, so the tour steps aside.
+          setUnderstandingOpen(false);
+          openCanvasDocument(props.task.id, path);
+        }}
         zIndex={1450}
       />
     </div>

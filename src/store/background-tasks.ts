@@ -59,7 +59,7 @@ interface AgentActivity {
   /** Facts derived from the hook status or, once it is gone, from output heuristics. */
   activity: string;
   hooked: boolean;
-  /** When the working/waiting claim was reported; only such claims expire. */
+  /** When the working claim was reported; only such claims expire. */
   claimAt?: number;
 }
 
@@ -87,7 +87,7 @@ function agentActivity(agentId: string, questions: readonly TaskOpenQuestion[]):
       hookMarker(hook),
     ]),
     hooked: hook !== null,
-    claimAt: hook && hook.state !== 'done' ? hook.updatedAt : undefined,
+    claimAt: hook?.state === 'working' ? hook.updatedAt : undefined,
   };
 }
 
@@ -317,6 +317,15 @@ export function startBackgroundTaskWatcher(): () => void {
           setStore('focusMode', false);
         }
       }
+    });
+    // New, resumed and spawned tasks are appended to the order, which would land
+    // them behind waiting tiles. Keep the waiting tiles last instead.
+    createEffect(() => {
+      const order = store.taskOrder;
+      const back = order.filter(isTaskBackgrounded);
+      if (order.slice(order.length - back.length).every(isTaskBackgrounded)) return;
+      const front = order.filter((id) => !isTaskBackgrounded(id));
+      untrack(() => setStore('taskOrder', [...front, ...back]));
     });
     createEffect(() => {
       const deadlines = [...backgroundTasks().values()].flatMap((task) =>

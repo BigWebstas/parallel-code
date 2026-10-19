@@ -2,32 +2,33 @@ import { render } from 'solid-js/web';
 import { createStore, type SetStoreFunction } from 'solid-js/store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockChange, mockKeep, mockRate, mockRefreshCode, mockTargetName } = vi.hoisted(() => ({
-  mockTargetName: vi.fn<() => string | undefined>(),
-  mockRefreshCode: vi.fn(),
-  mockChange: vi.fn(),
-  mockKeep: vi.fn(),
-  mockRate: vi.fn(),
-}));
+const { mockChange, mockKeep, mockMarkRead, mockRate, mockRefreshCode, mockTargetName } =
+  vi.hoisted(() => ({
+    mockTargetName: vi.fn<() => string | undefined>(),
+    mockMarkRead: vi.fn(),
+    mockRefreshCode: vi.fn(),
+    mockChange: vi.fn(),
+    mockKeep: vi.fn(),
+    mockRate: vi.fn(),
+  }));
 
 vi.mock('../store/task-brief', () => ({
   briefTargetAgentName: mockTargetName,
   changeBriefDecision: mockChange,
   keepBriefDecision: mockKeep,
+  markBriefRead: mockMarkRead,
   reopenBriefDecision: vi.fn(),
   refreshTaskBrief: vi.fn(),
   refreshCodeFingerprint: mockRefreshCode,
   requestConfidenceRating: mockRate,
 }));
 
-import { setStore } from '../store/core';
 import type { Task } from '../store/types';
 import { TaskBriefBar, TaskBriefLine } from './TaskBrief';
 
 let dispose: (() => void) | undefined;
 let lastSetState: SetStoreFunction<Task> | undefined;
 beforeEach(() => {
-  setStore('taskBriefs', true);
   mockTargetName.mockReturnValue(undefined);
 });
 afterEach(() => {
@@ -52,6 +53,7 @@ function baseTask(overrides: Partial<Task> = {}): Task {
       brief: {
         goal: 'Stop webhook timeouts.',
         headline: 'Deduplicate by event ID or invoice ID?',
+        unbacked: [],
         changed: [{ text: 'Route queues the event.', file: 'src/webhooks.ts' }],
         extra: [],
         open: [{ text: 'Nine event types still synchronous.' }],
@@ -95,10 +97,56 @@ describe('TaskBriefBar', () => {
   it('shows the headline and scores compactly and marks a rating the code moved past', () => {
     const { bar } = mount(baseTask());
     expect(bar.textContent).toContain('Deduplicate by event ID or invoice ID?');
-    expect(bar.textContent).toContain('Correct 70%');
-    expect(bar.textContent).toContain('Complete 40%');
+    expect(bar.querySelector('[aria-label="Correct 70%"]')?.getAttribute('title')).toBe('Correct');
+    expect(bar.querySelector('[aria-label="Complete 40%"] svg')).not.toBeNull();
     expect(bar.textContent).toContain('out of date');
     expect(bar.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('keeps unknown score labels as text', () => {
+    const task = baseTask();
+    const confidence = task.confidence;
+    if (!confidence) throw new Error('Missing rating');
+    const { bar } = mount({
+      ...task,
+      confidence: { ...confidence, scores: [{ label: 'toString', score: 50, why: 'Odd.' }] },
+    });
+    const score = bar.querySelector('[aria-label="toString 50%"]');
+    expect(score?.textContent).toBe('toString50%');
+    expect(score?.querySelector('svg')).toBeNull();
+  });
+
+  it('counts changed, open and decided items on the bar, rating gaps included', () => {
+    const task = baseTask();
+    const confidence = task.confidence;
+    if (!confidence) throw new Error('Missing rating');
+    const { bar } = mount({
+      ...task,
+      confidence: { ...confidence, findings: [{ kind: 'gap', text: 'No dedupe test.' }] },
+    });
+    const counts = bar.querySelector('[aria-label$="decided"]');
+    expect(counts?.getAttribute('aria-label')).toBe('1 changed, 2 open, 1 decided');
+    expect(counts?.textContent).toBe('121');
+  });
+
+  it('quietens the decided count once every decision is handled', () => {
+    const { bar } = mount(baseTask());
+    const decidedIcon = () =>
+      bar.querySelector<SVGElement>('[aria-label$="decided"] > span:last-child svg');
+    expect(decidedIcon()?.style.color).not.toBe('var(--fg-muted)');
+    lastSetState?.('brief', 'decisions', { 'Used BullMQ.': 'kept' });
+    expect(decidedIcon()?.style.color).toBe('var(--fg-muted)');
+  });
+
+  it('leaves empty sections out of the bar counts', () => {
+    const task = baseTask();
+    const brief = task.brief;
+    if (!brief) throw new Error('Missing brief');
+    const { bar } = mount({
+      ...task,
+      brief: { ...brief, brief: { ...brief.brief, open: [], decided: [] } },
+    });
+    expect(bar.querySelector('[aria-label="1 changed"]')?.textContent).toBe('1');
   });
 
   it('opens the full brief with rating findings merged into the sections', () => {
@@ -107,17 +155,50 @@ describe('TaskBriefBar', () => {
     expect(bar.getAttribute('aria-expanded')).toBe('true');
     const text = card()?.textContent ?? '';
     expect(text).toContain('Stop webhook timeouts.');
-    expect(text).toContain('Route queues the event.');
     expect(text).toContain('Added Redis to production compose.');
     expect(card()?.querySelector('title')?.textContent).toBe('From the confidence rating');
     const headings = Array.from(card()?.querySelectorAll('h3') ?? []).map((h) =>
       h.getAttribute('aria-label'),
     );
-    expect(headings).toEqual(['Changed (1)', 'Extra (1)', 'Open (1)', 'Decided (1)']);
+    expect(headings).toEqual(['Open (1)', 'Decided (1)', 'Extra (1)', 'Changed (1)']);
     expect(text).toContain('code changed since');
+    // What changed is collapsed, since the diff and the agent's message say it already.
+    expect(text).not.toContain('Route queues the event.');
+    const toggle = card()?.querySelector<HTMLButtonElement>('h3[aria-label^="Changed"] button');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    toggle?.click();
+    expect(card()?.textContent).toContain('Route queues the event.');
     button('src/webhooks.ts')?.click();
     expect(onFileClick).toHaveBeenCalledWith('src/webhooks.ts');
     expect(card()).toBeNull();
+  });
+
+  it('marks a new brief on the bar until the card is opened', () => {
+    const task = baseTask();
+    const brief = task.brief;
+    if (!brief) throw new Error('Missing brief');
+    const { bar } = mount({ ...task, brief: { ...brief, unread: true } });
+    const dot = () => bar.querySelector<HTMLElement>('.task-brief-unread');
+    expect(dot()?.style.visibility).toBe('visible');
+    bar.click();
+    expect(mockMarkRead).toHaveBeenCalledWith('task');
+    lastSetState?.('brief', 'unread', undefined);
+    // Hidden rather than removed, so the headline does not shift.
+    expect(dot()?.style.visibility).toBe('hidden');
+  });
+
+  it('flags claims the diff does not back on the bar and leads the card with them', () => {
+    const task = baseTask();
+    const brief = task.brief;
+    if (!brief) throw new Error('Missing brief');
+    const { bar } = mount(task);
+    expect(bar.getAttribute('style')).not.toContain('var(--warning)');
+    lastSetState?.('brief', 'brief', 'unbacked', [{ text: 'Says it added dedupe tests.' }]);
+    expect(bar.getAttribute('style')).toContain('var(--warning)');
+    expect(bar.querySelector('[aria-label^="1 unbacked"]')).not.toBeNull();
+    bar.click();
+    expect(card()?.querySelector('h3')?.getAttribute('aria-label')).toBe('Not in diff (1)');
+    expect(card()?.textContent).toContain('Says it added dedupe tests.');
   });
 
   it('keeps a decision or sends the typed change to the agent', async () => {
@@ -186,13 +267,10 @@ describe('TaskBriefBar', () => {
     expect(fields()[0].value).toBe('Alert on-call instead');
   });
 
-  it('checks a rating against the current code when opened with briefs off', () => {
-    setStore('taskBriefs', false);
+  it('checks a rating against the current code when opened', () => {
     const { bar } = mount(baseTask({ brief: undefined }));
-    expect(bar.textContent).toContain('Confidence rating');
     bar.click();
     expect(mockRefreshCode).toHaveBeenCalledWith('task');
-    expect(card()?.textContent).toContain('Write task briefs');
   });
 
   it('marks a rating out of date from a newer code check', () => {
@@ -235,15 +313,6 @@ describe('TaskBriefBar', () => {
     const { bar } = mount(baseTask({ confidence: undefined }));
     bar.click();
     expect(button('Rate confidence · Codex')).toBeDefined();
-  });
-
-  it('offers a rating and points to briefs when briefs are off and nothing is rated', () => {
-    setStore('taskBriefs', false);
-    const { bar } = mount(baseTask({ brief: undefined, confidence: undefined }));
-    expect(bar.textContent).toContain('Rate confidence…');
-    bar.click();
-    expect(card()?.textContent).toContain('Write task briefs');
-    expect(button('Rate confidence')).toBeDefined();
   });
 
   it('explains the empty state before the first brief', () => {

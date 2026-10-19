@@ -170,6 +170,31 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     global: true,
   })),
 
+  {
+    id: 'app.nav.task-switcher',
+    layer: 'app',
+    category: 'Navigation',
+    description: 'Switch to task by name',
+    platform: 'mac',
+    key: 'k',
+    modifiers: { meta: true },
+    action: 'openTaskSwitcher',
+    global: true,
+  },
+  {
+    // Not Ctrl+K: a global binding would swallow kill-line in shells and
+    // agent prompts.
+    id: 'app.nav.task-switcher-linux',
+    layer: 'app',
+    category: 'Navigation',
+    description: 'Switch to task by name',
+    platform: 'linux',
+    key: 'J',
+    modifiers: { ctrl: true, shift: true },
+    action: 'openTaskSwitcher',
+    global: true,
+  },
+
   // -------------------------------------------------------------------------
   // App layer — Task actions
   // -------------------------------------------------------------------------
@@ -300,6 +325,19 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     global: true,
   },
   {
+    id: 'app.switch-document',
+    layer: 'app',
+    category: 'App',
+    description: 'Switch document (document workspace)',
+    platform: 'both',
+    key: 'P',
+    modifiers: { cmdOrCtrl: true, shift: true },
+    action: 'switchDocument',
+    // Global so it works from the editor and composer. Plain Ctrl+P is not
+    // used: a global binding swallows it, which would break shell history.
+    global: true,
+  },
+  {
     id: 'app.toggle-help',
     layer: 'app',
     category: 'App',
@@ -324,6 +362,18 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     dialogSafe: true,
   },
   {
+    id: 'app.new-thinking-tour',
+    layer: 'app',
+    category: 'App',
+    description: 'New thinking tour',
+    platform: 'both',
+    key: 'K',
+    modifiers: { cmdOrCtrl: true, shift: true },
+    action: 'newThinkingTour',
+    global: true,
+    dialogSafe: true,
+  },
+  {
     id: 'app.toggle-settings',
     layer: 'app',
     category: 'App',
@@ -339,13 +389,38 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     id: 'app.close-dialogs',
     layer: 'app',
     category: 'App',
-    description: 'Close dialogs',
+    description: 'Close dialogs or leave focus mode',
     platform: 'both',
     key: 'Escape',
     modifiers: {},
     action: 'closeDialogs',
     dialogSafe: true,
     // NOT global
+  },
+  {
+    // Shift and numpad '+' variants live in shortcuts.ts (registerZoomShortcuts).
+    id: 'app.zoom-in',
+    layer: 'app',
+    category: 'App',
+    description: 'Zoom in',
+    platform: 'both',
+    key: '=',
+    modifiers: { cmdOrCtrl: true },
+    action: 'zoomIn',
+    global: true,
+    dialogSafe: true,
+  },
+  {
+    id: 'app.zoom-out',
+    layer: 'app',
+    category: 'App',
+    description: 'Zoom out',
+    platform: 'both',
+    key: '-',
+    modifiers: { cmdOrCtrl: true },
+    action: 'zoomOut',
+    global: true,
+    dialogSafe: true,
   },
   {
     id: 'app.reset-zoom',

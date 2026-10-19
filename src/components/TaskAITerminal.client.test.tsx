@@ -15,6 +15,7 @@ import { setTaskFocusedPanel } from '../store/focused-panel';
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn<(channel: unknown, args?: unknown) => Promise<unknown>>(async () => undefined),
   terminalMounts: vi.fn(),
+  editAsDocument: vi.fn(),
 }));
 
 vi.mock('../lib/ipc', () => ({
@@ -29,6 +30,10 @@ vi.mock('../lib/ipc', () => ({
 vi.mock('../store/persistence', async (original) => ({
   ...(await original<typeof import('../store/persistence')>()),
   saveState: vi.fn(async () => undefined),
+}));
+vi.mock('../documents/store', async (original) => ({
+  ...(await original<typeof import('../documents/store')>()),
+  editAsDocument: mocks.editAsDocument,
 }));
 vi.mock('./TerminalView', () => ({
   TerminalView: (props: unknown) => {
@@ -650,6 +655,31 @@ it('copies the raw Markdown of a file opened in the viewer', async () => {
   });
 });
 
+it('offers to edit a file opened in the viewer as a document', async () => {
+  setStore('documentWorkspacesEnabled', true);
+  mocks.invoke.mockImplementation(async (channel?: unknown) =>
+    channel === IPC.ReadFileText ? '# Notes' : undefined,
+  );
+  mount();
+  const terminalProps = mocks.terminalMounts.mock.calls[0]?.[0] as {
+    onFileLink?: (filePath: string) => void;
+  };
+  terminalProps.onFileLink?.('/worktree/NOTES.md');
+
+  const button = await vi.waitFor(() => {
+    const el = document.querySelector<HTMLButtonElement>(
+      '[role="dialog"] [aria-label="Edit as document"]',
+    );
+    expect(el).not.toBeNull();
+    return el;
+  });
+  button?.click();
+
+  expect(mocks.editAsDocument).toHaveBeenCalledWith('/worktree/NOTES.md');
+  await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
+  setStore('documentWorkspacesEnabled', false);
+});
+
 it('logs why copying the Markdown failed', async () => {
   const writeText = vi.fn(async (_text: string) => {
     throw new DOMException('Document is not focused.', 'NotAllowedError');
@@ -716,13 +746,13 @@ it('opens second opinion by action after dismissing the button and preserves an 
   setStore('tasks', 'task', 'secondOpinionDismissed', true);
   mount();
   triggerAction('task:second-opinion');
-  const instructions = document.querySelector<HTMLTextAreaElement>('[aria-label="Instructions"]');
+  const instructions = document.querySelector<HTMLTextAreaElement>('.agent-handoff textarea');
   expect(instructions).not.toBeNull();
-  if (!instructions) throw new Error('Missing instructions');
+  if (!instructions) throw new Error('Missing message');
   instructions.value = 'Keep my draft';
   instructions.dispatchEvent(new Event('input', { bubbles: true }));
   triggerAction('task:second-opinion');
-  expect(document.querySelector('[aria-label="Instructions"]')).toBe(instructions);
+  expect(document.querySelector('.agent-handoff textarea')).toBe(instructions);
   expect(instructions.value).toBe('Keep my draft');
 });
 
@@ -730,7 +760,7 @@ it('does not open a second opinion for an unavailable source', () => {
   setStore('mcpOrchestrationEnabled', false);
   mount();
   triggerAction('task:second-opinion');
-  expect(document.querySelector('[aria-label="Instructions"]')).toBeNull();
+  expect(document.querySelector('.agent-handoff textarea')).toBeNull();
 });
 
 it('hands a pending question the keyboard however focus reaches the chat', async () => {

@@ -39,6 +39,10 @@ export interface CanvasEditor {
   /** Makes this source the undo-aware dirty-state baseline. */
   markSaved(markdown: string): boolean;
   load(markdown: string): void;
+  /** Puts the cursor at the start of a 1-based line and scrolls it into view. */
+  goToLine(line: number): void;
+  /** Takes the focus with the cursor at the end, leaving the page's scroll alone. */
+  focus(): void;
   destroy(): void;
 }
 
@@ -419,6 +423,19 @@ export function createCanvasEditor(options: CanvasEditorOptions): CanvasEditor {
       const state = stateFor(markdown);
       savedDocument = state.doc;
       view.setState(state);
+    },
+    goToLine: (line) => {
+      const doc = view.state.doc;
+      const pos = doc.line(Math.min(Math.max(line, 1), doc.lines)).from;
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 24 }),
+      });
+      view.focus();
+    },
+    focus: () => {
+      view.dispatch({ selection: { anchor: view.state.doc.length } });
+      view.contentDOM.focus({ preventScroll: true });
     },
     destroy: () => {
       clearTimeout(selectionTimer);

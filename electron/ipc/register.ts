@@ -50,6 +50,9 @@ import {
   readPlanForWorktree,
 } from './plans.js';
 import { readFileTourContext } from './understanding-context.js';
+import { saveTourFile } from './tour-files.js';
+import { readKanbanBoard, writeKanbanBoard } from './kanban.js';
+import { listThinkingTours } from './thinking-tours.js';
 import {
   prepareReasoningFeed,
   readReasoningFeed,
@@ -83,8 +86,6 @@ import type {
   RemoteAttentionState,
   RemoteCiStatus,
   RemoteCloseResult,
-  RemoteCommitAction,
-  RemoteCommitStatus,
   RemoteMergeReadiness,
   RemoteTaskContext,
   RemoteTaskDiff,
@@ -121,10 +122,6 @@ import {
   listImportableWorktrees,
   getBranchWorktreePath,
   commitAll,
-  commitStaged,
-  getStagedFiles,
-  stageAll,
-  unstageAll,
   discardUncommitted,
   checkMergeStatus,
   mergeTask,
@@ -187,6 +184,7 @@ import {
   assertStringArray,
   assertOptionalString,
   assertOptionalBoolean,
+  expandHome,
   validatePath,
 } from './validate.js';
 import { registerDocumentHandlers } from '../documents/register.js';
@@ -1076,20 +1074,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertString(args.message, 'message');
     return commitAll(worktreePath, args.message);
   });
-  ipcMain.handle(IPC.GetStagedFiles, (_e, args) => {
-    return getStagedFiles(worktreePathArg(args));
-  });
-  ipcMain.handle(IPC.StageAll, (_e, args) => {
-    return stageAll(worktreePathArg(args));
-  });
-  ipcMain.handle(IPC.UnstageAll, (_e, args) => {
-    return unstageAll(worktreePathArg(args));
-  });
-  ipcMain.handle(IPC.CommitStaged, (_e, args) => {
-    const worktreePath = worktreePathArg(args);
-    assertString(args.message, 'message');
-    return commitStaged(worktreePath, args.message);
-  });
   ipcMain.handle(IPC.DiscardUncommitted, (_e, args) => {
     return discardUncommitted(worktreePathArg(args));
   });
@@ -1475,25 +1459,29 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   // --- File links ---
   ipcMain.handle(IPC.OpenPath, (_e, args) => {
-    validatePath(args.filePath, 'filePath');
+    assertString(args.filePath, 'filePath');
+    const filePath = expandHome(args.filePath);
+    validatePath(filePath, 'filePath');
     // Block executable extensions to prevent accidental code execution
     const dangerous = /\.(sh|bash|exe|bat|cmd|app|command|desktop|appimage|run)$/i;
-    if (dangerous.test(args.filePath)) {
+    if (dangerous.test(filePath)) {
       throw new Error('Cannot open executable files');
     }
-    return shell.openPath(args.filePath);
+    return shell.openPath(filePath);
   });
 
   ipcMain.handle(IPC.ReadFileText, async (_e, args) => {
-    validatePath(args.filePath, 'filePath');
-    if (!/\.md$/i.test(args.filePath)) {
+    assertString(args.filePath, 'filePath');
+    const filePath = expandHome(args.filePath);
+    validatePath(filePath, 'filePath');
+    if (!/\.md$/i.test(filePath)) {
       throw new Error('Only .md files can be read');
     }
-    const stat = await fs.promises.stat(args.filePath);
+    const stat = await fs.promises.stat(filePath);
     if (stat.size > 2 * 1024 * 1024) {
       throw new Error('File too large to preview (max 2 MB)');
     }
-    return fs.promises.readFile(args.filePath, 'utf8');
+    return fs.promises.readFile(filePath, 'utf8');
   });
 
   ipcMain.handle(IPC.ReadFileTourContext, (_e, args) => {
@@ -1501,6 +1489,22 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertString(args.filePath, 'filePath');
     return readFileTourContext(args.worktreePath, args.filePath);
   });
+
+  ipcMain.handle(IPC.SaveTourFile, (_e, args) => {
+    validatePath(args.worktreePath, 'worktreePath');
+    return saveTourFile(args.worktreePath, args);
+  });
+
+  // --- Kanban board (KANBAN.md at the project root) ---
+  ipcMain.handle(IPC.ReadKanbanBoard, (_e, args) => readKanbanBoard(args?.projectRoot));
+  ipcMain.handle(IPC.WriteKanbanBoard, (_e, args) =>
+    writeKanbanBoard(args?.projectRoot, args?.content, args?.expected),
+  );
+
+  // Tours written outside any task; they save through SaveTourFile into this folder.
+  ipcMain.handle(IPC.ListThinkingTours, () =>
+    listThinkingTours(path.join(getUserDataDir(), 'thinking')),
+  );
 
   // --- Clipboard ---
   const clipboardImagePath = path.join(os.tmpdir(), 'parallel-code-clipboard.png');
@@ -1829,13 +1833,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
       ),
     mergeTaskFromMobile: (req: { taskId: string; squash: boolean; cleanup: boolean }) =>
       callRenderer<{ ok: boolean }>(IPC.Remote_MergeTaskRequest, req).then(() => {}),
-    getCommitStatus: (taskId: string) =>
-      callRenderer<RemoteCommitStatus>(IPC.Remote_GetCommitStatusRequest, { taskId }),
-    commitActionFromMobile: (req: {
-      taskId: string;
-      action: RemoteCommitAction;
-      message?: string;
-    }) => callRenderer<RemoteCommitStatus>(IPC.Remote_CommitActionRequest, req),
     getTaskAttention: (taskId: string): RemoteAttentionState => taskAttention.get(taskId) ?? 'idle',
     getTaskContext: (taskId: string) => taskContext.get(taskId),
     getCollapsedTaskIds: (): string[] => {

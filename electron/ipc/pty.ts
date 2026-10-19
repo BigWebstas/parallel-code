@@ -1,6 +1,10 @@
 import * as pty from 'node-pty';
 import { codexResumeId, isCodexUnsavedSessionExit } from '../shared/codex-resume.js';
-import { hasTerminalUserActivity, nextTerminalInputPending } from '../shared/terminal-input.js';
+import {
+  hasTerminalDraftActivity,
+  hasTerminalUserActivity,
+  nextTerminalInputPending,
+} from '../shared/terminal-input.js';
 import { stopAgentChat, stopAllAgentChats, runningAgentChatIds } from '../chat/sessions.js';
 import { execFileSync, execFile, spawn as cpSpawn } from 'child_process';
 import crypto from 'crypto';
@@ -923,7 +927,9 @@ function attachPtyOutputHandlers(
 
 /** What a Claude launch needs to self-report status; null until the hook server is up. */
 export interface AgentHookRuntime {
-  claudeSettingsPath: string;
+  /** The `--settings` file for a launch in `cwd`: the hooks, plus the usage
+   *  status line wrapped around whatever status line the user runs there. */
+  claudeSettingsPath(cwd: string, env: Record<string, string>): string;
   buildPtyEnv(agentId: string, taskId: string, launchId: string): Record<string, string>;
 }
 
@@ -942,6 +948,7 @@ export function setAgentHookRuntime(runtime: AgentHookRuntime | null): void {
 export function applyAgentHookLaunch(
   args: Pick<SpawnAgentArgs, 'agentId' | 'taskId' | 'args' | 'isShell' | 'dockerMode'>,
   command: string,
+  cwd: string,
   spawnEnv: Record<string, string>,
   launchId: string,
 ): string[] {
@@ -949,7 +956,11 @@ export function applyAgentHookLaunch(
     return args.args;
   }
   Object.assign(spawnEnv, agentHookRuntime.buildPtyEnv(args.agentId, args.taskId, launchId));
-  return withClaudeHookSettings(command, args.args, agentHookRuntime.claudeSettingsPath);
+  return withClaudeHookSettings(
+    command,
+    args.args,
+    agentHookRuntime.claudeSettingsPath(cwd, spawnEnv),
+  );
 }
 
 export async function spawnAgent(
@@ -1008,7 +1019,6 @@ export async function spawnAgent(
 
   const spawnEnv = buildPtySpawnEnv(args.env, fileEnv);
   const launchId = crypto.randomUUID();
-  const launchArgs = applyAgentHookLaunch(args, command, spawnEnv, launchId);
 
   // Backfill sandbox placeholders for pre-existing worktrees (and anywhere
   // Claude Code may launch). See ensureClaudeSandboxFiles for the why.
@@ -1033,6 +1043,9 @@ export async function spawnAgent(
     refreshWorktreeNodeModules(cwd, repoRoot);
   }
 
+  // After the seeding above: the user's status line can live in the worktree's
+  // `.claude/` settings, which only exist once they are copied in.
+  const launchArgs = applyAgentHookLaunch(args, command, cwd, spawnEnv, launchId);
   const spawnSpec = buildPtySpawnSpec({ ...args, args: launchArgs }, command, cwd, spawnEnv);
 
   logDebug('pty', `spawn command ${args.agentId}`, {
@@ -1140,9 +1153,10 @@ function writeSessionInput(session: PtySession, data: string): void {
     invalidateAgentActivity(session.agentId, session.launchId);
     if (!session.isShell) emitPtyEvent('prompt-submitted', session.agentId);
   }
-  // History recall/navigation can populate a draft without printable input.
-  // Escape/Backspace alone preserve a draft but cannot create one on an empty line.
-  const draftActivity = userActivity && [...data].some((ch) => ch !== '\x1b' && ch !== '\x7f');
+  // History recall can populate a draft without printable input. Cursor,
+  // editing and function keys, Escape and Backspace preserve a draft but
+  // cannot create one on an empty line.
+  const draftActivity = userActivity && hasTerminalDraftActivity(data);
   session.inputPending = nextTerminalInputPending(session.inputPending || draftActivity, data);
   // Claude Code fires no Stop hook for a user interrupt, so consumers that
   // trust hook state (the coordinator) need to hear about the keystroke.
@@ -1152,8 +1166,20 @@ function writeSessionInput(session: PtySession, data: string): void {
 
 export function getAgentPromptSnapshot(
   agentId: string,
-): { text: string; bracketedPaste: boolean } | null {
-  return sessions.get(agentId)?.queries.snapshot() ?? null;
+  options?: { parsedSoFar?: boolean },
+): { text: string; bracketedPaste: boolean; alternateScreen: boolean } | null {
+  return sessions.get(agentId)?.queries.snapshot(options) ?? null;
+}
+
+/** Why a peer prompt cannot be pasted into the agent's terminal right now, if anything. */
+export function getAgentInputBlocker(
+  agentId: string,
+): 'busy' | 'unsent-input' | 'recent-input' | null {
+  const session = sessions.get(agentId);
+  if (!session || handingOff.has(agentId) || session.peerInputQueue) return 'busy';
+  if (session.inputPending) return 'unsent-input';
+  if (Date.now() - session.lastInputAt < 5_000) return 'recent-input';
+  return null;
 }
 
 /**
@@ -1167,14 +1193,7 @@ export async function writeAgentPrompt(
   onSubmitted?: () => void,
 ): Promise<boolean> {
   const session = sessions.get(agentId);
-  if (
-    !session ||
-    handingOff.has(agentId) ||
-    session.peerInputQueue ||
-    session.inputPending ||
-    Date.now() - session.lastInputAt < 5_000
-  )
-    return false;
+  if (!session || getAgentInputBlocker(agentId)) return false;
   const snapshot = session.queries.snapshot();
   if (!snapshot) return false;
 

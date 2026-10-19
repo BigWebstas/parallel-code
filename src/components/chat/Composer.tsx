@@ -116,7 +116,7 @@ export function Composer(props: ComposerProps) {
   const placeholder = () =>
     c.shellMode()
       ? 'Command to run in this worktree… Backspace to leave'
-      : `${working() ? 'Add a follow-up' : `Message ${props.agentName}`}… Shift+Enter for a new line${props.onListFiles ? ', @ for files' : ''}${props.state.commands?.length ? ', / for commands' : ''}${c.canRunShell() ? ', ! for a shell command' : ''}`;
+      : `${working() ? 'Add a follow-up' : `Message ${props.agentName}`}… Shift+Enter for a new line${props.onListFiles ? ', @ for files' : ''}${props.state.commands?.length ? (props.state.commands.some((command) => command.prefix === '$') ? ', $ for skills' : ', / for commands') : ''}${c.canRunShell() ? ', ! for a shell command' : ''}`;
   const sendLabel = () =>
     c.shellMode()
       ? working()
@@ -241,6 +241,23 @@ export function Composer(props: ComposerProps) {
             onInput={onInput}
             onKeyDown={(event) => {
               if (commands.onKeyDown(event) || history.onKeyDown(event)) return;
+              const interrupt =
+                !event.shiftKey &&
+                !event.altKey &&
+                !event.metaKey &&
+                ((event.key === 'Escape' && !event.ctrlKey) ||
+                  (event.key.toLowerCase() === 'c' && event.ctrlKey));
+              // Leave Ctrl+C available for copying selected draft or transcript text.
+              const copying =
+                event.ctrlKey &&
+                (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd ||
+                  !!window.getSelection()?.toString());
+              if (interrupt && !copying && !event.isComposing && working() && !props.disabled) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat) void c.stop();
+                return;
+              }
               // An IME edits its own composition with Backspace.
               if (
                 event.key === 'Backspace' &&

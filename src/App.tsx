@@ -1,4 +1,5 @@
 import { GitHubIssuesPage } from './components/GitHubIssuesPage';
+import { KanbanPage } from './components/KanbanPage';
 import '@xterm/xterm/css/xterm.css';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -31,6 +32,7 @@ import { resolvePanelCloseTarget } from './store/close-target';
 import { Sidebar } from './components/Sidebar';
 import { TilingLayout } from './components/TilingLayout';
 import { HelpDialog } from './components/HelpDialog';
+import { TaskSwitcher } from './components/TaskSwitcher';
 import { SettingsDialog } from './components/SettingsDialog';
 import { WorkspaceControls } from './components/WorkspaceControls';
 import { WindowTitleBar } from './components/WindowTitleBar';
@@ -60,6 +62,7 @@ import {
   setPendingAction,
   toggleHelpDialog,
   toggleSettingsDialog,
+  openThinkingSpace,
   sendActivePrompt,
   spawnShellForTask,
   closeShell,
@@ -72,6 +75,7 @@ import {
   setPlanContent,
   setDockerAvailable,
   toggleTaskFocusMode,
+  toggleFocusMode,
   initMCPListeners,
   markTaskMcpPending,
   applyTaskMcpLaunchResult,
@@ -101,33 +105,45 @@ import { redrawAllTerminals } from './lib/terminalFitManager';
 import { isDocumentAgentTaskId } from './documents/agent-task';
 import { isHiddenAgentTaskId } from './documents/task-id';
 import {
+  closeDocumentReview,
   closeDocumentWorkspace,
-  documentStore,
+  inlineReview,
   initDocumentListeners,
   setDocumentComposerDraft,
   setDocumentSelection,
 } from './documents/store';
-import { dismissPinnedBubbles } from './documents/workspace-ui';
+import { closeTopCompareForm, dismissPinnedBubbles, setFilesOpen } from './documents/workspace-ui';
 import { resetForNewMatch } from './arena/store';
 import { startDesktopNotificationWatcher } from './store/desktopNotifications';
 import { startSuperProductivitySync, startSpOpenListener } from './store/store';
 import { startBackgroundTaskWatcher } from './store/background-tasks';
 import { startTaskBriefWatcher } from './store/task-brief';
+import { startKanbanAutomation } from './store/kanban';
 import { startPrChecksSubscription } from './store/pr-checks';
 import { startUpdateSubscription } from './store/updates';
 import { startRemoteTaskHandlers } from './store/remoteTaskHandler';
 import { startRemoteStatusSync } from './store/remoteStatusSync';
 import { startAgentHookStatusListener } from './store/agentHookStatus';
-import { applyPlanContent, startCanvasAutoOpen } from './store/canvas';
+import { applyPlanContent } from './store/canvas';
 import { startEvidenceAutoBuild } from './store/evidence-auto';
 import type { PlanContentMessage } from './store/canvas';
 import { SyncIcon } from './components/icons';
 
+const ThinkingSpace = lazy(() =>
+  import('./components/thinking/ThinkingSpace').then((m) => ({ default: m.ThinkingSpace })),
+);
 const ArenaOverlay = lazy(() =>
   import('./arena/ArenaOverlay').then((m) => ({ default: m.ArenaOverlay })),
 );
 
 const MIN_WINDOW_DIMENSION = 100;
+
+/** Whether a project page (GitHub issues or the Kanban board) covers the task area. */
+function projectPageOpen(): boolean {
+  return store.projects.some(
+    (p) => p.id === store.githubIssuesProjectId || p.id === store.kanbanProjectId,
+  );
+}
 
 function DropOverlay() {
   return (
@@ -184,6 +200,7 @@ function App() {
   const [windowMaximized, setWindowMaximized] = createSignal(false);
   const [showDropOverlay, setShowDropOverlay] = createSignal(false);
   const [closeHandlerReady, setCloseHandlerReady] = createSignal(false);
+  const [taskSwitcherOpen, setTaskSwitcherOpen] = createSignal(false);
   let dragCounter = 0;
 
   function closeArena() {
@@ -370,7 +387,6 @@ function App() {
     // loadState spawns them, and IPC does not replay what nobody listened to.
     const stopMCPListeners = initMCPListeners();
     const stopAgentHookStatusListener = startAgentHookStatusListener();
-    const stopCanvasAutoOpen = startCanvasAutoOpen();
     const stopEvidenceAutoBuild = startEvidenceAutoBuild();
     // Listen for plan content pushed from backend plan watcher
     const offPlanContent = window.electron.ipcRenderer.on(IPC.PlanContent, (data: unknown) => {
@@ -575,6 +591,7 @@ function App() {
     const stopSpOpenListener = startSpOpenListener();
     const stopBackgroundTaskWatcher = startBackgroundTaskWatcher();
     const stopTaskBriefWatcher = startTaskBriefWatcher();
+    const stopKanbanAutomation = startKanbanAutomation();
     const stopPrChecksSubscription = startPrChecksSubscription();
     const stopUpdateSubscription = startUpdateSubscription();
     const stopRemoteTaskHandlers = startRemoteTaskHandlers();
@@ -662,7 +679,7 @@ function App() {
     // A document workspace's hidden agent task can be the active one; it has
     // no worktree to close, merge or push and no panel a shell could show in.
     const listedTask = (id: string) =>
-      !store.githubIssuesProjectId && store.tasks[id] !== undefined && !isHiddenAgentTaskId(id);
+      !projectPageOpen() && store.tasks[id] !== undefined && !isHiddenAgentTaskId(id);
 
     const actionHandlers: Record<string, (e: KeyboardEvent) => void> = {
       'navigateRow:up': () => navigateRow('up'),
@@ -677,7 +694,7 @@ function App() {
         Array.from({ length: 9 }, (_, i) => [`jumpToTask:${i + 1}`, () => jumpToTask(i)]),
       ),
       closeShell: (e) => {
-        if (store.githubIssuesProjectId) return;
+        if (projectPageOpen()) return;
         // Auto-repeat would walk through adjacent terminals or canvas tabs.
         if (e.repeat) return;
         const target = resolvePanelCloseTarget(store);
@@ -687,7 +704,7 @@ function App() {
         else triggerAction(`${target.taskId}:close-canvas-active-tab`);
       },
       closeTask: () => {
-        if (store.githubIssuesProjectId) return;
+        if (projectPageOpen()) return;
         const id = store.activeTaskId;
         if (!id) return;
         if (store.terminals[id]) {
@@ -713,7 +730,7 @@ function App() {
         if (!e.repeat && id && listedTask(id)) triggerAction(`${id}:second-opinion`);
       },
       sendPrompt: () => {
-        if (!store.githubIssuesProjectId) sendActivePrompt();
+        if (!projectPageOpen()) sendActivePrompt();
       },
       createTerminal: (e) => {
         if (!e.repeat) createTerminal();
@@ -721,24 +738,32 @@ function App() {
       newTask: () => toggleNewTaskPanel(true),
       toggleSidebar: () => toggleSidebar(),
       toggleFocusMode: () => toggleTaskFocusMode(),
+      switchDocument: () => {
+        if (store.activeDocumentProjectId && isDocumentAgentTaskId(store.activeTaskId))
+          setFilesOpen(true);
+      },
       toggleHelp: () => toggleHelpDialog(),
+      openTaskSwitcher: () => setTaskSwitcherOpen(true),
       toggleSettings: () => toggleSettingsDialog(),
+      newThinkingTour: () => openThinkingSpace('new'),
       closeDialogs: () => {
         if (store.showArena) {
           closeArena();
           return;
         }
         if (store.activeDocumentProjectId && isDocumentAgentTaskId(store.activeTaskId)) {
-          // A pinned note covers the prose and goes first. Then the composer,
-          // up with a passage or with a draft opened from the toolbar or a
-          // note; either way Escape closes it before the workspace.
+          // A pinned note covers the prose and goes first. Then an inline
+          // proposal review, left undecided (its open refine form first).
+          // Then the composer, up with a passage or with a draft opened from
+          // the toolbar or a note. Escape never closes the workspace itself: it is a full
+          // view, and a stray press would throw away the reading position.
           if (dismissPinnedBubbles()) return;
-          if (documentStore.selection || documentStore.composerDraft) {
-            setDocumentSelection(null);
-            setDocumentComposerDraft(null);
-          } else {
-            closeDocumentWorkspace();
+          if (inlineReview()) {
+            if (!closeTopCompareForm()) closeDocumentReview();
+            return;
           }
+          setDocumentSelection(null);
+          setDocumentComposerDraft(null);
           return;
         }
         if (store.showHelpDialog) {
@@ -749,14 +774,23 @@ function App() {
           toggleSettingsDialog(false);
           return;
         }
+        // Not global, so an Escape typed into the agent terminal still
+        // reaches the agent instead of leaving focus mode. Exits directly:
+        // toggleTaskFocusMode ignores a standalone terminal as the active item.
+        // The new-task panel and project pages hide focus mode; leave it for
+        // when they close rather than flipping it unseen.
+        if (store.focusMode && !store.showNewTaskPanel && !projectPageOpen()) {
+          toggleFocusMode(false);
+        }
       },
+      zoomIn: () => adjustGlobalScale(1),
+      zoomOut: () => adjustGlobalScale(-1),
       resetZoom: () => resetGlobalScale(),
       redrawTerminals: () => redrawAllTerminals(),
     };
 
     const cleanupZoomShortcuts = registerZoomShortcuts({
       zoomIn: () => adjustGlobalScale(1),
-      zoomOut: () => adjustGlobalScale(-1),
       resetZoom: () => resetGlobalScale(),
     });
 
@@ -781,12 +815,12 @@ function App() {
       stopSpOpenListener();
       stopBackgroundTaskWatcher();
       stopTaskBriefWatcher();
+      stopKanbanAutomation();
       stopPrChecksSubscription();
       stopUpdateSubscription();
       stopRemoteTaskHandlers();
       stopRemoteStatusSync();
       stopAgentHookStatusListener();
-      stopCanvasAutoOpen();
       stopEvidenceAutoBuild();
       stopDocumentListeners();
       stopWindowVisibilityTracking();
@@ -929,21 +963,24 @@ function App() {
           <div
             class="task-workspace"
             style={{
-              display: store.projects.some((p) => p.id === store.githubIssuesProjectId)
-                ? 'none'
-                : undefined,
+              display: projectPageOpen() ? 'none' : undefined,
             }}
           >
             <TilingLayout />
           </div>
           <GitHubIssuesPage />
+          <KanbanPage />
         </main>
         <UsageStatusBar />
         <HelpDialog open={store.showHelpDialog} onClose={() => toggleHelpDialog(false)} />
+        <TaskSwitcher open={taskSwitcherOpen()} onClose={() => setTaskSwitcherOpen(false)} />
         <SettingsDialog
           open={store.showSettingsDialog}
           onClose={() => toggleSettingsDialog(false)}
         />
+        <Show when={store.thinkingSpace}>
+          {(mode) => <ThinkingSpace mode={mode()} onClose={() => openThinkingSpace(null)} />}
+        </Show>
         <Show when={store.showArena}>
           <ArenaOverlay onClose={closeArena} />
         </Show>

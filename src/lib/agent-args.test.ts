@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { reviewerWithModel } from './agent-handoff';
 
-import { buildTaskAgentArgs, isResumeArgsFailure, taskAgentOpensSessionPicker } from './agent-args';
+import {
+  buildTaskAgentArgs,
+  effortInArgs,
+  isResumeArgsFailure,
+  modelInArgs,
+  taskAgentOpensSessionPicker,
+} from './agent-args';
 
 const codexAgent = {
   id: 'codex',
@@ -126,6 +132,36 @@ describe('buildTaskAgentArgs with a session id', () => {
     expect(buildTaskAgentArgs(claude, chats, true)).toEqual(['--resume', '--model', 'opus']);
     expect(taskAgentOpensSessionPicker(codex, chats, true)).toBe(true);
     expect(taskAgentOpensSessionPicker(claude, chats, true)).toBe(true);
+  });
+
+  it('replaces a configured reasoning level for a reviewer and keeps the session picker', () => {
+    const codex = reviewerWithModel(
+      { ...codexAgent, args: ['-c', 'model_reasoning_effort="low"', '-c', 'x=1'] },
+      '',
+      'high',
+    );
+    const claude = reviewerWithModel(
+      { ...claudeAgent, args: ['--effort', 'low', '--effort=low'], resume_args: ['--continue'] },
+      'opus',
+      'max',
+    );
+    expect(codex.args).toEqual(['-c', 'x=1', '-c', 'model_reasoning_effort="high"']);
+    expect(claude.args).toEqual(['--model', 'opus', '--effort', 'max']);
+    const chats = { codexChatThreadId: 'chat-thread', claudeChatSessionId: 'chat' };
+    expect(buildTaskAgentArgs(codex, chats, true)).toEqual([
+      'resume',
+      '-c',
+      'model_reasoning_effort="high"',
+    ]);
+    expect(taskAgentOpensSessionPicker(codex, chats, true)).toBe(true);
+    expect(taskAgentOpensSessionPicker(claude, chats, true)).toBe(true);
+  });
+
+  it('keeps a configured reasoning level when the reviewer uses the default', () => {
+    const claude = reviewerWithModel({ ...claudeAgent, args: ['--effort', 'high'] }, 'opus');
+    expect(claude.args).toEqual(['--effort', 'high', '--model', 'opus']);
+    const gemini = { ...codexAgent, command: 'gemini', args: ['--effort', 'low'] };
+    expect(reviewerWithModel(gemini, '', 'high')).toBe(gemini);
   });
 
   it('restores the latest Codex session after restart when no session id was saved', () => {
@@ -555,4 +591,19 @@ it('resumes the handed-off Codex session with its selected model and reasoning',
   ]);
   expect(buildTaskAgentArgs(agent, task, false, 'primary')).toEqual([]);
   expect(buildTaskAgentArgs(agent, task, true, 'secondary')).toEqual(['resume']);
+});
+
+describe('the model and level a launch sets itself', () => {
+  it('reads each spelling of the model flag, the last one winning as in the CLIs', () => {
+    expect(modelInArgs(['--model', 'opus'])).toBe('opus');
+    expect(modelInArgs(['-m', 'gpt-6-sol', '--model=gpt-6-luna'])).toBe('gpt-6-luna');
+    expect(modelInArgs(['--resume'])).toBe('');
+  });
+
+  it("reads Claude's effort flag and Codex's config key", () => {
+    expect(effortInArgs(['--effort', 'high'])).toBe('high');
+    expect(effortInArgs(['--effort=low'])).toBe('low');
+    expect(effortInArgs(['-c', 'model_reasoning_effort="xhigh"'])).toBe('xhigh');
+    expect(effortInArgs(['-c', 'model=gpt-6-sol'])).toBe('');
+  });
 });
