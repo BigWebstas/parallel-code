@@ -34,9 +34,6 @@ export interface WorktreeLocker {
  * Same-user, 64-bit processes only; anything else reports null.
  */
 const CWD_READER = `
-using System;
-using System.Runtime.InteropServices;
-using System.Text;
 public static class PcCwd {
   [StructLayout(LayoutKind.Sequential)]
   struct PBI { public IntPtr Exit; public IntPtr Peb; public IntPtr Aff; public IntPtr Prio; public IntPtr Pid; public IntPtr Parent; }
@@ -64,20 +61,78 @@ public static class PcCwd {
   }
 }`;
 
+/**
+ * Asks the Windows Restart Manager which processes hold files open. This finds
+ * what a working-directory check cannot: language servers, file watchers, git
+ * and scanners with a handle on a file somewhere inside the worktree.
+ */
+const HANDLE_READER = `
+public static class PcHandles {
+  [StructLayout(LayoutKind.Sequential)] struct FT { public uint Low, High; }
+  [StructLayout(LayoutKind.Sequential)] struct UP { public int Pid; public FT Start; }
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct INFO {
+    public UP Process;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string App;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string Svc;
+    public int Type, Status, Session;
+    [MarshalAs(UnmanagedType.Bool)] public bool Restartable;
+  }
+  [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)] static extern int RmStartSession(out uint s, int f, System.Text.StringBuilder k);
+  [DllImport("rstrtmgr.dll")] static extern int RmEndSession(uint s);
+  [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+  static extern int RmRegisterResources(uint s, uint n, string[] files, uint a, IntPtr apps, uint v, IntPtr svcs);
+  [DllImport("rstrtmgr.dll")] static extern int RmGetList(uint s, out uint needed, ref uint count, [In, Out] INFO[] info, out uint reasons);
+  public static HashSet<int> Lockers(string[] files) {
+    var pids = new HashSet<int>();
+    uint s;
+    if (RmStartSession(out s, 0, new System.Text.StringBuilder(33)) != 0) return pids;
+    try {
+      if (RmRegisterResources(s, (uint)files.Length, files, 0, IntPtr.Zero, 0, IntPtr.Zero) != 0) return pids;
+      uint needed = 0, count = 0, reasons;
+      if (RmGetList(s, out needed, ref count, null, out reasons) != 234 || needed == 0) return pids;
+      var info = new INFO[needed]; count = needed;
+      if (RmGetList(s, out needed, ref count, info, out reasons) != 0) return pids;
+      for (int i = 0; i < count; i++) pids.Add(info[i].Process.Pid);
+    } finally { RmEndSession(s); }
+    return pids;
+  }
+}`;
+
 const SCAN_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
 ${CWD_READER}
+${HANDLE_READER}
 '@
 $root = [IO.Path]::GetFullPath($env:PC_LOCK_ROOT).TrimEnd('\\')
+$prefix = $root + '\\'
 $seen = @{}
+function Report($id, $name, $via) {
+  if ($script:seen.ContainsKey([int]$id) -or $id -eq $PID) { return }
+  $script:seen[[int]$id] = $true
+  "$id\`t$name\`t$via"
+}
 foreach ($p in [Diagnostics.Process]::GetProcesses()) {
   try { $cwd = [PcCwd]::Get($p.Id) } catch { continue }
   if (-not $cwd) { continue }
   $cwd = $cwd.TrimEnd('\\')
-  if ($cwd -eq $root -or $cwd.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) {
-    $seen[$p.Id] = $true
-    "$($p.Id)\`t$($p.ProcessName)\`tcwd"
+  if ($cwd -eq $root -or $cwd.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+    Report $p.Id $p.ProcessName 'cwd'
+  }
+}
+# Open or loaded files (handles, running programs, DLLs), in batches: Restart Manager
+# caps the resources per call. Enumerating each process's modules instead takes ~40s.
+$files = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction SilentlyContinue | ForEach-Object FullName)
+for ($i = 0; $i -lt $files.Count; $i += 256) {
+  $batch = [string[]]$files[$i..([Math]::Min($i + 255, $files.Count - 1))]
+  foreach ($id in [PcHandles]::Lockers($batch)) {
+    $p = Get-Process -Id $id -ErrorAction SilentlyContinue
+    if ($p) { Report $id $p.ProcessName 'open file' }
   }
 }
 # Processes whose working directory cannot be read (started at a higher

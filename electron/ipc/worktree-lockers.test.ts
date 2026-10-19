@@ -134,4 +134,27 @@ describe.runIf(process.platform === 'win32')('worktree lockers on Windows', () =
     const found = await findWorktreeLockers(root);
     expect(found).toContainEqual(expect.objectContaining({ pid: child.pid, via: 'command line' }));
   }, 60_000);
+
+  it('finds a process that holds a file open from another working directory', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-lockers-handle-'));
+    tempDirs.push(root);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-lockers-out-'));
+    tempDirs.push(outside);
+    const file = path.join(root, 'held.txt');
+    fs.writeFileSync(file, 'x');
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        'const fs = require("fs"); fs.openSync(process.env.HELD, "r"); setInterval(() => {}, 1000)',
+      ],
+      { cwd: outside, env: { ...process.env, HELD: file }, stdio: 'ignore', windowsHide: true },
+    );
+    if (child.pid === undefined) throw new Error('holder did not start');
+    children.push(child);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const found = await findWorktreeLockers(root);
+    expect(found).toContainEqual(expect.objectContaining({ pid: child.pid, via: 'open file' }));
+  }, 60_000);
 });
