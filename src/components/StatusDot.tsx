@@ -4,7 +4,9 @@ import {
   type TaskAttentionState,
   type TaskDotStatus,
 } from '../store/taskStatus';
+import { untrack, type JSX } from 'solid-js';
 import { getCiGlyphState, type CiGlyphState } from '../store/pr-checks-state';
+import { createSpinnerAngle } from '../lib/spinner-clock';
 import { theme } from '../lib/theme';
 
 const SIZES = { sm: 6, md: 8 } as const;
@@ -105,6 +107,16 @@ export function getStatusGlyph(
   return 'dot';
 }
 
+/** Ticks (75 ms each) per full turn: the agent ring and the slower CI ring. */
+const RING_TICKS = 12;
+const CI_RING_TICKS = 32;
+
+/** A glyph turned by the shared spinner clock; CSS reads the angle from `--spin`. */
+function Turning(props: { class: string; ticks: number; style: () => JSX.CSSProperties }) {
+  const angle = createSpinnerAngle(untrack(() => props.ticks));
+  return <span class={props.class} style={{ ...props.style(), '--spin': `${angle()}deg` }} />;
+}
+
 export function StatusDot(props: {
   status: TaskDotStatus;
   size?: 'sm' | 'md';
@@ -154,22 +166,24 @@ export function StatusDot(props: {
       }}
     >
       {glyph() === 'spinner' ? (
-        <span
+        <Turning
           class="status-glyph-spinner"
-          style={{ width: `${SPINNERS[size()]}px`, height: `${SPINNERS[size()]}px` }}
+          ticks={RING_TICKS}
+          style={() => ({ width: `${SPINNERS[size()]}px`, height: `${SPINNERS[size()]}px` })}
         />
       ) : glyph() === 'question' ? (
         badge('?', getDotShadow(props.attention))
       ) : glyph() === 'ci_failed' ? (
         badge('×', halo(theme.error))
       ) : glyph() === 'ci_running' ? (
-        <span
+        <Turning
           class="status-glyph-ci"
-          style={{
+          ticks={CI_RING_TICKS}
+          style={() => ({
             width: `${SPINNERS[size()]}px`,
             height: `${SPINNERS[size()]}px`,
             '--ci-sweep': `${ciSweep()}%`,
-          }}
+          })}
         />
       ) : (
         <span

@@ -3271,7 +3271,8 @@ html:is(
   border-radius: 999px;
   border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
   border-top-color: currentColor;
-  animation: spinnerSpin 0.9s steps(11) infinite;
+  /* Turned by the shared spinner clock (src/lib/spinner-clock.ts), not by CSS. */
+  transform: rotate(var(--spin, 0deg));
 }
 
 /* CI progress: a wedge that fills from 12 o'clock as checks finish, inside a
@@ -3293,7 +3294,7 @@ html:is(
   inset: 0;
   border-radius: 999px;
   border: 1px dashed currentColor;
-  animation: spinnerSpin 2.4s steps(29) infinite;
+  transform: rotate(var(--spin, 0deg));
 }
 
 .status-glyph-question {
@@ -5685,7 +5686,7 @@ button.tour-save-state:not(:disabled):hover {
   /* The hollow ring alone still says "working"; only the rotation goes. */
   .status-glyph-spinner,
   .status-glyph-ci::before {
-    animation: none;
+    transform: none;
   }
 
   /* These animations are declared inline and require an important override. */
