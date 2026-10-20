@@ -7,6 +7,7 @@ import { KANBAN_FILE } from './kanban.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
 import { readBranchTips, readHeadSha, refExists } from './git-refs.js';
+import { createAppExec, type ExecFn } from './git-exec.js';
 import { appendGitInfoExcludeBlockAtPath, normalizeExcludeLine } from './git-exclude.js';
 import {
   findForeignOwnedEntries,
@@ -36,7 +37,12 @@ import type {
 
 export type { ChangedFile, CommitInfo, FileDiffResult, GitIgnoredEntry } from './shared-types.js';
 
-const _exec = promisify(execFile);
+const _inProcessExec = promisify(execFile);
+// In the desktop app on Windows git runs on worker threads, because launching a
+// process blocks its thread for ~0.5 s there and this one routes the user's input.
+const _exec = createAppExec(
+  _inProcessExec as unknown as ExecFn,
+) as unknown as typeof _inProcessExec;
 
 /**
  * Trace + run a git command (or any execFile invocation).
