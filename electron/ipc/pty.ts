@@ -777,6 +777,46 @@ export function waitForAgentExit(agentId: string, timeoutMs = 8000): Promise<voi
   });
 }
 
+/**
+ * Keystrokes that make a terminal agent quit by itself, each preceded by the
+ * given pause. Ctrl+C interrupts a turn and a second one exits the CLIs this
+ * app runs; Claude Code also takes `/exit` at its prompt.
+ */
+export function agentExitKeys(command: string): { data: string; afterMs: number }[] {
+  const keys = [
+    { data: '\x03', afterMs: 0 },
+    { data: '\x03', afterMs: 300 },
+  ];
+  if (/(^|[\\/])claude(\.exe)?$/i.test(command)) keys.push({ data: '/exit\r', afterMs: 600 });
+  return keys;
+}
+
+/**
+ * Ask an agent to quit by itself, for one that cannot be killed from here (it
+ * runs with higher rights than this app). Console input is not subject to that
+ * limit, so typing the exit keys works where `taskkill` is refused. It must run
+ * before `killAgent`, which closes the console. Resolves true once the agent has
+ * exited, false when it is still running after `timeoutMs`.
+ */
+export async function requestAgentExit(agentId: string, timeoutMs = 4000): Promise<boolean> {
+  const session = sessions.get(agentId);
+  if (!session || session.killed) return true;
+  logDebug('pty', `requestAgentExit ${agentId}`, { pid: session.proc.pid });
+  for (const key of agentExitKeys(session.command)) {
+    if (key.afterMs > 0) await new Promise((resolve) => setTimeout(resolve, key.afterMs));
+    if (!sessions.has(agentId)) return true;
+    try {
+      // Straight to the PTY: this is not user input and must not look like a draft.
+      session.proc.write(key.data);
+    } catch (err) {
+      logDebug('pty', `requestAgentExit write failed for ${agentId}`, { err: errMessage(err) });
+      break;
+    }
+  }
+  await waitForAgentExit(agentId, timeoutMs);
+  return !sessions.has(agentId);
+}
+
 function attachPtyOutputHandlers(
   notify: Notify,
   session: PtySession,

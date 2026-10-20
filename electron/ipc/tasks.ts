@@ -6,12 +6,14 @@ import {
   getAgentPid,
   killAgent,
   notifyAgentListChanged,
+  requestAgentExit,
   waitForAgentExit,
 } from './pty.js';
 import { stopPlanWatcher, stopPlanWatchersForPath } from './plans.js';
+import { elevatedHoldersError, findUnreachable, isBeyondReach } from './unreachable-processes.js';
 import { verificationRunner } from './verify.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
-import { debug as logDebug } from '../log.js';
+import { debug as logDebug, warn as logWarn } from '../log.js';
 import { waitForProcessTreeKills } from '../process-group.js';
 import { localBranchExists, resolvePrCheckout } from '../github/pr-checkout.js';
 import type { CreatePrTaskResult } from './shared-types.js';
@@ -140,6 +142,17 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
   }
   const agentPids = opts.agentIds.flatMap((agentId) => getAgentPid(agentId) ?? []);
   const descendants = await snapshotDescendants(agentPids);
+  // An agent running with higher rights than this app (privilege-management
+  // software can start a CLI elevated) refuses every kill below, so let it quit
+  // by itself first. This has to precede killAgent, which closes its console.
+  const beyondReach = opts.agentIds.filter((agentId) => {
+    const pid = getAgentPid(agentId);
+    return pid !== undefined && isBeyondReach(pid);
+  });
+  if (beyondReach.length > 0) {
+    logWarn('tasks', 'agent runs with rights this app lacks, asking it to exit', { beyondReach });
+    await Promise.all(beyondReach.map((agentId) => requestAgentExit(agentId)));
+  }
   for (const agentId of opts.agentIds) {
     try {
       killAgent(agentId);
@@ -171,7 +184,18 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
     'tasks',
     `deleteTask: agents exited or timed out, removing worktree for branch=${opts.branchName}`,
   );
-  await removeWorktree(opts.projectRoot, opts.branchName, opts.deleteBranch, opts.worktreePath);
+  try {
+    await removeWorktree(opts.projectRoot, opts.branchName, opts.deleteBranch, opts.worktreePath);
+  } catch (err) {
+    // Elevated processes hide from the holder scan and ignore a kill, so a failed
+    // removal says nothing useful unless they are named.
+    const stuck = await findUnreachable(agentPids, descendants);
+    if (stuck.length === 0) throw err;
+    logWarn('tasks', 'worktree removal blocked by processes this app cannot end', {
+      processes: stuck.map((row) => `${row.name} (${row.pid})`),
+    });
+    throw elevatedHoldersError(targetWorktree, err, stuck);
+  }
   logDebug('tasks', `deleteTask: worktree removed successfully for branch=${opts.branchName}`);
   notifyAgentListChanged();
 }
