@@ -6,6 +6,7 @@ import {
   buildClaudeHookSettings,
   buildStatusLineSetting,
   detectWindowsHookShell,
+  type WindowsHookShell,
   type StatusLineSetting,
 } from './claude-settings.js';
 import {
@@ -142,13 +143,14 @@ function writeFiles(dir: string, port: number, token: string): HookFiles {
 function statusLineSettings(
   dir: string,
   files: HookFiles,
+  windowsShell: WindowsHookShell | undefined,
 ): (user: StatusLineSetting | null) => string {
   const written = new Set<string>();
   return (user) => {
     const settings = buildClaudeHookSettings(
       files.hookScriptPath,
       process.platform,
-      undefined,
+      windowsShell,
       buildStatusLineSetting(files.statusLineScriptPath, user),
     );
     const json = JSON.stringify(settings, null, 2) + '\n';
@@ -224,7 +226,8 @@ export function startAgentHookServer(options: AgentHookServerOptions): Promise<A
         return;
       }
       const endpointPath = path.join(options.dir, 'endpoint.env');
-      const withStatusLine = statusLineSettings(options.dir, files);
+      const windowsShell = process.platform === 'win32' ? detectWindowsHookShell() : undefined;
+      const withStatusLine = statusLineSettings(options.dir, files, windowsShell);
       resolve({
         port,
         hookScriptPath: files.hookScriptPath,
@@ -232,8 +235,9 @@ export function startAgentHookServer(options: AgentHookServerOptions): Promise<A
         claudeSettingsPath: (cwd, env) => {
           const user = readUserStatusLine(cwd, env);
           // Unreadable settings: register no status line rather than replace one we cannot see.
-          // The status line script is /bin/sh only, so Windows launches get hooks alone.
-          if (user === undefined || process.platform === 'win32')
+          // The status line script is /bin/sh only. Windows has it when Claude Code runs
+          // commands through Git Bash; under PowerShell launches get hooks alone.
+          if (user === undefined || (windowsShell !== undefined && windowsShell !== 'bash'))
             return files.hooksOnlySettingsPath;
           try {
             return withStatusLine(user);

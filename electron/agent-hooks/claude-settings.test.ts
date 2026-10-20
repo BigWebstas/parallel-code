@@ -128,6 +128,25 @@ describe('buildStatusLineSetting', () => {
     });
   });
 
+  it('spells a Windows script path with forward slashes for Git Bash', () => {
+    expect(
+      buildStatusLineSetting('C:\\Users\\me\\App Data\\statusline.sh', null, 'win32').command,
+    ).toBe("/bin/sh 'C:/Users/me/App Data/statusline.sh'");
+    expect(
+      buildStatusLineSetting(
+        'C:\\Users\\me\\statusline.sh',
+        { type: 'command', command: 'x' },
+        'win32',
+      ).command,
+    ).toBe("/bin/sh 'C:/Users/me/statusline.sh' 'x'");
+  });
+
+  it('leaves a POSIX path alone, backslashes included', () => {
+    expect(buildStatusLineSetting('/odd\\dir/statusline.sh', null, 'linux').command).toBe(
+      "/bin/sh '/odd\\dir/statusline.sh'",
+    );
+  });
+
   it('adds the status line next to the hooks only when given one', () => {
     expect(buildClaudeHookSettings('/hook.sh').statusLine).toBeUndefined();
     const statusLine = buildStatusLineSetting(script, null);
