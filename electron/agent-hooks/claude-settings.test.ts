@@ -9,7 +9,7 @@ describe('buildClaudeHookSettings', () => {
   // Explicit platform so this POSIX expectation holds on Windows dev machines too.
   const settings = buildClaudeHookSettings('/Users/me/Library/App Support/hook.sh', 'darwin');
 
-  it('registers turn, tool, and notification events', () => {
+  it('registers turn, sub-agent, tool, and notification events', () => {
     expect(Object.keys(settings.hooks).sort()).toEqual(
       [
         'Notification',
@@ -20,6 +20,8 @@ describe('buildClaudeHookSettings', () => {
         'SessionStart',
         'Stop',
         'StopFailure',
+        'SubagentStart',
+        'SubagentStop',
         'UserPromptSubmit',
       ].sort(),
     );

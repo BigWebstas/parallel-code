@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { readContextUsage } from '../shared/agent-chat-types.js';
 import { unifiedDiff, wholeFileDiff } from '../shared/chat-diffs.js';
+import { elicitationResult, readElicitation } from './codex-elicitation.js';
 import type {
   ChatDecision,
   ChatDiff,
@@ -138,6 +139,8 @@ export class CodexChat {
   private turnId?: string;
   private interruptRequested = false;
   private stopped = false;
+  /** Ids of pending MCP elicitations, which take a different answer shape. */
+  private elicitations = new Set<string | number>();
   private pending = new Map<
     number,
     {
@@ -392,8 +395,9 @@ export class CodexChat {
     // from a stale card; answer the one ask rather than send the app-server a word it
     // does not know.
     const answer = decision === 'decline' ? 'decline' : 'accept';
-    const result =
-      request.kind === 'question'
+    const result = this.elicitations.has(id)
+      ? elicitationResult(decision)
+      : request.kind === 'question'
         ? {
             answers: Object.fromEntries(
               (request.questions ?? []).map((q) => [q.id, { answers: [answers?.[q.id] ?? ''] }]),
@@ -401,6 +405,7 @@ export class CodexChat {
           }
         : { decision: answer };
     this.write({ id, result });
+    this.elicitations.delete(id);
     this.state.requests = this.state.requests.filter((r) => r.id !== id);
     this.publish();
   }
@@ -463,6 +468,7 @@ export class CodexChat {
     this.state.status = 'closed';
     this.state.error = message;
     this.state.requests = [];
+    this.elicitations.clear();
     this.interruptActivities();
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
@@ -575,6 +581,17 @@ export class CodexChat {
             };
           }),
         });
+      } else if (method === 'mcpServer/elicitation/request') {
+        const request = readElicitation(id, params);
+        if (!request) {
+          // Cancel rather than error: the MCP server gets a normal "user dismissed" answer.
+          this.write({ id, result: { action: 'cancel' } });
+          this.state.error = `Codex relayed an MCP request Parallel Code chat cannot show (${string(params.serverName) || 'unknown server'}); it was cancelled.`;
+          this.publish();
+          return;
+        }
+        this.elicitations.add(id);
+        this.state.requests.push(request);
       } else {
         // Never leave an unsupported server request hanging or silently approve it.
         this.write({
@@ -644,10 +661,12 @@ export class CodexChat {
       this.turnId = undefined;
       this.state.status = 'ready';
       this.state.requests = [];
+      this.elicitations.clear();
       const error = record(record(params.turn).error);
       if (error.message) this.state.error = string(error.message);
     } else if (method === 'serverRequest/resolved') {
       this.state.requests = this.state.requests.filter((r) => r.id !== params.requestId);
+      this.elicitations.delete(params.requestId as string | number);
     } else if (method === 'skills/changed') {
       void this.loadSkills();
       return;

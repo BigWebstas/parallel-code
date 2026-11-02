@@ -46,7 +46,8 @@ describe('atomicWriteFile (async)', () => {
     const target = join(d, 'secret.json');
     await atomicWriteFile(target, 'data', { mode: 0o600 });
     const s = await stat(target);
-    expect(s.mode & 0o777).toBe(0o600);
+    // Windows has no Unix permission bits; stat reports only 0o666 or 0o444.
+    if (process.platform !== 'win32') expect(s.mode & 0o777).toBe(0o600);
   });
 
   it.skipIf(process.platform === 'win32')(
@@ -99,7 +100,8 @@ describe('atomicWriteFileSync (sync)', () => {
     const target = join(d, 'secret.json');
     atomicWriteFileSync(target, 'data', { mode: 0o600 });
     const s = await stat(target);
-    expect(s.mode & 0o777).toBe(0o600);
+    // Windows has no Unix permission bits; stat reports only 0o666 or 0o444.
+    if (process.platform !== 'win32') expect(s.mode & 0o777).toBe(0o600);
   });
 
   it.skipIf(process.platform === 'win32')(

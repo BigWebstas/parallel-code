@@ -110,7 +110,7 @@ describe('loadEnvFile', () => {
     expect(() => loadEnvFile(dir)).toThrow(/directory, not a file/);
   });
 
-  // Windows has no FIFOs.
+  // Windows has no FIFOs (mkfifo); the regular-file guard is POSIX-only.
   it.skipIf(process.platform === 'win32')(
     'refuses a FIFO instead of blocking the main process forever',
     () => {

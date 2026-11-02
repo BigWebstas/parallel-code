@@ -4,7 +4,8 @@ export const isMac = navigator.userAgent.includes('Mac');
 // unused-export check stays green until such a branch exists.
 
 /** Height of the window chrome drawn over the top of the page: the native
- *  traffic-light strip on macOS, the app's own title bar everywhere else. */
+ *  traffic-light strip on macOS, the app's own title bar everywhere else.
+ *  The macOS value matches trafficLightPosition in electron/main.ts. */
 export const windowChromeTopInset = isMac ? 32 : 34;
 
 /** Display name for the primary modifier key: "Cmd" on macOS, "Ctrl" elsewhere. */

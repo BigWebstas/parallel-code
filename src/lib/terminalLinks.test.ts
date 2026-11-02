@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   computeWrappedPathLinks,
   createTerminalHttpLinkHandler,
+  matchBareFileNames,
   matchTerminalPaths,
   normalizeHttpUrl,
+  terminalLinkFilePath,
+  terminalLinkLine,
   type TerminalBuffer,
   type TerminalBufferCell,
 } from './terminalLinks';
@@ -217,6 +220,48 @@ describe('matchTerminalPaths', () => {
       { index: 5, text: 'src\\store\\tasks.ts' },
     ]);
   });
+  it('keeps the file:// scheme as part of the link', () => {
+    expect(matchTerminalPaths('open file:///home/a/.tmp/index.html now')).toEqual([
+      { index: 5, text: 'file:///home/a/.tmp/index.html' },
+    ]);
+  });
+});
+
+describe('matchBareFileNames', () => {
+  it('matches a file name printed without a folder, with its line suffix', () => {
+    expect(matchBareFileNames('Updated random-notes.md and app.test.ts:12.')).toEqual([
+      { index: 8, text: 'random-notes.md' },
+      { index: 28, text: 'app.test.ts:12' },
+    ]);
+  });
+
+  it('leaves paths, URLs, dotfiles and numbers to others or alone', () => {
+    expect(matchBareFileNames('see src/a.ts, ./b.md, ~/c.md and a.b/c.ts')).toEqual([]);
+    expect(matchBareFileNames('https://example.com/x and .env and v1.2 or 3.14')).toEqual([]);
+  });
+});
+
+describe('terminalLinkFilePath', () => {
+  it('strips line:col suffixes', () => {
+    expect(terminalLinkFilePath('/home/a/b.ts:42:10')).toBe('/home/a/b.ts');
+    expect(terminalLinkFilePath('src/a.ts:3')).toBe('src/a.ts');
+  });
+
+  it('turns file:// URLs into absolute paths', () => {
+    expect(terminalLinkFilePath('file:///home/a/.tmp/index.html')).toBe('/home/a/.tmp/index.html');
+  });
+});
+
+describe('terminalLinkLine', () => {
+  it('reads the cited line, ignoring the column', () => {
+    expect(terminalLinkLine('/home/a/b.ts:42:10')).toBe(42);
+    expect(terminalLinkLine('src/a.ts:3')).toBe(3);
+  });
+
+  it('has no line without a suffix or for line 0', () => {
+    expect(terminalLinkLine('src/a.ts')).toBeUndefined();
+    expect(terminalLinkLine('src/a.ts:0')).toBeUndefined();
+  });
 });
 
 describe('computeWrappedPathLinks', () => {
@@ -245,6 +290,13 @@ describe('computeWrappedPathLinks', () => {
       // Ends at the 11th char ("x") of the continuation row.
       expect(links[0].range.end.x).toBe(11);
     }
+  });
+
+  it('marks bare file names, which need finding before they can link', () => {
+    const buffer = makeBuffer([{ text: 'see notes.md' }]);
+    expect(computeWrappedPathLinks(buffer, 0)).toEqual([
+      { text: 'notes.md', bare: true, range: { start: { x: 5, y: 1 }, end: { x: 12, y: 1 } } },
+    ]);
   });
 
   it('does not join across a non-wrapped boundary', () => {
