@@ -54,6 +54,7 @@ import { parseGitHubList, type GitHubCustomList } from '../shared/github-list.js
 import { PR_DRAFT_LIMITS, parsePrDraft, type PrDraft } from '../shared/pr-draft.js';
 import type { SessionCaller, SessionCapabilities } from '../shared/delegation-types.js';
 import type { ReasoningDocument } from '../shared/reasoning.js';
+import type { UsageProvider, UsageState } from '../ipc/shared-types.js';
 import type { ReasoningUpdate } from '../shared/reasoning-state.js';
 import type { Coordinator } from '../mcp/coordinator.js';
 import { validateBranchName } from '../mcp/validation.js';
@@ -1052,6 +1053,8 @@ export function startRemoteServer(opts: {
   }) => Promise<void>;
   /** Persist a task's notes (renderer-backed). */
   setTaskNotes?: (taskId: string, notes: string) => Promise<void>;
+  /** The desktop's last agent-subscription usage snapshot (renderer-backed). */
+  getUsage?: () => Promise<Record<UsageProvider, UsageState>>;
   /** Close a task (renderer-backed); unless `force`, refuses when work would be lost. */
   closeTaskFromMobile?: (taskId: string, force: boolean) => Promise<RemoteCloseResult>;
   /** A task's diff against its base branch (renderer-backed). */
@@ -1581,6 +1584,21 @@ export function startRemoteServer(opts: {
         }
 
         return jsonEnd(405, { error: 'method not allowed' });
+      }
+
+      // --- Subscription usage (read-only: mobile + paired) ---
+      // Serves the snapshot the desktop status bar already polls, so phones
+      // never add requests to the rate-limited usage endpoints.
+      if (url.pathname === '/api/mobile/usage') {
+        if (tokenClass !== 'mobile' && tokenClass !== 'paired')
+          return jsonEnd(403, { error: 'forbidden' });
+        if (req.method !== 'GET') return jsonEnd(405, { error: 'method not allowed' });
+        if (!opts.getUsage) return jsonEnd(503, { error: 'usage unavailable' });
+        opts
+          .getUsage()
+          .then((usage) => jsonEnd(200, usage))
+          .catch((err) => jsonEnd(500, { error: String(err) }));
+        return;
       }
 
       // --- Task diff (read: mobile + paired) ---

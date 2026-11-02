@@ -12,6 +12,7 @@ import { linkTaskToIssueReference } from './github-issue-link';
 import { getTaskMindMap, updateTaskMindMapFromAgent } from './canvas';
 import { openCanvasViewFromAgent } from './canvas-agent';
 import { getTaskReasoning, updateTaskReasoningFromAgent } from './reasoning';
+import { unwrap } from 'solid-js/store';
 import { store } from './core';
 import { delegationRequest } from './delegation';
 import { addProject, codeProjects, getProject, getProjectPath } from './projects';
@@ -95,6 +96,16 @@ function reply(reqId: string, ok: boolean, data?: unknown, error?: string): void
   invoke(IPC.Remote_RendererReply, { reqId, ok, data, error }).catch(() => {});
 }
 
+interface AddProjectRequest extends RendererRequest {
+  name: string;
+  path: string;
+}
+
+/** Register a folder the main process just created as a git project. */
+function handleAddProject(req: AddProjectRequest): void {
+  reply(req.reqId, true, { id: addProject(req.name, req.path, true), name: req.name });
+}
+
 function handleGetProjects(req: RendererRequest): void {
   reply(
     req.reqId,
@@ -165,16 +176,6 @@ async function resolveMobileAgent(req: CreateTaskRequest): Promise<AgentDef> {
   if (!models.some((m) => m.id === req.model))
     throw new Error('Model not available for this agent');
   return reviewerWithModel(agentDef, req.model);
-}
-
-interface AddProjectRequest extends RendererRequest {
-  name: string;
-  path: string;
-}
-
-/** Register a folder the main process just created as a git project. */
-function handleAddProject(req: AddProjectRequest): void {
-  reply(req.reqId, true, { id: addProject(req.name, req.path, true), name: req.name });
 }
 
 /**
@@ -402,7 +403,6 @@ async function handleGetMergeReadiness(req: GetTaskDiffRequest): Promise<void> {
     if (task.gitIsolation !== 'worktree') {
       reply(req.reqId, true, {
         readiness: {
-          overall: 'blocked',
           checks: [
             {
               label: 'Merge safety',
@@ -577,6 +577,13 @@ export function startRemoteTaskHandlers(): () => void {
       if (data && typeof data === 'object') handleGetNotes(data as GetNotesRequest);
     },
   );
+  const offGetUsage = window.electron.ipcRenderer.on(
+    IPC.Remote_GetUsageRequest,
+    (data: unknown) => {
+      if (data && typeof data === 'object')
+        reply((data as RendererRequest).reqId, true, unwrap(store.usage));
+    },
+  );
   const offSetNotes = window.electron.ipcRenderer.on(
     IPC.Remote_SetNotesRequest,
     (data: unknown) => {
@@ -717,5 +724,6 @@ export function startRemoteTaskHandlers(): () => void {
     offFixCiPrompt();
     offSendFixCi();
     offMerge();
+    offGetUsage();
   };
 }

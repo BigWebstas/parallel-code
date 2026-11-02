@@ -84,6 +84,7 @@ import {
   type MobileTaskRequest,
   type RemoteProject,
 } from '../remote/server.js';
+import type { UsageProvider, UsageState } from './shared-types.js';
 import { sanitizeRemotePr } from '../remote/task-context.js';
 import type {
   RemoteAgentChoice,
@@ -188,6 +189,7 @@ import { listCodexModels } from './codex-models.js';
 import { getSystemMonospaceFonts } from './system-fonts.js';
 import { fetchClaudeUsage } from './claude-usage.js';
 import { fetchCodexUsage } from './codex-usage.js';
+import { fetchAntigravityUsage } from './antigravity-usage.js';
 import path from 'path';
 import {
   assertString,
@@ -1916,6 +1918,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       callRenderer<{ notes: string }>(IPC.Remote_GetNotesRequest, { taskId }).then((r) => r.notes),
     setTaskNotes: (taskId: string, notes: string) =>
       callRenderer<{ ok: boolean }>(IPC.Remote_SetNotesRequest, { taskId, notes }).then(() => {}),
+    getUsage: () => callRenderer<Record<UsageProvider, UsageState>>(IPC.Remote_GetUsageRequest, {}),
     closeTaskFromMobile: (taskId: string, force: boolean) =>
       callRenderer<RemoteCloseResult>(IPC.Remote_CloseTaskRequest, { taskId, force }),
     getTaskDiff: (taskId: string) =>
@@ -2527,6 +2530,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   ipcMain.handle(IPC.GetClaudeUsage, () => fetchClaudeUsage());
   ipcMain.handle(IPC.GetCodexUsage, () => fetchCodexUsage());
+  ipcMain.handle(IPC.GetAntigravityUsage, () => fetchAntigravityUsage());
   ipcMain.handle(IPC.GetResourceUsage, () => getResourceSnapshot());
 
   // --- Forward window events to renderer ---
