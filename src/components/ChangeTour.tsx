@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { Show, createEffect, createMemo, createSignal, on, onCleanup } from 'solid-js';
 import type { ChangeTourController } from '../lib/create-change-tour';
 import { stopToCard, type TourLocation } from '../lib/change-tour';
@@ -139,7 +140,7 @@ export function ChangeTour(props: {
       <Show when={props.tour.loading()}>
         <div class="change-tour-message">
           <p class="understanding-status">
-            <span class="inline-spinner" aria-hidden="true" />
+            <InlineSpinner aria-hidden="true" />
             {props.tour.progress()}
           </p>
           <p class="understanding-substatus">

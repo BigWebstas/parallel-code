@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { Show, createEffect, createUniqueId, type JSX } from 'solid-js';
 import { Dialog } from './Dialog';
 import { DialogFooter } from './DialogFooter';
@@ -106,7 +107,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           style={{ gap: '8px' }}
         >
           <Show when={props.confirmLoading} fallback={props.confirmIcon}>
-            <span class="inline-spinner" aria-hidden="true" />
+            <InlineSpinner aria-hidden="true" />
           </Show>
           {props.confirmLabel ?? 'Confirm'}
         </button>

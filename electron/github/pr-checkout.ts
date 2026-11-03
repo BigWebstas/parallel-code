@@ -1,11 +1,10 @@
 /** Resolves what a task needs to check out an existing pull request. */
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { errMessage, warn as logWarn } from '../log.js';
 import { validateBranchName } from '../mcp/validation.js';
 import { asRecord, asString, parsePrRef, runGhJson, type PrRef } from './gh.js';
+import { appExecFile } from '../ipc/git-exec.js';
 
-const exec = promisify(execFile);
+const exec = appExecFile;
 const GIT_TIMEOUT_MS = 60_000;
 
 export interface PrCheckout {

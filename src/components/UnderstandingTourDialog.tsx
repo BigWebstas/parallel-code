@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { For, Show, createEffect, createSignal, createUniqueId, on, onCleanup } from 'solid-js';
 import { Dialog } from './Dialog';
 import {
@@ -705,7 +706,7 @@ export function UnderstandingTourDialog(props: {
             <div class="understanding-stage" aria-busy="true">
               <div class="understanding-card understanding-card--message">
                 <p class="understanding-status">
-                  <span class="inline-spinner" aria-hidden="true" />
+                  <InlineSpinner aria-hidden="true" />
                   {props.tour.progress()}
                 </p>
                 <p role="status" class="understanding-substatus">

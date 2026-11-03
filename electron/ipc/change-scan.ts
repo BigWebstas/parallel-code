@@ -3,13 +3,12 @@
  * commands run, with argument arrays and no shell, so nothing from the repo is
  * executed.
  */
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import type { ChangeScan } from '../shared/checks.js';
 import { getDiffBaseSha } from './git.js';
 import { analyzeDiff, type DiffFileInput } from './change-scan-rules.js';
+import { appExecFile } from './git-exec.js';
 
-const run = promisify(execFile);
+const run = appExecFile;
 const MAX_BUFFER = 16 * 1024 * 1024;
 // Git config (writable from inside a worktree) can name external diff and
 // textconv programs or force colour; none of that may run or reach the parser.

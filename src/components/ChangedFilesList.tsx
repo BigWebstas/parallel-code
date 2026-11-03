@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { createSignal, createMemo, createEffect, onCleanup, batch, Index, Show } from 'solid-js';
 import { invoke } from '../lib/ipc';
 import { isWindowVisible } from '../lib/windowVisibility';
@@ -409,7 +410,7 @@ function UnderstandFileButton(props: {
           aria-label={`Understand ${props.filePath}`}
         >
           <Show when={loading()} fallback={<QuestionAltIcon />}>
-            <span class="inline-spinner" aria-hidden="true" />
+            <InlineSpinner aria-hidden="true" />
           </Show>
         </button>
       )}

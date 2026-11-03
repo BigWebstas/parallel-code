@@ -1,5 +1,3 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -10,8 +8,9 @@ import {
   getUncommittedFileDiffs,
 } from './git.js';
 import type { ChangedFile, FileDiffResult, NestedRepo } from './shared-types.js';
+import { appExecFile } from './git-exec.js';
 
-const exec = promisify(execFile);
+const exec = appExecFile;
 
 /** Caps the git calls a panel refresh can trigger in a folder full of clones. */
 const MAX_NESTED_REPOS = 10;

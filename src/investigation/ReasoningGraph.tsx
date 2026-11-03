@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../components/InlineSpinner';
 import type { MapData } from '../graph/model';
 import {
   children,
@@ -1066,7 +1067,7 @@ export function ReasoningGraph(props: Props) {
             fallback={
               <div class="reasoning-graph-empty" role="status" aria-busy={!!props.loading}>
                 <Show when={props.loading} fallback="No reasoning graph available for this task">
-                  <span class="inline-spinner" aria-hidden="true" />
+                  <InlineSpinner aria-hidden="true" />
                   <span>Waiting for the agent’s first update…</span>
                 </Show>
               </div>

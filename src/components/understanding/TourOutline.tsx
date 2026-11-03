@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../InlineSpinner';
 import { For, Show, createEffect, createSignal } from 'solid-js';
 import { nodeTrail, type TourNode } from '../../lib/tour-tree';
 import { TreeChevronIcon } from '../icons';
@@ -82,7 +83,7 @@ export function TourOutline(props: {
             <Show when={waiting()}>
               {(question) => (
                 <li class="tour-outline-item tour-outline-pending" aria-busy="true">
-                  <span class="inline-spinner" aria-hidden="true" />
+                  <InlineSpinner aria-hidden="true" />
                   <span title={question()}>Answering…</span>
                 </li>
               )}

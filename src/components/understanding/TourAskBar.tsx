@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../InlineSpinner';
 import { Show, createSignal } from 'solid-js';
 import { CloseIcon, LayersIcon, MentionIcon } from '../icons';
 import { TourIconButton } from './TourIconButton';
@@ -94,7 +95,7 @@ export function TourAskBar(props: {
       >
         {/* The spinner carries the wait; the wording is for screen readers only. */}
         <span role="status" class="understanding-asking">
-          <span class="inline-spinner" aria-hidden="true" />
+          <InlineSpinner aria-hidden="true" />
           <span class="dialog-sr-only">Thinking…</span>
         </span>
         <TourIconButton label="Cancel question" tooltip="Cancel" onClick={() => props.onCancel()}>

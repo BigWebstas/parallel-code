@@ -3,8 +3,6 @@
 // using existing backend primitives (pty, git, tasks).
 
 import { randomUUID, randomBytes } from 'crypto';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { unlinkSync, readFileSync, existsSync } from 'fs';
 import { unlink as fsUnlink } from 'fs/promises';
 import { dirname } from 'path';
@@ -36,7 +34,7 @@ import {
 } from './preamble.js';
 import { truncateDiffForTool } from './diff-format.js';
 
-const execAsync = promisify(execFile);
+const execAsync = appExecFile;
 import type { Notify } from '../ipc/notify.js';
 import { createTask as createBackendTask, deleteTask } from '../ipc/tasks.js';
 import { getSkipPermissionsArgs, stripPermissionBypassArgs } from '../shared/skip-permissions.js';
@@ -78,6 +76,7 @@ import { buildSubTaskPreamble } from './sub-task-preamble.js';
 import { isStalled, promptDelivery, type PromptDelivery } from './prompt-delivery.js';
 import { buildVerifyEnv, verificationRunner } from '../ipc/verify.js';
 import { pendingVerificationRun } from '../shared/verification-run.js';
+import { appExecFile } from '../ipc/git-exec.js';
 import type { VerificationRun } from '../ipc/shared-types.js';
 import { info as logInfo, warn as logWarn } from '../log.js';
 import type {
@@ -214,8 +213,9 @@ function parsePorcelainPaths(statusOut: string): string[] {
 }
 
 function execStdout(result: Awaited<ReturnType<typeof execAsync>>): string {
-  const stdout = typeof result === 'string' ? result : result.stdout;
-  return typeof stdout === 'string' ? stdout : stdout.toString('utf8');
+  // Some callers' fakes return the bare string; real runs return { stdout }.
+  const out: unknown = result;
+  return typeof out === 'string' ? out : result.stdout;
 }
 
 /** Whether `worktreePath`'s HEAD already contains every commit of `branch`. */

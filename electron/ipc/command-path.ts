@@ -72,3 +72,33 @@ export function commandExistsOnPath(command: string, deps: CommandPathDeps = {})
   }
   return false;
 }
+
+/**
+ * Every file a bare command name resolves to on PATH, in PATH order, like
+ * `where` on Windows but without starting a process. Windows only: it relies on
+ * PATHEXT and case-insensitive names.
+ */
+export function findCommandPaths(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+  statFile: (candidate: string) => fs.Stats = (candidate) => fs.statSync(candidate),
+): string[] {
+  const name = command.trim();
+  if (!name) return [];
+  const pathEnv = env.PATH ?? env.Path ?? env.path ?? '';
+  const suffixes = executableSuffixes(name, env.PATHEXT ?? env.Pathext ?? '.COM;.EXE;.BAT;.CMD');
+  const found: string[] = [];
+  for (const dir of pathEnv.split(';')) {
+    const trimmed = dir.trim().replace(/^"(.*)"$/, '$1');
+    if (!trimmed) continue;
+    for (const suffix of suffixes) {
+      const candidate = path.win32.join(trimmed, `${name}${suffix}`);
+      try {
+        if (statFile(candidate).isFile() && !found.includes(candidate)) found.push(candidate);
+      } catch {
+        // not there
+      }
+    }
+  }
+  return found;
+}

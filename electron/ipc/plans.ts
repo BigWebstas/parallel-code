@@ -1,9 +1,8 @@
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import type { Notify } from './notify.js';
 import { IPC } from './channels.js';
+import { appExecFile } from './git-exec.js';
 
 interface PlanWatcher {
   fsWatchers: fs.FSWatcher[];
@@ -15,7 +14,7 @@ interface PlanWatcher {
 }
 
 const watchers = new Map<string, PlanWatcher>();
-const exec = promisify(execFile);
+const exec = appExecFile;
 
 /** Plan directories to watch, relative to worktree root. */
 const PLAN_DIRS = ['.claude/plans', 'docs/plans', '.'];

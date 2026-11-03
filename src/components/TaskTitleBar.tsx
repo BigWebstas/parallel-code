@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { For, Show, createSignal, onCleanup, onMount } from 'solid-js';
 import { Dynamic, Portal } from 'solid-js/web';
 import {
@@ -183,11 +184,7 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
               <Show
                 when={!props.pushing}
                 fallback={
-                  <span
-                    class="inline-spinner"
-                    aria-hidden="true"
-                    style={{ width: '12px', height: '12px' }}
-                  />
+                  <InlineSpinner aria-hidden="true" style={{ width: '12px', height: '12px' }} />
                 }
               >
                 <CheckCircleIcon size={14} />
@@ -205,7 +202,7 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
                     )}
                   </For>
                   <Show when={generating().length > 0}>
-                    <span class="inline-spinner task-finish-generating" />
+                    <InlineSpinner class="task-finish-generating" />
                   </Show>
                 </span>
               </Show>

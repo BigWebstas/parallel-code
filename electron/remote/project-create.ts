@@ -1,11 +1,10 @@
-import { execFile } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { promisify } from 'util';
 import { validatePath } from '../ipc/validate.js';
+import { appExecFile } from '../ipc/git-exec.js';
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = appExecFile;
 
 const MAX_NAME_LENGTH = 100;
 

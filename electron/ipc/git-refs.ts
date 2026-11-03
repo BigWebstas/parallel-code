@@ -91,3 +91,29 @@ export async function readBranchTips(
   ]);
   return { local: local ?? '', origin: origin ?? '' };
 }
+
+/**
+ * `git rev-parse --git-common-dir` for a checkout root, read from the `.git`
+ * entry without starting a process. Null when the layout is not the plain one
+ * (no `.git` here, unreadable pointer), so callers can fall back to running git.
+ */
+export function resolveGitCommonDirSync(worktreePath: string): string | null {
+  try {
+    const dotGit = path.join(worktreePath, '.git');
+    let gitDir = dotGit;
+    if (fs.statSync(dotGit).isFile()) {
+      const match = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+      if (!match) return null;
+      gitDir = path.resolve(worktreePath, match[1]);
+    }
+    let common = '';
+    try {
+      common = fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim();
+    } catch {
+      // A main checkout has no commondir file: its .git directory is the common dir.
+    }
+    return common ? path.resolve(gitDir, common) : gitDir;
+  } catch {
+    return null;
+  }
+}

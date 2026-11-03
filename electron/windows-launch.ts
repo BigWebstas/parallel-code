@@ -1,6 +1,6 @@
-import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { findCommandPaths } from './ipc/command-path.js';
 
 /** A program child_process.spawn can start without a shell. */
 export interface Launch {
@@ -58,20 +58,9 @@ function whereAll(command: string, env: NodeJS.ProcessEnv): string[] {
       return cached.candidates;
     }
   }
-  let found: string[];
-  try {
-    found = execFileSync('where', [command], {
-      encoding: 'utf8',
-      timeout: 3000,
-      env,
-      windowsHide: true,
-    })
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-  } catch {
-    found = [];
-  }
+  // A PATH scan answers what `where.exe` would, without a 0.5-1 s process launch
+  // that blocks the main thread.
+  const found = findCommandPaths(command, env);
   if (found.length > 0) {
     whereCache.set(key, { candidates: found });
   } else {

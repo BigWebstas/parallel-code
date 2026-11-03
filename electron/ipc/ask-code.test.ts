@@ -13,6 +13,11 @@ import {
 } from '../shared/understanding-limits.js';
 
 vi.mock('child_process', () => ({ spawn: vi.fn() }));
+// No agent CLI is "installed" for these tests: commands stay bare, as with a failed `where`.
+vi.mock('./command-path.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./command-path.js')>()),
+  findCommandPaths: () => [],
+}));
 vi.mock('./pty.js', () => ({ validateCommand: vi.fn(), ENV_BLOCK_LIST: new Set(['PATH']) }));
 vi.mock('./env-file.js', () => ({
   loadEnvFile: vi.fn(() => ({})),

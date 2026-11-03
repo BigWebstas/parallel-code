@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import {
   For,
   Show,
@@ -128,7 +129,7 @@ function ScreensAction(
           }}
         >
           <Show when={running() && !waiting()} fallback={<ImageIcon size={14} />}>
-            <span class="inline-spinner" aria-hidden="true" />
+            <InlineSpinner aria-hidden="true" />
           </Show>
           <span class="change-tour-action-label">
             {label()}

@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import {
   For,
   Show,
@@ -585,7 +586,7 @@ export function ReviewSection(props: {
           >
             {/* One icon in every state: a turning chevron made the button read as a collapsible section. */}
             <Show when={running()} fallback={<ReviewIcon size={14} />}>
-              <span class="inline-spinner" aria-hidden="true" />
+              <InlineSpinner aria-hidden="true" />
             </Show>
             <span class="change-tour-action-label">{actionLabel()}</span>
           </button>

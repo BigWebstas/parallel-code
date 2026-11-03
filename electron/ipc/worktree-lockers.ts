@@ -1,8 +1,7 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { debug as logDebug, warn as logWarn } from '../log.js';
+import { appExecFile } from './git-exec.js';
 
-const exec = promisify(execFile);
+const exec = appExecFile;
 
 /**
  * Compiling the helper and walking every process takes a couple of seconds on an

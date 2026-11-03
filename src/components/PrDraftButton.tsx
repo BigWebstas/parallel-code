@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { Show } from 'solid-js';
 import { BRIEF_MODELS } from '../../electron/shared/task-name-model';
 import type { DraftSource, PrDrafting } from './create-pr-drafting';
@@ -63,7 +64,7 @@ export function PrDraftButton(props: {
           }}
         >
           <Show when={props.drafting.drafting()} fallback={<PencilIcon size={14} />}>
-            <span class="inline-spinner" aria-hidden="true" />
+            <InlineSpinner aria-hidden="true" />
           </Show>
           <span class="change-tour-action-label">{label()}</span>
         </button>

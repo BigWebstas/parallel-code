@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { taskProjectFilter } from '../store/task-project-filter';
 import { createCanvasTask, validateCanvasTaskSource } from '../store/canvas-tasks';
 import type { AppStore, KanbanNewTaskSource, SpNewTaskSource } from '../store/types';
@@ -322,7 +323,7 @@ function DockerTaskOptions(props: {
                 gap: '6px',
               }}
             >
-              <span class="inline-spinner" aria-hidden="true" />
+              <InlineSpinner aria-hidden="true" />
               Building image... this may take a few minutes.
             </div>
             <Show when={props.dockerBuildOutput}>
@@ -1862,11 +1863,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
                     {gitIsolation() === 'worktree' ? 'Base branch' : 'Branch'}
                     <Show when={branchesLoading()}>
                       {' '}
-                      <span
-                        class="inline-spinner"
-                        aria-hidden="true"
-                        style={{ 'vertical-align': 'middle' }}
-                      />
+                      <InlineSpinner aria-hidden="true" style={{ 'vertical-align': 'middle' }} />
                     </Show>
                   </label>
                   {/* On a load failure, swap the empty picker for the error +
@@ -2118,7 +2115,7 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
               'border-radius': 'var(--radius-md)',
             }}
           >
-            <span class="inline-spinner" aria-hidden="true" />
+            <InlineSpinner aria-hidden="true" />
             Creating task…
           </span>
         </div>

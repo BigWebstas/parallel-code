@@ -1,8 +1,7 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import type { BaseUpstreamDivergence } from './shared-types.js';
+import { appExecFile } from './git-exec.js';
 
-const exec = promisify(execFile);
+const exec = appExecFile;
 const MAX_BUFFER = 8 * 1024 * 1024;
 const MAX_COMMITS = 10;
 

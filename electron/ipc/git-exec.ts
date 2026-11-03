@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 
 // Starting a process is a blocking call on the thread that makes it, and on
@@ -272,3 +274,10 @@ export function createAppExec(run: ExecFn): ExecFn {
   if (!process.versions.electron) return run;
   return withGitMemo(process.platform === 'win32' ? execFileInWorker : run);
 }
+
+/**
+ * `execFile` for the rest of the app (git, gh, docker, ...): on Windows the
+ * process launch happens on a worker thread instead of freezing the main one.
+ * Not for callers that need the child handle (stdin, streaming).
+ */
+export const appExecFile: ExecFn = createAppExec(promisify(execFile) as unknown as ExecFn);

@@ -1,5 +1,3 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { realpath } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -46,8 +44,9 @@ import type {
   SessionCapabilities,
   TaskAuthorityInput,
 } from '../shared/delegation-types.js';
+import { appExecFile } from '../ipc/git-exec.js';
 
-const exec = promisify(execFile);
+const exec = appExecFile;
 const MAX_PROMPT_BYTES = 64 * 1024;
 // One sender may fill only a quarter of an inbox and a quarter of the global ceiling,
 // so a chatty agent cannot lock its peers out of a recipient or the project.

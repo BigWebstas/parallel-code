@@ -3941,14 +3941,6 @@ html:is(
   }
 }
 
-/* Stepped at ~12 fps: a smooth rotation forces a style recalc and repaint every
-   frame, which kept the renderer and GPU busy whenever any task was working. */
-@keyframes spinnerSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 /* Fixed lane so task names line up whatever glyph sits in front of them; hosts
    override the height via the --glyph-lane box when a row needs a taller one. */
 .status-glyph {
@@ -4028,7 +4020,8 @@ html:is(
 }
 
 .inline-spinner {
-  /* Rotation is the loading cue, so functional spinners remain animated under reduced motion. */
+  /* Turned by InlineSpinner from the shared spinner clock (no CSS animation: it forces a frame
+     every vsync). Rotation is the loading cue, so it also runs under reduced motion. */
   display: inline-block;
   box-sizing: border-box;
   width: 12px;
@@ -4036,7 +4029,6 @@ html:is(
   border-radius: var(--radius-pill);
   border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
   border-top-color: currentColor;
-  animation: spinnerSpin 0.75s steps(9) infinite;
   flex-shrink: 0;
 }
 

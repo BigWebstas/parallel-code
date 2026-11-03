@@ -8,7 +8,7 @@ import { KANBAN_FILE } from './kanban.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
 import { baseUpstreamDivergence, conflictSourcesNote, upstreamOf } from './git-base-upstream.js';
-import { readBranchTips, readHeadSha, refExists } from './git-refs.js';
+import { readBranchTips, readHeadSha, refExists, resolveGitCommonDirSync } from './git-refs.js';
 import { createAppExec, type ExecFn } from './git-exec.js';
 import { appendGitInfoExcludeBlockAtPath, normalizeExcludeLine } from './git-exclude.js';
 import {
@@ -1935,6 +1935,11 @@ const commonDirs = new Map<string, string>();
 function gitCommonDir(worktreePath: string): string | null {
   const known = commonDirs.get(worktreePath);
   if (known !== undefined) return known;
+  const direct = resolveGitCommonDirSync(worktreePath);
+  if (direct) {
+    commonDirs.set(worktreePath, direct);
+    return direct;
+  }
   try {
     const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd: worktreePath,

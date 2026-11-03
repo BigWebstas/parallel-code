@@ -1,9 +1,7 @@
-import { execFile } from 'child_process';
 import { rmSync } from 'fs';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { promisify } from 'util';
 import { getDiffBaseSha } from './git.js';
 import { killAllCaptures, startCapture } from './task-screens-run.js';
 import { freePorts, startServer } from './task-screens-serve.js';
@@ -25,8 +23,9 @@ import type {
   TaskScreensResult,
 } from '../shared/task-screens.js';
 import { errMessage, warn as logWarn } from '../log.js';
+import { appExecFile } from './git-exec.js';
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = appExecFile;
 
 // Every image crosses IPC as a data URL and stays in the renderer's memory.
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;

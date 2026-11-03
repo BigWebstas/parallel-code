@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../components/InlineSpinner';
 import './documents.css';
 import {
   For,
@@ -1251,7 +1252,7 @@ export function DocumentWorkspacePanel() {
             }}
           >
             <Show when={editAction() === 'discard'}>
-              <span class="inline-spinner" aria-hidden="true" />
+              <InlineSpinner aria-hidden="true" />
             </Show>
             Restore last version
           </button>
