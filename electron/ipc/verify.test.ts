@@ -6,10 +6,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildVerifyEnv,
   createVerificationRunner,
-  shellSpawnArgs,
   validateVerifyCommand,
   VERIFY_COMMAND_MAX_LENGTH,
 } from './verify.js';
+import { shellSpawnArgs } from '../user-shell.js';
 
 const tmpDirs: string[] = [];
 

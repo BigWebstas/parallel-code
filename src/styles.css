@@ -3941,6 +3941,8 @@ html:is(
   }
 }
 
+/* Stepped at ~12 fps: a smooth rotation forces a style recalc and repaint every
+   frame, which kept the renderer and GPU busy whenever any task was working. */
 @keyframes spinnerSpin {
   to {
     transform: rotate(360deg);
@@ -3966,7 +3968,8 @@ html:is(
   border-radius: var(--radius-pill);
   border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
   border-top-color: currentColor;
-  animation: spinnerSpin 0.9s linear infinite;
+  /* Turned by the shared spinner clock (src/lib/spinner-clock.ts), not by CSS. */
+  transform: rotate(var(--spin, 0deg));
 }
 
 /* CI progress: a wedge that fills from 12 o'clock as checks finish, inside a
@@ -3988,7 +3991,7 @@ html:is(
   inset: 0;
   border-radius: var(--radius-pill);
   border: 1px dashed currentColor;
-  animation: spinnerSpin 2.4s linear infinite;
+  transform: rotate(var(--spin, 0deg));
 }
 
 /* Review: a ring with a pupil, "look at this", kept apart from Ready by shape. */
@@ -4033,7 +4036,7 @@ html:is(
   border-radius: var(--radius-pill);
   border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
   border-top-color: currentColor;
-  animation: spinnerSpin 0.75s linear infinite;
+  animation: spinnerSpin 0.75s steps(9) infinite;
   flex-shrink: 0;
 }
 
@@ -6450,7 +6453,7 @@ button.tour-save-state:not(:disabled):hover {
   /* The hollow ring alone still says "working"; only the rotation goes. */
   .status-glyph-spinner,
   .status-glyph-ci::before {
-    animation: none;
+    transform: none;
   }
 
   /* These animations are declared inline and require an important override. */

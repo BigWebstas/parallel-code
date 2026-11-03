@@ -145,6 +145,8 @@ import {
   subscribeToAgentRendered,
   validateCommand,
   waitForAgentExit,
+  agentExitKeys,
+  requestAgentExit,
   writeToAgent,
   writeAgentPrompt,
   getAgentInputBlocker,
@@ -2057,6 +2059,77 @@ describe('waitForAgentExit', () => {
     } finally {
       killAgent(agentId);
     }
+  });
+});
+
+describe('agentExitKeys', () => {
+  it('presses Ctrl+C twice for any agent', () => {
+    expect(agentExitKeys('codex').map((k) => k.data)).toEqual(['\x03', '\x03']);
+  });
+
+  it('also types /exit for Claude Code, by name or path', () => {
+    for (const command of ['claude', 'C:\\Users\\me\\.local\\bin\\claude.exe', '/usr/bin/claude']) {
+      expect(agentExitKeys(command).map((k) => k.data)).toEqual(['\x03', '\x03', '/exit\r']);
+    }
+    expect(agentExitKeys('claude-wrapper').map((k) => k.data)).toEqual(['\x03', '\x03']);
+  });
+});
+
+describe('requestAgentExit', () => {
+  afterEach(() => vi.useRealTimers());
+
+  type MockProc = {
+    write: Mock;
+    emitExit: (e: { exitCode: number; signal: number | undefined }) => void;
+  };
+  const lastProc = (): MockProc =>
+    mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value as MockProc;
+
+  it('is done at once for an agent that is not running', async () => {
+    await expect(requestAgentExit('no-such-agent', 50)).resolves.toBe(true);
+  });
+
+  it('types the exit keys and reports the exit when the agent quits', async () => {
+    vi.useFakeTimers();
+    const agentId = nextAgentId();
+    await spawnAgent(
+      createMockNotify(),
+      buildSpawnArgs({ agentId, command: 'claude', dockerMode: false }),
+    );
+    const proc = lastProc();
+    const done = requestAgentExit(agentId, 5000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(proc.write.mock.calls.map((c) => c[0])).toEqual(['\x03', '\x03', '/exit\r']);
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    await vi.advanceTimersByTimeAsync(200);
+    await expect(done).resolves.toBe(true);
+  });
+
+  it('stops typing as soon as the agent has quit', async () => {
+    vi.useFakeTimers();
+    const agentId = nextAgentId();
+    await spawnAgent(
+      createMockNotify(),
+      buildSpawnArgs({ agentId, command: 'claude', dockerMode: false }),
+    );
+    const proc = lastProc();
+    const done = requestAgentExit(agentId, 5000);
+    await vi.advanceTimersByTimeAsync(50);
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(done).resolves.toBe(true);
+    expect(proc.write.mock.calls.map((c) => c[0])).toEqual(['\x03']);
+  });
+
+  it('reports false when the agent ignores the keys', async () => {
+    vi.useFakeTimers();
+    const agentId = nextAgentId();
+    await spawnAgent(createMockNotify(), buildSpawnArgs({ agentId, dockerMode: false }));
+    const done = requestAgentExit(agentId, 1500);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(done).resolves.toBe(false);
+    vi.useRealTimers();
+    killAgent(agentId);
   });
 });
 

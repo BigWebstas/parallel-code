@@ -72,3 +72,17 @@ function resolveShell(
 
   return platform === 'win32' ? windowsDefault(env) : '/bin/sh';
 }
+
+/**
+ * Shell-specific argv for running `command`. POSIX shells take `-c`;
+ * cmd.exe needs `/d /s /c` (`/d` skips AutoRun, `/s` keeps quoting sane) and
+ * PowerShell needs `-Command`. Without this, `cmd.exe -c "..."` treats `-c`
+ * as a file name and the run fails on Windows.
+ */
+export function shellSpawnArgs(shell: string, command: string): string[] {
+  const base = path.win32.basename(shell).toLowerCase();
+  if (base === 'cmd.exe' || base === 'cmd') return ['/d', '/s', '/c', command];
+  if (base === 'powershell.exe' || base === 'powershell' || base === 'pwsh.exe' || base === 'pwsh')
+    return ['-NoLogo', '-NoProfile', '-Command', command];
+  return ['-c', command];
+}

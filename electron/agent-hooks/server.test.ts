@@ -13,6 +13,10 @@ function tokenFrom(dir: string): string {
   return match[1];
 }
 
+/** The script path as the status line command spells it: Git Bash gets forward slashes on Windows. */
+const shellPath = (file: string): string =>
+  process.platform === 'win32' ? file.split('\\').join('/') : file;
+
 describe('startAgentHookServer', () => {
   let dir: string;
   let server: AgentHookServer;
@@ -65,7 +69,7 @@ describe('startAgentHookServer', () => {
     const settingsPath = server.claudeSettingsPath(dir, { CLAUDE_CONFIG_DIR: dir });
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     expect(settings.hooks.Stop[0].hooks[0].command).toContain(server.hookScriptPath);
-    expect(settings.statusLine.command).toBe(`/bin/sh '${server.statusLineScriptPath}'`);
+    expect(settings.statusLine.command).toBe(`/bin/sh '${shellPath(server.statusLineScriptPath)}'`);
   });
 
   it("wraps the user's own status line, and leaves an unreadable one alone", () => {
@@ -82,7 +86,7 @@ describe('startAgentHookServer', () => {
       JSON.parse(fs.readFileSync(server.claudeSettingsPath(cwd, env), 'utf8'));
     expect(read().statusLine).toEqual({
       type: 'command',
-      command: `/bin/sh '${server.statusLineScriptPath}' 'echo user'`,
+      command: `/bin/sh '${shellPath(server.statusLineScriptPath)}' 'echo user'`,
       padding: 2,
     });
     fs.writeFileSync(

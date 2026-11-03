@@ -583,62 +583,70 @@ describe('Claude chat adapter', () => {
     ]);
   });
 
-  it('runs a ! command in the worktree and lets Claude answer its output', async () => {
-    const cwd = mkdtempSync(join(settingsDir, 'shell-'));
-    const h = harness([], undefined, { cwd });
-    await h.chat.start();
-    const running = h.chat.runShell('pwd; echo oops >&2; exit 3');
-    expect(h.chat.state.status).toBe('working');
-    expect(h.chat.state.items[0]).toMatchObject({
-      kind: 'shell',
-      activity: { command: 'pwd; echo oops >&2; exit 3', status: 'running' },
-    });
-    await running;
-    await vi.waitFor(() => expect(h.chat.state.items[0].activity?.status).toBe('failed'));
-    const item = h.chat.state.items[0];
-    expect(item.text).toContain(cwd);
-    expect(item.text).toContain('oops');
-    expect(item.activity).toMatchObject({ status: 'failed', exitCode: 3 });
-    const prompt = h.sdk.query.mock.calls[0][0].prompt as AsyncIterable<SDKUserMessage>;
-    const { value } = await prompt[Symbol.asyncIterator]().next();
-    // The terminal's shell mode starts a turn on the output; Chat does the same.
-    expect(value).toMatchObject({ uuid: item.id, shouldQuery: true });
-    expect(value?.message.content).toBe(
-      `<bash-input>pwd; echo oops >&2; exit 3</bash-input>\n<bash-stdout>${cwd}\n</bash-stdout><bash-stderr>oops\n\nExit code 3</bash-stderr>`,
-    );
-    // The CLI's replay of the entry must not show the command a second time, and
-    // the chat stays busy through Claude's answer, so no prompt can overtake it.
-    await h.emit({ ...value, isReplay: true });
-    expect(h.chat.state.items).toHaveLength(1);
-    await h.emit({
-      type: 'assistant',
-      message: { id: 'reply', content: [{ type: 'text', text: 'It exited with code 3.' }] },
-    });
-    expect(h.chat.state.items[1]).toMatchObject({
-      kind: 'assistant',
-      text: 'It exited with code 3.',
-    });
-    expect(h.chat.state.status).toBe('working');
-    await h.emit({ type: 'result', is_error: false });
-    expect(h.chat.state.status).toBe('ready');
-  });
+  // POSIX shell syntax (pwd, $!, process groups); shell-command.test.ts covers Windows.
+  it.skipIf(process.platform === 'win32')(
+    'runs a ! command in the worktree and lets Claude answer its output',
+    async () => {
+      const cwd = mkdtempSync(join(settingsDir, 'shell-'));
+      const h = harness([], undefined, { cwd });
+      await h.chat.start();
+      const running = h.chat.runShell('pwd; echo oops >&2; exit 3');
+      expect(h.chat.state.status).toBe('working');
+      expect(h.chat.state.items[0]).toMatchObject({
+        kind: 'shell',
+        activity: { command: 'pwd; echo oops >&2; exit 3', status: 'running' },
+      });
+      await running;
+      await vi.waitFor(() => expect(h.chat.state.items[0].activity?.status).toBe('failed'));
+      const item = h.chat.state.items[0];
+      expect(item.text).toContain(cwd);
+      expect(item.text).toContain('oops');
+      expect(item.activity).toMatchObject({ status: 'failed', exitCode: 3 });
+      const prompt = h.sdk.query.mock.calls[0][0].prompt as AsyncIterable<SDKUserMessage>;
+      const { value } = await prompt[Symbol.asyncIterator]().next();
+      // The terminal's shell mode starts a turn on the output; Chat does the same.
+      expect(value).toMatchObject({ uuid: item.id, shouldQuery: true });
+      expect(value?.message.content).toBe(
+        `<bash-input>pwd; echo oops >&2; exit 3</bash-input>\n<bash-stdout>${cwd}\n</bash-stdout><bash-stderr>oops\n\nExit code 3</bash-stderr>`,
+      );
+      // The CLI's replay of the entry must not show the command a second time, and
+      // the chat stays busy through Claude's answer, so no prompt can overtake it.
+      await h.emit({ ...value, isReplay: true });
+      expect(h.chat.state.items).toHaveLength(1);
+      await h.emit({
+        type: 'assistant',
+        message: { id: 'reply', content: [{ type: 'text', text: 'It exited with code 3.' }] },
+      });
+      expect(h.chat.state.items[1]).toMatchObject({
+        kind: 'assistant',
+        text: 'It exited with code 3.',
+      });
+      expect(h.chat.state.status).toBe('working');
+      await h.emit({ type: 'result', is_error: false });
+      expect(h.chat.state.status).toBe('ready');
+    },
+  );
 
-  it('stops a running ! command and tells the model it was stopped', async () => {
-    const h = harness([], undefined, { cwd: settingsDir });
-    await h.chat.start();
-    // Returns once the command starts, so the composer is free to queue a follow-up.
-    await h.chat.runShell('echo started; sleep 30');
-    expect(h.chat.state.items[0].activity?.status).toBe('running');
-    await vi.waitFor(() => expect(h.chat.state.items[0]?.text).toContain('started'));
-    await h.chat.interrupt();
-    await vi.waitFor(() => expect(h.chat.state.items[0].activity?.status).toBe('interrupted'));
-    expect(h.controls.interrupt).not.toHaveBeenCalled();
-    const prompt = h.sdk.query.mock.calls[0][0].prompt as AsyncIterable<SDKUserMessage>;
-    const { value } = await prompt[Symbol.asyncIterator]().next();
-    expect(value?.message.content).toContain('Stopped by the user.');
-    // Stopping says the user is done with it; Claude reads it with the next message.
-    expect(value).toMatchObject({ shouldQuery: false });
-  });
+  // `sleep` is POSIX; shell-command.test.ts covers Stop on Windows.
+  it.skipIf(process.platform === 'win32')(
+    'stops a running ! command and tells the model it was stopped',
+    async () => {
+      const h = harness([], undefined, { cwd: settingsDir });
+      await h.chat.start();
+      // Returns once the command starts, so the composer is free to queue a follow-up.
+      await h.chat.runShell('echo started; sleep 30');
+      expect(h.chat.state.items[0].activity?.status).toBe('running');
+      await vi.waitFor(() => expect(h.chat.state.items[0]?.text).toContain('started'));
+      await h.chat.interrupt();
+      await vi.waitFor(() => expect(h.chat.state.items[0].activity?.status).toBe('interrupted'));
+      expect(h.controls.interrupt).not.toHaveBeenCalled();
+      const prompt = h.sdk.query.mock.calls[0][0].prompt as AsyncIterable<SDKUserMessage>;
+      const { value } = await prompt[Symbol.asyncIterator]().next();
+      expect(value?.message.content).toContain('Stopped by the user.');
+      // Stopping says the user is done with it; Claude reads it with the next message.
+      expect(value).toMatchObject({ shouldQuery: false });
+    },
+  );
 
   it('gives the model command output without terminal colours', async () => {
     const h = harness([], undefined, { cwd: settingsDir });

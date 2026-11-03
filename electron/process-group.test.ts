@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const { execFileMock } = vi.hoisted(() => ({ execFileMock: vi.fn() }));
 vi.mock('node:child_process', () => ({ execFile: execFileMock }));
 
-import { signalProcessGroup, waitForProcessTreeKills } from './process-group.js';
+import * as log from './log.js';
+import { signalProcessGroup, terminatePid, waitForProcessTreeKills } from './process-group.js';
 
 type Callback = (error: (Error & { code?: number }) | null) => void;
 /** Make the mocked taskkill finish with \`error\` (null for success). */
@@ -27,6 +28,26 @@ function withPlatform(platform: NodeJS.Platform, run: () => void): void {
     if (original) Object.defineProperty(process, 'platform', original);
   }
 }
+
+describe('terminatePid', () => {
+  it('kills the pid directly and never Electron itself', () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    expect(terminatePid(42)).toBe(true);
+    expect(kill).toHaveBeenCalledWith(42, 'SIGKILL');
+    kill.mockClear();
+    expect(terminatePid(process.pid)).toBe(false);
+    expect(terminatePid(0)).toBe(false);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it('reports false when the process cannot be ended', () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => {});
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw new Error('EPERM');
+    });
+    expect(terminatePid(42)).toBe(false);
+  });
+});
 
 describe('signalProcessGroup', () => {
   it('signals the negative pid on POSIX', () => {
@@ -62,6 +83,21 @@ describe('signalProcessGroup', () => {
     withPlatform('win32', () => signalProcessGroup({ pid: 42, kill }, 'SIGKILL'));
     await waitForProcessTreeKills();
     expect(kill).toHaveBeenCalledWith();
+  });
+
+  it('logs why taskkill failed instead of swallowing it', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    execFileMock.mockImplementation(
+      (_cmd: string, _args: string[], _opts: unknown, cb: (...a: unknown[]) => void) =>
+        cb(Object.assign(new Error('failed'), { code: 1 }), '', 'ERROR: Access is denied.\r\n'),
+    );
+    withPlatform('win32', () => signalProcessGroup({ pid: 42, kill: vi.fn() }, 'SIGKILL'));
+    await waitForProcessTreeKills();
+    expect(warn).toHaveBeenCalledWith(
+      'process',
+      expect.any(String),
+      expect.objectContaining({ pid: 42, code: 1, stderr: 'ERROR: Access is denied.' }),
+    );
   });
 
   it('does not kill again a process taskkill reports as already gone', async () => {
