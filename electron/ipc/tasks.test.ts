@@ -133,6 +133,7 @@ describe('deleteTask', () => {
       'task/x',
       true,
       undefined,
+      { deferIfLocked: expect.any(Function) },
     );
   });
 

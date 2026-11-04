@@ -1030,6 +1030,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     validatePath(args.projectRoot, 'projectRoot');
     validateBranchName(args.branchName, 'branchName');
     assertBoolean(args.deleteBranch, 'deleteBranch');
+    assertOptionalBoolean(args.keepLockedFolder, 'keepLockedFolder');
     assertOptionalString(args.taskId, 'taskId');
     // A verify run still going would keep writing into the worktree being deleted.
     if (args.taskId) {
@@ -1046,6 +1047,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       deleteBranch: args.deleteBranch,
       projectRoot: args.projectRoot,
       worktreePath: optionalWorktreePath(args),
+      keepLockedFolder: args.keepLockedFolder,
     });
     if (args.taskId) delegation.unregister(args.taskId);
     return result;

@@ -6,6 +6,8 @@ interface TaskClosingOverlayProps {
   closingStatus: string | undefined;
   closingError: string | undefined;
   onRetry: () => void;
+  /** Windows only: close the task and leave its locked folder to be deleted later. */
+  onKeepFolder?: () => void;
 }
 
 export function TaskClosingOverlay(props: TaskClosingOverlayProps) {
@@ -63,6 +65,28 @@ export function TaskClosingOverlay(props: TaskClosingOverlayProps) {
             <SyncIcon size={14} />
             Retry
           </button>
+          <Show when={props.onKeepFolder}>
+            {(keepFolder) => (
+              <button
+                class="btn-with-icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  keepFolder()();
+                }}
+                style={{
+                  background: 'transparent',
+                  border: `1px solid ${theme.border}`,
+                  color: theme.fgMuted,
+                  padding: '6px 16px',
+                  'border-radius': 'var(--radius-sm)',
+                  cursor: 'pointer',
+                  'font-size': '13px',
+                }}
+              >
+                Remove task, keep folder
+              </button>
+            )}
+          </Show>
         </Show>
       </div>
     </Show>

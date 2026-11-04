@@ -7,6 +7,7 @@ import type { Notify } from './notify.js';
 import { KANBAN_FILE } from './kanban.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
+import { deferWorktreeRemoval } from './deferred-worktree-removals.js';
 import { baseUpstreamDivergence, conflictSourcesNote, upstreamOf } from './git-base-upstream.js';
 import { readBranchTips, readHeadSha, refExists, resolveGitCommonDirSync } from './git-refs.js';
 import { createAppExec, type ExecFn } from './git-exec.js';
@@ -2012,11 +2013,86 @@ export function refreshWorktreeNodeModules(worktreePath: string, repoRoot?: stri
   linkNestedNodeModules(root, worktreePath);
 }
 
+export interface RemoveWorktreeOptions {
+  /**
+   * Windows only. Asked when the folder could not be deleted; answering true
+   * closes the task anyway and leaves the folder to a background retry.
+   */
+  deferIfLocked?: (err: unknown) => Promise<boolean>;
+}
+
+/**
+ * Let a close succeed although Windows keeps the worktree folder locked: take it
+ * out of git's list (so the branch can go), queue the folder for deletion in the
+ * background, and report whether that happened.
+ */
+async function deferLockedRemoval(
+  target: { repoRoot: string; worktreePath: string; branchName?: string; err: unknown },
+  opts: RemoveWorktreeOptions | undefined,
+): Promise<boolean> {
+  if (process.platform !== 'win32' || !opts?.deferIfLocked) return false;
+  if (!(await opts.deferIfLocked(target.err))) return false;
+  const queued = deferWorktreeRemoval({
+    worktreePath: target.worktreePath,
+    projectRoot: target.repoRoot,
+    branchName: target.branchName,
+    reason: target.err instanceof Error ? target.err.message : String(target.err),
+  });
+  if (!queued) return false;
+  logWarn('git', 'Worktree folder is locked; task closed, folder queued for removal', {
+    worktreePath: target.worktreePath,
+    err: target.err instanceof Error ? target.err.message : String(target.err),
+  });
+  // Without its `.git` pointer file the folder is no longer a worktree, so
+  // `git worktree prune` drops it. Only ever a file: a `.git` directory is a repository.
+  const dotGit = path.join(target.worktreePath, '.git');
+  try {
+    if (fs.lstatSync(dotGit).isFile()) await fs.promises.rm(dotGit, { force: true });
+  } catch {
+    /* already gone, or locked too; the retry handles it */
+  }
+  return true;
+}
+
+/**
+ * One light attempt at a queued folder: no holder scan and no killing, since it
+ * runs unattended. True once the folder, its worktree entry and its branch are gone.
+ */
+export async function retryDeferredWorktreeRemoval(entry: {
+  worktreePath: string;
+  projectRoot: string;
+  branchName?: string;
+}): Promise<boolean> {
+  if (!fs.existsSync(entry.projectRoot)) return true;
+  if (fs.existsSync(entry.worktreePath)) {
+    try {
+      await prepareTreeForRemoval(entry.worktreePath);
+      await fs.promises.rm(entry.worktreePath, {
+        recursive: true,
+        force: true,
+        maxRetries: 2,
+        retryDelay: 100,
+      });
+    } catch {
+      /* still locked */
+    }
+    if (fs.existsSync(entry.worktreePath)) return false;
+  }
+  await exec('git', ['worktree', 'prune'], { cwd: entry.projectRoot }).catch(() => undefined);
+  if (entry.branchName) {
+    await exec('git', ['branch', '-D', '--', entry.branchName], { cwd: entry.projectRoot }).catch(
+      () => undefined,
+    );
+  }
+  return true;
+}
+
 export async function removeWorktree(
   repoRoot: string,
   branchName: string,
   deleteBranch: boolean,
   explicitWorktreePath?: string,
+  opts?: RemoveWorktreeOptions,
 ): Promise<void> {
   // After the user adopts a branch the agent switched the worktree to, the
   // folder keeps its original branch-derived name — callers that know the real
@@ -2031,8 +2107,17 @@ export async function removeWorktree(
     return;
   }
 
+  let deferred = false;
   if (fs.existsSync(worktreePath)) {
-    await forceRemoveWorktreeDir(repoRoot, worktreePath);
+    try {
+      await forceRemoveWorktreeDir(repoRoot, worktreePath);
+    } catch (err) {
+      deferred = await deferLockedRemoval(
+        { repoRoot, worktreePath, branchName: deleteBranch ? branchName : undefined, err },
+        opts,
+      );
+      if (!deferred) throw err;
+    }
     nodeModulesLastSync.delete(path.join(worktreePath, 'node_modules'));
   }
 
@@ -2084,6 +2169,12 @@ export async function removeWorktree(
             return;
           }
         }
+      }
+      if (deferred) {
+        // The folder is still registered with git until it can be deleted; the
+        // background retry deletes the branch once it is gone.
+        logWarn('git', 'Kept task branch while its worktree folder is locked', { branchName });
+        return;
       }
       throw e;
     }

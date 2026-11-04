@@ -13,6 +13,7 @@ import { stopPlanWatcher, stopPlanWatchersForPath } from './plans.js';
 import { elevatedHoldersError, findUnreachable, isBeyondReach } from './unreachable-processes.js';
 import { verificationRunner } from './verify.js';
 import { recordWorktreeIntent } from './worktree-intents.js';
+import { isRemovalDeferred } from './deferred-worktree-removals.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
 import { waitForProcessTreeKills } from '../process-group.js';
 import { localBranchExists, resolvePrCheckout } from '../github/pr-checkout.js';
@@ -120,9 +121,16 @@ interface DeleteTaskOpts {
   /** Real worktree location; the folder keeps its original branch-derived
    *  name even after the task adopts a branch the agent switched to. */
   worktreePath?: string;
+  /** Windows: close the task even when its folder stays locked, whoever holds it. */
+  keepLockedFolder?: boolean;
 }
 
-export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
+export interface DeleteTaskResult {
+  /** Set when Windows kept the worktree folder locked: the task is closed and the folder is deleted later. */
+  leftoverFolder?: string;
+}
+
+export async function deleteTask(opts: DeleteTaskOpts): Promise<DeleteTaskResult> {
   logDebug(
     'tasks',
     `deleteTask starting for task=${opts.taskId ?? 'unknown'} branch=${opts.branchName}`,
@@ -185,7 +193,13 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
     `deleteTask: agents exited or timed out, removing worktree for branch=${opts.branchName}`,
   );
   try {
-    await removeWorktree(opts.projectRoot, opts.branchName, opts.deleteBranch, opts.worktreePath);
+    await removeWorktree(opts.projectRoot, opts.branchName, opts.deleteBranch, opts.worktreePath, {
+      // A holder this app cannot end is worth telling the user about (below);
+      // anything else (an IDE, Explorer, a scan) should not keep the task open.
+      deferIfLocked: async () =>
+        opts.keepLockedFolder === true ||
+        (await findUnreachable(agentPids, descendants)).length === 0,
+    });
   } catch (err) {
     // Elevated processes hide from the holder scan and ignore a kill, so a failed
     // removal says nothing useful unless they are named.
@@ -196,6 +210,10 @@ export async function deleteTask(opts: DeleteTaskOpts): Promise<void> {
     });
     throw elevatedHoldersError(targetWorktree, err, stuck);
   }
-  logDebug('tasks', `deleteTask: worktree removed successfully for branch=${opts.branchName}`);
+  const leftoverFolder = isRemovalDeferred(targetWorktree) ? targetWorktree : undefined;
+  logDebug('tasks', `deleteTask: worktree removed successfully for branch=${opts.branchName}`, {
+    leftoverFolder,
+  });
   notifyAgentListChanged();
+  return { leftoverFolder };
 }
