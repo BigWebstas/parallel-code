@@ -1,4 +1,4 @@
-import { Show } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { theme } from '../lib/theme';
 import { SyncIcon } from './icons';
 
@@ -10,7 +10,17 @@ interface TaskClosingOverlayProps {
   onKeepFolder?: () => void;
 }
 
+/** After this long "Closing task..." says what it is waiting for. */
+const SLOW_CLOSE_HINT_MS = 6_000;
+
 export function TaskClosingOverlay(props: TaskClosingOverlayProps) {
+  const [slow, setSlow] = createSignal(false);
+  createEffect(() => {
+    setSlow(false);
+    if (props.closingStatus !== 'closing') return;
+    const timer = setTimeout(() => setSlow(true), SLOW_CLOSE_HINT_MS);
+    onCleanup(() => clearTimeout(timer));
+  });
   return (
     <Show when={props.closingStatus && props.closingStatus !== 'removing'}>
       <div
@@ -30,6 +40,18 @@ export function TaskClosingOverlay(props: TaskClosingOverlayProps) {
       >
         <Show when={props.closingStatus === 'closing'}>
           <div style={{ 'font-size': '14px', color: theme.fgMuted }}>Closing task...</div>
+          <Show when={slow()}>
+            <div
+              style={{
+                'font-size': '12px',
+                color: theme.fgMuted,
+                'max-width': '260px',
+                'text-align': 'center',
+              }}
+            >
+              Waiting for the task's folder to be released. This gives up after about 30 seconds.
+            </div>
+          </Show>
         </Show>
         <Show when={props.closingStatus === 'error'}>
           <div style={{ 'font-size': '14px', color: theme.error, 'font-weight': '600' }}>

@@ -2019,6 +2019,40 @@ export interface RemoveWorktreeOptions {
    * closes the task anyway and leaves the folder to a background retry.
    */
   deferIfLocked?: (err: unknown) => Promise<boolean>;
+  /** Windows: stop waiting for the folder after this long (default 25 s). Tests only. */
+  budgetMs?: number;
+}
+
+/**
+ * The delete ladder (retries, holder scans, kills) can run for minutes, and the
+ * task shows "Closing..." the whole time. Past this budget the close gives up
+ * waiting; the ladder keeps going in the background and may still succeed.
+ */
+const REMOVAL_BUDGET_MS = 25_000;
+
+async function withRemovalBudget(
+  removal: Promise<void>,
+  worktreePath: string,
+  budgetMs: number,
+): Promise<void> {
+  if (process.platform !== 'win32' || budgetMs <= 0) return removal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new Error(
+          `EBUSY: resource busy or locked, still waiting after ${Math.round(budgetMs / 1000)} s: '${worktreePath}'`,
+        ),
+      );
+    }, budgetMs);
+  });
+  // The ladder may fail after we stopped listening; that must not be unhandled.
+  removal.catch(() => undefined);
+  try {
+    await Promise.race([removal, expired]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -2110,7 +2144,11 @@ export async function removeWorktree(
   let deferred = false;
   if (fs.existsSync(worktreePath)) {
     try {
-      await forceRemoveWorktreeDir(repoRoot, worktreePath);
+      await withRemovalBudget(
+        forceRemoveWorktreeDir(repoRoot, worktreePath),
+        worktreePath,
+        opts?.deferIfLocked ? (opts.budgetMs ?? REMOVAL_BUDGET_MS) : 0,
+      );
     } catch (err) {
       deferred = await deferLockedRemoval(
         { repoRoot, worktreePath, branchName: deleteBranch ? branchName : undefined, err },

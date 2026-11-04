@@ -76,6 +76,63 @@ async function readLinuxProcesses(): Promise<ProcRow[]> {
   return (await Promise.all(reads)).filter((row): row is ProcRow => row !== null);
 }
 
+/**
+ * Parse `Get-CimInstance Win32_Process | ConvertTo-Json` output (Windows).
+ * Kernel/user times are in 100 ns units; PowerShell emits a bare object, not an
+ * array, when there is a single process.
+ */
+export function parseWindowsProcesses(text: string): ProcRow[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const list: unknown[] = Array.isArray(data) ? data : [data];
+  const rows: ProcRow[] = [];
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue;
+    const p = item as Record<string, unknown>;
+    const pid = Number(p.ProcessId);
+    const ppid = Number(p.ParentProcessId);
+    const ticks = Number(p.KernelModeTime) + Number(p.UserModeTime);
+    if (![pid, ppid, ticks].every(Number.isFinite)) continue;
+    rows.push({
+      pid,
+      ppid,
+      name: String(p.Name ?? '').replace(/\.exe$/i, ''),
+      memoryBytes: Number(p.WorkingSetSize) || 0,
+      cpuSeconds: ticks / 1e7,
+      // Creation time (epoch ms) tells a reused pid apart from the old process.
+      startTicks: Number(p.CreationTimeMs) || 0,
+    });
+  }
+  return rows;
+}
+
+function readWindowsProcesses(): Promise<ProcRow[]> {
+  // CreationDate arrives as a DateTime; project it to epoch ms so the JSON stays simple.
+  const script =
+    'Get-CimInstance Win32_Process | ForEach-Object { [pscustomobject]@{ ' +
+    'ProcessId=$_.ProcessId; ParentProcessId=$_.ParentProcessId; Name=$_.Name; ' +
+    'WorkingSetSize=$_.WorkingSetSize; KernelModeTime=$_.KernelModeTime; ' +
+    'UserModeTime=$_.UserModeTime; ' +
+    'CreationTimeMs=[long]([datetimeoffset]$_.CreationDate).ToUnixTimeMilliseconds() } } | ' +
+    'ConvertTo-Json -Compress';
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { maxBuffer: 16 * 1024 * 1024, windowsHide: true },
+      (err, stdout) => {
+        if (err) return reject(err);
+        // The PowerShell process is the measurement, not a workload.
+        resolve(parseWindowsProcesses(stdout).filter((row) => row.pid !== child.pid));
+      },
+    );
+  });
+}
+
 function readPsProcesses(): Promise<ProcRow[]> {
   return new Promise((resolve, reject) => {
     const child = execFile(
@@ -91,9 +148,11 @@ function readPsProcesses(): Promise<ProcRow[]> {
   });
 }
 
-/** Read the whole process table. Linux uses /proc; macOS uses `ps`. */
+/** Read the whole process table. Linux uses /proc, Windows uses CIM, macOS uses `ps`. */
 export function readProcessTable(): Promise<ProcRow[]> {
-  return process.platform === 'linux' ? readLinuxProcesses() : readPsProcesses();
+  if (process.platform === 'linux') return readLinuxProcesses();
+  if (process.platform === 'win32') return readWindowsProcesses();
+  return readPsProcesses();
 }
 
 interface CpuReading {
