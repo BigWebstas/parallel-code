@@ -117,6 +117,9 @@ internal class DemoSession : PhoneClient {
         _state.value = state.value.copy(canControl = true)
     }
 
+    override suspend fun createProject(name: String, parentDir: String): MobileProject =
+        MobileProject("demo-new", name, null, path = "$parentDir/$name")
+
     override suspend fun fetchProjects() = listOf(
         MobileProject("demo-project", "Sample project", "Demo chat agent", color = "hsl(210, 70%, 60%)"),
         MobileProject("demo-docs", "Sample documentation", "Demo terminal agent", color = "hsl(150, 55%, 50%)"),
