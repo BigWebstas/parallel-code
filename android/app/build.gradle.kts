@@ -32,7 +32,8 @@ android {
 
     buildTypes {
         release {
-            signingConfigs.findByName("release")?.let { signingConfig = it }
+            // Fall back to the debug key for local installRelease runs when no release keystore is configured.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             // R8 drops unused code and resources; the libraries ship their own keep rules.
             isMinifyEnabled = true
             isShrinkResources = true

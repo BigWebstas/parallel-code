@@ -38,15 +38,16 @@ export function createFling(scroll: (dx: number, dy: number) => void) {
   };
 
   const release = () => {
-    const resting = performance.now() - movedAt > RELEASE_WINDOW_MS;
+    const releasedAt = performance.now();
+    const resting = releasedAt - movedAt > RELEASE_WINDOW_MS;
     if (!movedAt || resting || Math.hypot(vx, vy) < MIN_SPEED) {
       stop();
       return;
     }
-    let last = 0;
+    let last = releasedAt;
     const step = (now: number) => {
       // Cap the step so a stalled frame does not jump the pane.
-      const dt = last ? Math.min(32, now - last) : 16;
+      const dt = Math.min(32, Math.max(1, now - last));
       last = now;
       scroll(vx * dt, vy * dt);
       const decay = FRICTION ** dt;

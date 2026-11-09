@@ -39,9 +39,13 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
         /** Continues the row above: autowrap filled that one, no line break ended it. */
         var wrapped = false
 
+        /** Cached style runs so unchanged screen rows skip scanning and reallocating on every frame. */
+        var cachedSpans: List<StyledSpan>? = null
+
         fun fill(from: Int, to: Int, style: Long) {
             chars.fill(' ', from, to)
             styles.fill(style, from, to)
+            cachedSpans = null
         }
     }
 
@@ -187,17 +191,24 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
     private fun pastLine(line: Line) = PastLine(spans(line), line.wrapped, line.chars.size)
 
     private fun spans(line: Line): List<StyledSpan> {
+        line.cachedSpans?.let { return it }
         // Trailing blanks only matter when they are painted with a background color.
         var end = line.chars.size
         while (end > 0 && line.chars[end - 1] == ' ' && CellStyle.bg(line.styles[end - 1]) == CellStyle.DEFAULT_COLOR) end--
-        val spans = ArrayList<StyledSpan>()
-        var start = 0
-        while (start < end) {
-            var stop = start + 1
-            while (stop < end && line.styles[stop] == line.styles[start]) stop++
-            spans.add(StyledSpan(String(line.chars, start, stop - start), line.styles[start]))
-            start = stop
+        val spans = if (end == 0) {
+            emptyList()
+        } else {
+            val list = ArrayList<StyledSpan>()
+            var start = 0
+            while (start < end) {
+                var stop = start + 1
+                while (stop < end && line.styles[stop] == line.styles[start]) stop++
+                list.add(StyledSpan(String(line.chars, start, stop - start), line.styles[start]))
+                start = stop
+            }
+            list
         }
+        line.cachedSpans = spans
         return spans
     }
 
@@ -272,8 +283,10 @@ class TerminalScreen(cols: Int = 80, rows: Int = 24) {
             lineFeed()
             grid[row].wrapped = true
         }
-        grid[row].chars[col] = c
-        grid[row].styles[col] = style
+        val line = grid[row]
+        line.chars[col] = c
+        line.styles[col] = style
+        line.cachedSpans = null
         if (col == cols - 1) wrapPending = true else col++
     }
 

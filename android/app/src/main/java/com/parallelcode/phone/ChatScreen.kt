@@ -66,6 +66,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.animation.core.tween
@@ -341,7 +345,7 @@ private fun TypingIndicator(modifier: Modifier) {
     val transition = rememberInfiniteTransition(label = "typing")
     Row(modifier.padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         repeat(3) { i ->
-            val lift by transition.animateFloat(
+            val lift = transition.animateFloat(
                 initialValue = 0f,
                 targetValue = 1f,
                 animationSpec = infiniteRepeatable(
@@ -358,8 +362,9 @@ private fun TypingIndicator(modifier: Modifier) {
                 Modifier
                     .size(7.dp)
                     .graphicsLayer {
-                        translationY = -lift * 5.dp.toPx()
-                        alpha = 0.4f + 0.6f * lift
+                        val v = lift.value
+                        translationY = -v * 5.dp.toPx()
+                        alpha = 0.4f + 0.6f * v
                     }
                     .background(AppTheme.extra.textMuted, CircleShape),
             )
@@ -492,12 +497,13 @@ private fun RequestCard(
 
     val haptic = LocalHapticFeedback.current
     // The card breathes like a waiting agent card, so it reads as the thing to act on.
-    val glow by rememberInfiniteTransition(label = "requestGlow").animateFloat(
+    val glow = rememberInfiniteTransition(label = "requestGlow").animateFloat(
         initialValue = 0.45f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
         label = "requestGlowAlpha",
     )
+    val borderColor = AppTheme.extra.attentionBorder
 
     fun submit(decision: String) {
         haptic.performHapticFeedback(if (decision == "decline") HapticFeedbackType.Reject else HapticFeedbackType.Confirm)
@@ -518,7 +524,17 @@ private fun RequestCard(
         Modifier
             .fillMaxWidth()
             .background(AppTheme.extra.cardBgAttention)
-            .border(BorderStroke(1.dp, AppTheme.extra.attentionBorder.copy(alpha = glow)))
+            .drawWithContent {
+                drawContent()
+                val strokeWidth = 1.dp.toPx()
+                val half = strokeWidth / 2f
+                drawRect(
+                    color = borderColor.copy(alpha = glow.value),
+                    topLeft = Offset(half, half),
+                    size = Size(size.width - strokeWidth, size.height - strokeWidth),
+                    style = Stroke(width = strokeWidth),
+                )
+            }
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {

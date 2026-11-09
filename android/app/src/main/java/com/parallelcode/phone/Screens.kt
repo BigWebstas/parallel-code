@@ -96,14 +96,20 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -454,7 +460,7 @@ fun AgentsScreen(
                                     ConnectionStatus.DISCONNECTED -> MaterialTheme.colorScheme.error
                                 }
                                 val infiniteTransition = rememberInfiniteTransition(label = "connPulse")
-                                val pulseAlpha by if (state.status == ConnectionStatus.CONNECTED) {
+                                val pulseAlpha = if (state.status == ConnectionStatus.CONNECTED) {
                                     infiniteTransition.animateFloat(
                                         initialValue = 0.45f,
                                         targetValue = 1f,
@@ -470,8 +476,9 @@ fun AgentsScreen(
                                 Box(
                                     Modifier
                                         .size(7.dp)
+                                        .graphicsLayer { alpha = pulseAlpha.value }
                                         .clip(CircleShape)
-                                        .background(statusDotColor.copy(alpha = pulseAlpha)),
+                                        .background(statusDotColor),
                                 )
                                 Text(
                                     "${statusLabel(state)}$latencySegment · $hostLabel",
@@ -679,7 +686,7 @@ internal fun AgentCard(
     // A minimized task only lists here while it needs you or the Snoozed & minimized lane shows.
     val isAttention = agent.attention == "needs_input" || isError
     val attentionTransition = rememberInfiniteTransition(label = "attentionPulse")
-    val attentionGlow by if (isAttention) {
+    val attentionGlow = if (isAttention) {
         attentionTransition.animateFloat(
             initialValue = 0.45f,
             targetValue = 1f,
@@ -693,15 +700,15 @@ internal fun AgentCard(
         remember { mutableFloatStateOf(1f) }
     }
 
-    val cardBorderColor = if (isAttention) {
-        if (isError) MaterialTheme.colorScheme.error.copy(alpha = attentionGlow)
-        else AppTheme.extra.attentionBorder.copy(alpha = attentionGlow)
+    val cardShape = MaterialTheme.shapes.large
+    val baseBorderColor = if (isAttention) {
+        if (isError) MaterialTheme.colorScheme.error else AppTheme.extra.attentionBorder
     } else {
         AppTheme.extra.border
     }
     val cardBg by animateColorAsState(
         if (isAttention) AppTheme.extra.cardBgAttention else AppTheme.extra.cardBg,
-        animationSpec = tween(300),
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
         label = "cardBg",
     )
     // A card that just started needing you bumps once, so the change catches the eye.
@@ -729,7 +736,7 @@ internal fun AgentCard(
 
     val isWorking = !agent.collapsed && agent.running && (agent.attention == "active" || agent.attention == "shell_busy")
     val infiniteTransition = rememberInfiniteTransition(label = "agentWorkingPulse")
-    val dotAlpha by if (isWorking) {
+    val dotAlpha = if (isWorking) {
         infiniteTransition.animateFloat(
             initialValue = 0.35f,
             targetValue = 1f,
@@ -751,10 +758,25 @@ internal fun AgentCard(
                 scaleX = bump.value
                 scaleY = bump.value
             }
+            .drawWithCache {
+                val strokeWidth = 1.dp.toPx()
+                val outline = cardShape.createOutline(size, layoutDirection, this)
+                val stroke = Stroke(width = strokeWidth)
+                onDrawWithContent {
+                    drawContent()
+                    if (isAttention) {
+                        drawOutline(
+                            outline = outline,
+                            color = baseBorderColor.copy(alpha = attentionGlow.value),
+                            style = stroke,
+                        )
+                    }
+                }
+            }
             .clickable { onOpen(agent) },
-        shape = MaterialTheme.shapes.large,
+        shape = cardShape,
         colors = CardDefaults.cardColors(containerColor = cardBg),
-        border = BorderStroke(1.dp, cardBorderColor),
+        border = if (isAttention) null else BorderStroke(1.dp, baseBorderColor),
     ) {
         Column(
             Modifier.padding(14.dp),
@@ -786,8 +808,9 @@ internal fun AgentCard(
                         Box(
                             Modifier
                                 .size(6.dp)
+                                .graphicsLayer { alpha = dotAlpha.value }
                                 .clip(CircleShape)
-                                .background(statusColor.copy(alpha = dotAlpha)),
+                                .background(statusColor),
                         )
                         Text(
                             statusText,
@@ -844,10 +867,7 @@ fun AgentScreen(
     onPair: () -> Unit,
 ) {
     val buffer = remember(agentId) { client.getTerminalBuffer(agentId) }
-    val version by buffer.version.collectAsState()
-    // Recomposition is batched per frame, so a burst of output renders the text once.
-    val lines = remember(version) { buffer.screen.styledLines() }
-    val fullScreen = remember(version) { buffer.screen.alternateScreen }
+    val bracketedPaste by buffer.bracketedPaste.collectAsState()
     var tab by rememberSaveable { mutableStateOf(AgentTab.TERMINAL) }
     var closing by remember { mutableStateOf(false) }
     var merging by remember { mutableStateOf(false) }
@@ -1012,11 +1032,11 @@ fun AgentScreen(
                 targetState = tab,
                 transitionSpec = {
                     if (targetState.ordinal > initialState.ordinal) {
-                        (slideInHorizontally(animationSpec = tween(220)) { width -> width / 4 } + fadeIn(tween(180)))
-                            .togetherWith(slideOutHorizontally(animationSpec = tween(200)) { width -> -width / 4 } + fadeOut(tween(160)))
+                        (slideInHorizontally(animationSpec = tween(160, easing = FastOutSlowInEasing)) { width -> width / 5 } + fadeIn(tween(140, easing = FastOutSlowInEasing)))
+                            .togetherWith(slideOutHorizontally(animationSpec = tween(120, easing = FastOutSlowInEasing)) { width -> -width / 5 } + fadeOut(tween(110, easing = FastOutSlowInEasing)))
                     } else {
-                        (slideInHorizontally(animationSpec = tween(220)) { width -> -width / 4 } + fadeIn(tween(180)))
-                            .togetherWith(slideOutHorizontally(animationSpec = tween(200)) { width -> width / 4 } + fadeOut(tween(160)))
+                        (slideInHorizontally(animationSpec = tween(160, easing = FastOutSlowInEasing)) { width -> -width / 5 } + fadeIn(tween(140, easing = FastOutSlowInEasing)))
+                            .togetherWith(slideOutHorizontally(animationSpec = tween(120, easing = FastOutSlowInEasing)) { width -> width / 5 } + fadeOut(tween(110, easing = FastOutSlowInEasing)))
                     }
                 },
                 modifier = Modifier.weight(1f),
@@ -1057,19 +1077,14 @@ fun AgentScreen(
                                     bottomInset = if (nextNeedingYou != null) 44.dp else 0.dp,
                                 )
                             } else {
-                                TerminalText(
-                                    lines,
-                                    buffer.screen.cols,
-                                    Modifier.fillMaxSize(),
+                                LiveTerminalText(
+                                    buffer = buffer,
+                                    canControl = state.canControl,
                                     alwaysFollow = alwaysFollowOutput,
                                     fitToView = sizeTerminal,
                                     onViewSize = { cols, rows -> viewSize = cols to rows },
                                     onZoomedChange = onZoomedChange,
-                                    onWheel = if (fullScreen && state.canControl) {
-                                        { wheelLines: Int -> client.scrollTerminal(agentId, wheelLines) }
-                                    } else {
-                                        null
-                                    },
+                                    onScrollTerminal = { wheelLines -> client.scrollTerminal(agentId, wheelLines) },
                                     // Keeps an agent's prompt clear of the Next task pill below it.
                                     bottomInset = if (nextNeedingYou != null) 44.dp else 0.dp,
                                 )
@@ -1139,7 +1154,7 @@ fun AgentScreen(
                         (agent.attention == "active" || agent.attention == "shell_busy"),
                     promptHistory = promptHistory,
                     needsInput = agent?.attention == "needs_input",
-                    sendsLineBreaksAsSpaces = !buffer.screen.bracketedPaste,
+                    sendsLineBreaksAsSpaces = !bracketedPaste,
                     send = { draft, shell ->
                         val data = messageForTerminal(draft, buffer.screen.bracketedPaste)
                         if (data.isNotEmpty()) {
@@ -1245,6 +1260,34 @@ private val QUICK_KEYS = listOf(
 )
 
 @Composable
+private fun LiveTerminalText(
+    buffer: TerminalBuffer,
+    canControl: Boolean,
+    alwaysFollow: Boolean,
+    fitToView: Boolean,
+    onViewSize: (cols: Int, rows: Int) -> Unit,
+    onZoomedChange: (Boolean) -> Unit,
+    onScrollTerminal: (lines: Int) -> Unit,
+    bottomInset: Dp,
+) {
+    val version by buffer.version.collectAsState()
+    // Recomposition is batched per frame, so a burst of output renders the text once.
+    val lines = remember(version) { buffer.screen.styledLines() }
+    val fullScreen = remember(version) { buffer.screen.alternateScreen }
+    TerminalText(
+        lines = lines,
+        cols = buffer.screen.cols,
+        modifier = Modifier.fillMaxSize(),
+        alwaysFollow = alwaysFollow,
+        fitToView = fitToView,
+        onViewSize = onViewSize,
+        onZoomedChange = onZoomedChange,
+        onWheel = if (fullScreen && canControl) onScrollTerminal else null,
+        bottomInset = bottomInset,
+    )
+}
+
+@Composable
 private fun TerminalText(
     lines: List<List<StyledSpan>>,
     cols: Int,
@@ -1264,7 +1307,7 @@ private fun TerminalText(
     val palette = remember(look) { TerminalPalette.forLook(look) }
     // A lazy list lays out only the lines on screen; history lines keep their style runs between
     // frames, so a spinner repainting one row no longer rebuilds thousands of lines.
-    val list = rememberLazyListState()
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = (lines.size - 1).coerceAtLeast(0))
     val scope = rememberCoroutineScope()
     var follow by remember { mutableStateOf(true) }
     val isNearBottom by remember { derivedStateOf { !list.canScrollForward } }
@@ -1595,26 +1638,36 @@ private fun TerminalVerticalScrollbar(
     list: LazyListState,
     modifier: Modifier = Modifier,
 ) {
-    val info = list.layoutInfo
-    val total = info.totalItemsCount
-    val visible = info.visibleItemsInfo.size
-    if (total == 0 || visible >= total) return
-    BoxWithConstraints(modifier.width(4.dp)) {
-        val totalHeight = maxHeight
-        val thumbHeightDp = totalHeight * (visible.toFloat() / total).coerceIn(0.08f, 0.9f)
-        val scrollRatio = (list.firstVisibleItemIndex.toFloat() / (total - visible)).coerceIn(0f, 1f)
-        Box(
-            Modifier
-                .offset(y = (totalHeight - thumbHeightDp) * scrollRatio)
-                .fillMaxWidth()
-                .height(thumbHeightDp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(
-                    if (list.isScrollInProgress) AppTheme.extra.textPrimary.copy(alpha = 0.55f)
-                    else AppTheme.extra.textMuted.copy(alpha = 0.28f)
-                ),
-        )
-    }
+    val activeColor = AppTheme.extra.textPrimary.copy(alpha = 0.55f)
+    val idleColor = AppTheme.extra.textMuted.copy(alpha = 0.28f)
+    Spacer(
+        modifier
+            .width(4.dp)
+            .drawBehind {
+                val info = list.layoutInfo
+                val total = info.totalItemsCount
+                val visibleItems = info.visibleItemsInfo
+                val visible = visibleItems.size
+                if (total == 0 || visible >= total) return@drawBehind
+                val firstItemSize = visibleItems.firstOrNull()?.size ?: 0
+                val subItemFraction = if (firstItemSize > 0) {
+                    (list.firstVisibleItemScrollOffset.toFloat() / firstItemSize).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                val thumbHeight = size.height * (visible.toFloat() / total).coerceIn(0.08f, 0.9f)
+                val scrollRatio = ((list.firstVisibleItemIndex + subItemFraction) / (total - visible).coerceAtLeast(1))
+                    .coerceIn(0f, 1f)
+                val top = (size.height - thumbHeight) * scrollRatio
+                val radius = 2.dp.toPx()
+                drawRoundRect(
+                    color = if (list.isScrollInProgress) activeColor else idleColor,
+                    topLeft = Offset(0f, top),
+                    size = Size(size.width, thumbHeight),
+                    cornerRadius = CornerRadius(radius, radius),
+                )
+            },
+    )
 }
 
 private fun terminalLine(line: List<StyledSpan>, palette: TerminalPalette) =

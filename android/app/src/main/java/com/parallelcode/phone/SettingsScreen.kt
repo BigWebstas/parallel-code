@@ -25,9 +25,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -57,7 +58,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.rememberUpdatedState
@@ -147,36 +153,33 @@ fun SettingsScreen(
             }
         },
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             onDemo?.let { openDemo ->
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(onClick = openDemo) { Text("Try offline demo") }
-                        Text(
-                            "Explore sample tasks and settings without changing your saved computers or preferences.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = AppTheme.extra.textMuted,
-                        )
-                    }
-                }
-            }
-            if (demoSettings != null) {
-                item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = openDemo) { Text("Try offline demo") }
                     Text(
-                        "Offline demo · Changes stay in this demo session. Screen awake, notifications, VPN, Wi-Fi and home-screen widgets are simulated; no device settings or permissions change.",
+                        "Explore sample tasks and settings without changing your saved computers or preferences.",
                         style = MaterialTheme.typography.bodySmall,
                         color = AppTheme.extra.textMuted,
                     )
                 }
             }
+            if (demoSettings != null) {
+                Text(
+                    "Offline demo · Changes stay in this demo session. Screen awake, notifications, VPN, Wi-Fi and home-screen widgets are simulated; no device settings or permissions change.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = AppTheme.extra.textMuted,
+                )
+            }
             // DISPLAY SECTION
-            item {
+            Column {
                 SectionHeader("DISPLAY")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -229,8 +232,8 @@ fun SettingsScreen(
 
                         AnimatedVisibility(
                             visible = keepScreenOn,
-                            enter = expandVertically(animationSpec = tween(280, easing = FastOutSlowInEasing)) + fadeIn(tween(220)),
-                            exit = shrinkVertically(animationSpec = tween(240, easing = FastOutSlowInEasing)) + fadeOut(tween(180)),
+                            enter = expandVertically(animationSpec = tween(180, easing = FastOutSlowInEasing)) + fadeIn(tween(150)),
+                            exit = shrinkVertically(animationSpec = tween(140, easing = FastOutSlowInEasing)) + fadeOut(tween(120)),
                         ) {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
@@ -279,7 +282,7 @@ fun SettingsScreen(
             }
 
             // APPEARANCE SECTION
-            item {
+            Column {
                 SectionHeader("APPEARANCE")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -320,7 +323,7 @@ fun SettingsScreen(
             // Look presets, split by tone the way the desktop groups them. The
             // slot being edited is the tone the phone is actually in, so tapping
             // a swatch previews the look you are choosing.
-            item {
+            Column {
                 val systemDark = isSystemInDarkTheme()
                 val editingDark = when (themeMode) {
                     SettingsStore.THEME_DARK -> true
@@ -372,7 +375,7 @@ fun SettingsScreen(
             }
 
             // TASKS SECTION
-            item {
+            Column {
                 SectionHeader("TASKS")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -398,7 +401,7 @@ fun SettingsScreen(
             }
 
             // NOTIFICATIONS SECTION
-            item {
+            Column {
                 SectionHeader("NOTIFICATIONS")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -421,8 +424,8 @@ fun SettingsScreen(
                         )
                         AnimatedVisibility(
                             visible = notifications.enabled,
-                            enter = expandVertically(animationSpec = tween(280, easing = FastOutSlowInEasing)) + fadeIn(tween(220)),
-                            exit = shrinkVertically(animationSpec = tween(240, easing = FastOutSlowInEasing)) + fadeOut(tween(180)),
+                            enter = expandVertically(animationSpec = tween(180, easing = FastOutSlowInEasing)) + fadeIn(tween(150)),
+                            exit = shrinkVertically(animationSpec = tween(140, easing = FastOutSlowInEasing)) + fadeOut(tween(120)),
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                                 HorizontalDivider(thickness = 1.dp, color = AppTheme.extra.borderSubtle)
@@ -451,7 +454,7 @@ fun SettingsScreen(
             }
 
             // TERMINAL SECTION
-            item {
+            Column {
                 SectionHeader("TERMINAL")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -492,7 +495,7 @@ fun SettingsScreen(
             }
 
             // WIDGET SECTION
-            item {
+            Column {
                 SectionHeader("WIDGET")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -592,7 +595,7 @@ fun SettingsScreen(
             }
 
             // DESKTOP CONNECTION SECTION
-            item {
+            Column {
                 SectionHeader("DESKTOP CONNECTION")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -760,7 +763,7 @@ fun SettingsScreen(
             }
 
             // COMPUTERS SECTION
-            item {
+            Column {
                 SectionHeader("COMPUTERS")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -788,7 +791,7 @@ fun SettingsScreen(
             }
 
             // BACKUP SECTION
-            item {
+            Column {
                 SectionHeader("BACKUP")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -802,7 +805,7 @@ fun SettingsScreen(
             }
 
             // ABOUT SECTION
-            item {
+            Column {
                 SectionHeader("ABOUT")
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -916,39 +919,57 @@ private fun LookSwatch(preset: LookPalette, selected: Boolean) {
         } else {
             AppTheme.extra.border
         }
-    Box(
+    val outerRadiusDp = preset.radiusIsland.coerceAtLeast(2.dp)
+    val innerRadiusDp = preset.radiusXs.coerceAtLeast(1.dp)
+    Spacer(
         modifier = Modifier
             .size(width = 52.dp, height = 40.dp)
-            .clip(RoundedCornerShape(preset.radiusIsland.coerceAtLeast(2.dp)))
-            .background(preset.bg)
-            .border(1.dp, borderColor, RoundedCornerShape(preset.radiusIsland.coerceAtLeast(2.dp)))
-            .padding(3.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(preset.radiusXs.coerceAtLeast(1.dp)))
-                .background(preset.panelBg)
-                .padding(3.dp),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SwatchDot(preset.accent)
-                Spacer(Modifier.width(2.dp))
-                SwatchDot(preset.success)
-                Spacer(Modifier.width(2.dp))
-                SwatchDot(preset.warning)
-            }
-        }
-    }
-}
-
-@Composable
-private fun androidx.compose.foundation.layout.RowScope.SwatchDot(color: Color) {
-    Box(
-        modifier = Modifier
-            .size(5.dp)
-            .clip(CircleShape)
-            .background(color),
+            .drawWithCache {
+                val outerRadius = CornerRadius(outerRadiusDp.toPx())
+                val innerRadius = CornerRadius(innerRadiusDp.toPx())
+                val strokeWidth = 1.dp.toPx()
+                val halfStroke = strokeWidth / 2f
+                val inset = 3.dp.toPx()
+                val dotRadius = 2.5.dp.toPx()
+                val dotStep = 7.dp.toPx()
+                val dotStartX = inset * 2f + dotRadius
+                val dotCenterY = inset * 2f + dotRadius
+                val stroke = Stroke(width = strokeWidth)
+                onDrawBehind {
+                    drawRoundRect(
+                        color = preset.bg,
+                        cornerRadius = outerRadius,
+                    )
+                    drawRoundRect(
+                        color = borderColor,
+                        topLeft = Offset(halfStroke, halfStroke),
+                        size = Size(size.width - strokeWidth, size.height - strokeWidth),
+                        cornerRadius = outerRadius,
+                        style = stroke,
+                    )
+                    drawRoundRect(
+                        color = preset.panelBg,
+                        topLeft = Offset(inset, inset),
+                        size = Size(size.width - inset * 2f, size.height - inset * 2f),
+                        cornerRadius = innerRadius,
+                    )
+                    drawCircle(
+                        color = preset.accent,
+                        radius = dotRadius,
+                        center = Offset(dotStartX, dotCenterY),
+                    )
+                    drawCircle(
+                        color = preset.success,
+                        radius = dotRadius,
+                        center = Offset(dotStartX + dotStep, dotCenterY),
+                    )
+                    drawCircle(
+                        color = preset.warning,
+                        radius = dotRadius,
+                        center = Offset(dotStartX + dotStep * 2f, dotCenterY),
+                    )
+                }
+            },
     )
 }
 

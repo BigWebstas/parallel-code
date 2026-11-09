@@ -16,8 +16,12 @@ class TerminalBuffer(
     private val _version = MutableStateFlow(0)
     val version: StateFlow<Int> = _version.asStateFlow()
 
+    private val _bracketedPaste = MutableStateFlow(screen.bracketedPaste)
+    val bracketedPaste: StateFlow<Boolean> = _bracketedPaste.asStateFlow()
+
     override fun onScrollback(data: ByteArray, cols: Int, rows: Int) {
         screen.reset(cols, rows, data)
+        _bracketedPaste.value = screen.bracketedPaste
         _version.value++
     }
 
@@ -28,6 +32,7 @@ class TerminalBuffer(
 
     override fun onOutput(data: ByteArray) {
         screen.feed(data)
+        _bracketedPaste.value = screen.bracketedPaste
         _version.value++
     }
 }

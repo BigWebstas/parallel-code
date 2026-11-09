@@ -2,6 +2,8 @@ package com.parallelcode.phone
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -232,5 +234,22 @@ class TerminalScreenTest {
     fun copyTextNeverStartsWithHalfACharacter() {
         val s = screen(data = "a\uD83D\uDE00b")
         assertEquals("b", s.copyText(100, 2))
+    }
+
+    @Test
+    fun reusesSpanListInstancesForUnchangedScreenRows() {
+        val s = screen(cols = 10, rows = 3, data = "row1\r\nrow2\r\nspin1")
+        val before = s.styledLines()
+        val row0Before = before[0]
+        val row1Before = before[1]
+        val row2Before = before[2]
+
+        // Redraw only row 3 (spinner update); rows 1 and 2 must keep the exact same List<StyledSpan> reference.
+        s.feed("\rspin2".toByteArray())
+        val after = s.styledLines()
+        assertSame(row0Before, after[0])
+        assertSame(row1Before, after[1])
+        assertNotSame(row2Before, after[2])
+        assertEquals("spin2", after[2].joinToString("") { it.text })
     }
 }

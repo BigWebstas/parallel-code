@@ -12,8 +12,8 @@ export interface RemoteChatSource {
 }
 
 // Providers publish every 50 ms while streaming, and each frame is the whole
-// conversation; a phone on Wi-Fi needs far fewer.
-export const CHAT_FRAME_INTERVAL_MS = 200;
+// conversation; coalesce bursts while keeping streaming smooth on phones.
+export const CHAT_FRAME_INTERVAL_MS = 64;
 
 /**
  * The conversation as a phone receives it, without the slash-command list that

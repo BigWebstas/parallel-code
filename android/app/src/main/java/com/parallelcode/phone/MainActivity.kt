@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -28,6 +29,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -53,6 +55,8 @@ import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** Which agent changes notify, from Settings (see [AgentWatchService]). */
 data class NotificationPrefs(
@@ -240,6 +244,13 @@ class PhoneViewModel internal constructor(application: Application, internal val
 
 class MainActivity : ComponentActivity() {
     private val model: PhoneViewModel by viewModels()
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) {
+            requestHighFrameRate(this@MainActivity, window?.decorView)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -250,18 +261,23 @@ class MainActivity : ComponentActivity() {
         }
         openAgentFrom(intent)
         enableEdgeToEdge()
+        requestHighFrameRate(this)
         setContent {
             val demo by model.demoSession.collectAsState()
             // Built outside ViewModelProvider, so onCleared never runs: keep viewModelScope out of PhoneViewModel.
             val activeModel = remember(demo) { if (demo == null) model else PhoneViewModel(application, demo) }
             val keepScreenOn by activeModel.keepScreenOn.collectAsState()
             val keepScreenOnOnlyActive by activeModel.keepScreenOnOnlyWhenActive.collectAsState()
-            val agents by activeModel.client.agents.collectAsState()
+            val hasActiveAgentFlow = remember(activeModel) {
+                activeModel.client.agents
+                    .map { list -> list.any { it.running && (it.attention == "active" || it.attention == "shell_busy") } }
+                    .distinctUntilChanged()
+            }
+            val hasActiveAgent by hasActiveAgentFlow.collectAsState(initial = false)
             val themeMode by activeModel.themeMode.collectAsState()
             val darkThemePreset by activeModel.darkThemePreset.collectAsState()
             val lightThemePreset by activeModel.lightThemePreset.collectAsState()
 
-            val hasActiveAgent = agents.any { it.running && (it.attention == "active" || it.attention == "shell_busy") }
             val shouldKeepAwake = demo == null && keepScreenOn && (!keepScreenOnOnlyActive || hasActiveAgent)
 
             DisposableEffect(shouldKeepAwake) {
@@ -293,7 +309,9 @@ class MainActivity : ComponentActivity() {
             val view = LocalView.current
             if (!view.isInEditMode) {
                 SideEffect {
-                    val window = (view.context as? Activity)?.window ?: return@SideEffect
+                    val activity = view.context as? Activity ?: return@SideEffect
+                    requestHighFrameRate(activity, view)
+                    val window = activity.window ?: return@SideEffect
                     WindowCompat.getInsetsController(window, view).apply {
                         isAppearanceLightStatusBars = !palette.dark
                         isAppearanceLightNavigationBars = !palette.dark
@@ -336,6 +354,8 @@ class MainActivity : ComponentActivity() {
     // background only while agent notifications are on.
     override fun onStart() {
         super.onStart()
+        requestHighFrameRate(this, window?.decorView)
+        getSystemService(DisplayManager::class.java)?.registerDisplayListener(displayListener, null)
         (application as PhoneApplication).inForeground = true
         if (model.demoSession.value != null) return
         // Android hides the Wi-Fi name from apps in the background, so a name read while only the
@@ -348,6 +368,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        getSystemService(DisplayManager::class.java)?.unregisterDisplayListener(displayListener)
         model.client.pauseViewSize()
         model.client.stop(HOLDER)
         (application as PhoneApplication).inForeground = false
@@ -373,7 +394,6 @@ private sealed interface Screen {
 @Composable
 private fun PhoneApp(model: PhoneViewModel, onDemo: () -> Unit) {
     val state by model.client.state.collectAsState()
-    val agents by model.client.agents.collectAsState()
     var screenKey by rememberSaveable { mutableStateOf("agents") }
     // Held above the screen switch, so the list's search and filter survive opening a task.
     var taskSearch by rememberSaveable { mutableStateOf("") }
@@ -447,13 +467,13 @@ private fun PhoneApp(model: PhoneViewModel, onDemo: () -> Unit) {
         },
         transitionSpec = {
             if (initialState == Screen.Agents) {
-                (slideInHorizontally(animationSpec = tween(280)) { width -> (width * 0.15f).toInt() } + fadeIn(tween(250)))
-                    .togetherWith(slideOutHorizontally(animationSpec = tween(240)) { width -> -(width * 0.15f).toInt() } + fadeOut(tween(200)))
+                (slideInHorizontally(animationSpec = tween(180, easing = FastOutSlowInEasing)) { width -> (width * 0.12f).toInt() } + fadeIn(tween(160, easing = FastOutSlowInEasing)))
+                    .togetherWith(slideOutHorizontally(animationSpec = tween(140, easing = FastOutSlowInEasing)) { width -> -(width * 0.12f).toInt() } + fadeOut(tween(120, easing = FastOutSlowInEasing)))
             } else if (targetState == Screen.Agents) {
-                (slideInHorizontally(animationSpec = tween(280)) { width -> -(width * 0.15f).toInt() } + fadeIn(tween(250)))
-                    .togetherWith(slideOutHorizontally(animationSpec = tween(240)) { width -> (width * 0.15f).toInt() } + fadeOut(tween(200)))
+                (slideInHorizontally(animationSpec = tween(180, easing = FastOutSlowInEasing)) { width -> -(width * 0.12f).toInt() } + fadeIn(tween(160, easing = FastOutSlowInEasing)))
+                    .togetherWith(slideOutHorizontally(animationSpec = tween(140, easing = FastOutSlowInEasing)) { width -> (width * 0.12f).toInt() } + fadeOut(tween(120, easing = FastOutSlowInEasing)))
             } else {
-                fadeIn(tween(200)).togetherWith(fadeOut(tween(200)))
+                fadeIn(tween(150, easing = FastOutSlowInEasing)).togetherWith(fadeOut(tween(120, easing = FastOutSlowInEasing)))
             }
         },
         // Swiping between tasks changes which agent is open without leaving the task pager.
@@ -462,6 +482,7 @@ private fun PhoneApp(model: PhoneViewModel, onDemo: () -> Unit) {
     ) { currentScreen ->
         when (currentScreen) {
             Screen.Agents -> {
+                val agents by model.client.agents.collectAsState()
                 val showMinimizedTasks by model.showMinimizedTasks.collectAsState()
                 AgentsScreen(
                     client = model.client,
@@ -592,6 +613,7 @@ private fun PhoneApp(model: PhoneViewModel, onDemo: () -> Unit) {
                 onNeedsPairing = { screenKey = "pair" },
             )
             is Screen.Agent -> {
+                val agents by model.client.agents.collectAsState()
                 val alwaysFollowOutput by model.alwaysFollowOutput.collectAsState()
                 val quickReplies by model.quickReplies.collectAsState()
                 val sendQuickReplies by model.sendQuickReplies.collectAsState()
