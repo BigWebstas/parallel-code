@@ -24,6 +24,7 @@ import {
 } from '../store/store';
 import { markDirty, redrawAllTerminals } from '../lib/terminalFitManager';
 import { isAgentAskingQuestion, isAgentSettled } from '../store/taskStatus';
+import { isAgentSuspended } from '../store/agent-suspend';
 import { warn as logWarn } from '../lib/log';
 import { AgentHandoffComposer } from './AgentHandoffComposer';
 import { isSupportedDelegationAgent } from '../store/delegation';
@@ -58,7 +59,7 @@ import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { getTaskDockerOverlayLabel } from '../lib/docker';
 import { codexResumeId } from '../../electron/shared/codex-resume';
-import type { Task } from '../store/types';
+import type { Agent, Task } from '../store/types';
 import type { AgentDef } from '../ipc/types';
 import type { PromptInputHandle } from './PromptInput';
 import { buildTaskAgentArgs, isResumeArgsFailure } from '../lib/agent-args';
@@ -239,6 +240,14 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
   });
 
   const infoBarStatus = () => {
+    // Nothing has exited: the prompt goes out once the user resumes the agent.
+    if (isAgentSuspended(selectedAgent()) && props.task.initialPrompt) {
+      return {
+        title: 'Resume the agent to send the queued prompt',
+        text: 'Resume the agent to send the queued prompt',
+      };
+    }
+
     if (selectedAgent()?.status === 'exited' && props.task.initialPrompt) {
       return {
         title: 'Agent exited before prompt was sent',
@@ -715,6 +724,18 @@ function AddAgentMenu(props: { taskId: string }) {
   );
 }
 
+/** Suspended is a routine state, so it stays neutral; only a real exit is coloured. */
+function exitBadgeColor(agent: Agent): string {
+  if (isAgentSuspended(agent)) return theme.fgMuted;
+  return agent.exitCode === 0 ? theme.success : theme.error;
+}
+
+function exitBadgeLabel(agent: Agent): string {
+  if (isAgentSuspended(agent)) return 'Session suspended';
+  if (agent.signal === 'spawn_failed') return 'Failed to start';
+  return `Process exited (${agent.exitCode ?? '?'})`;
+}
+
 function AgentTerminalPane(props: {
   onSendSelection?: (text: string, recipientAgentId?: string) => void;
   onSecondOpinion?: () => void;
@@ -809,7 +830,13 @@ function AgentTerminalPane(props: {
       <Show when={agent()}>
         {(a) => (
           <>
-            <Show when={a().status === 'exited' && !isAgentChat(props.task, props.agentId)}>
+            <Show
+              when={
+                a().status === 'exited' &&
+                // Chat mode reports an exit in its own view, but shows nothing while suspended.
+                (isAgentSuspended(a()) || !isAgentChat(props.task, props.agentId))
+              }
+            >
               <div
                 class="exit-badge"
                 title={a().lastOutput.length ? a().lastOutput.join('\n') : undefined}
@@ -819,7 +846,7 @@ function AgentTerminalPane(props: {
                   right: '12px',
                   'z-index': '10',
                   'font-size': sf(12),
-                  color: a().exitCode === 0 ? theme.success : theme.error,
+                  color: exitBadgeColor(a()),
                   background: 'color-mix(in srgb, var(--island-bg) 80%, transparent)',
                   padding: '4px 12px',
                   'border-radius': 'var(--radius-md)',
@@ -829,13 +856,10 @@ function AgentTerminalPane(props: {
                   gap: '8px',
                 }}
               >
-                <span>
-                  {a().signal === 'spawn_failed'
-                    ? 'Failed to start'
-                    : `Process exited (${a().exitCode ?? '?'})`}
-                </span>
+                <span>{exitBadgeLabel(a())}</span>
                 <AgentRestartMenu agentId={a().id} agentDefId={a().def.id} />
-                <Show when={a().def.resume_args?.length}>
+                {/* A suspended agent has nothing else to start it, so it resumes without resume args too. */}
+                <Show when={isAgentSuspended(a()) || a().def.resume_args?.length}>
                   <button
                     class="btn-with-icon"
                     onClick={(e) => {
@@ -864,7 +888,7 @@ function AgentTerminalPane(props: {
                 />
               </div>
             </Show>
-            <Show when={isAgentChat(props.task, props.agentId)}>
+            <Show when={isAgentChat(props.task, props.agentId) && !isAgentSuspended(a())}>
               <AgentChatView
                 onReview={props.onReview}
                 onOpenTour={props.onOpenTour}
@@ -882,7 +906,8 @@ function AgentTerminalPane(props: {
                 }}
               />
             </Show>
-            <Show when={terminalOpened()}>
+            {/* Mounting the terminal starts the process, which a suspended agent must not have. */}
+            <Show when={terminalOpened() && !isAgentSuspended(a())}>
               <div
                 style={{ display: isAgentChat(props.task, props.agentId) ? 'none' : 'contents' }}
               >

@@ -18,11 +18,13 @@ describe('startAgentHookServer', () => {
   let server: AgentHookServer;
   let events: AgentHookEventPayload[];
   let usage: unknown[];
+  let codexEvents: AgentHookEventPayload[];
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-hooks-'));
     events = [];
     usage = [];
+    codexEvents = [];
     registerAgentLaunch('agent-1', 'task-1', 'launch-1');
     registerAgentLaunch('agent-sh', 'task-sh', 'launch-sh');
     registerAgentLaunch('agent-ps', 'task-ps', 'launch-ps');
@@ -30,6 +32,7 @@ describe('startAgentHookServer', () => {
       dir,
       onEvent: (e) => events.push(e),
       onUsage: (p) => usage.push(p),
+      onCodexEvent: (e) => codexEvents.push(e),
       now: () => 1234,
     });
   });
@@ -241,19 +244,25 @@ describe('startAgentHookServer', () => {
     });
   });
 
+  async function runHookScript(script: string, payload: unknown): Promise<string> {
+    const { execFile } = await import('child_process');
+    const env = {
+      ...process.env,
+      ...server.buildPtyEnv('agent-sh', 'task-sh', 'launch-sh'),
+    };
+    return new Promise<string>((resolve, reject) => {
+      const child = execFile('/bin/sh', [script], { env }, (err, out) =>
+        err ? reject(err) : resolve(out),
+      );
+      child.stdin?.end(JSON.stringify(payload));
+    });
+  }
+
   it.skipIf(process.platform === 'win32')(
     'round-trips through the generated shell script itself',
     async () => {
-      const { execFile } = await import('child_process');
-      const env = {
-        ...process.env,
-        ...server.buildPtyEnv('agent-sh', 'task-sh', 'launch-sh'),
-      };
-      const stdout = await new Promise<string>((resolve, reject) => {
-        const child = execFile('/bin/sh', [server.hookScriptPath], { env }, (err, out) =>
-          err ? reject(err) : resolve(out),
-        );
-        child.stdin?.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+      const stdout = await runHookScript(server.hookScriptPath, {
+        hook_event_name: 'UserPromptSubmit',
       });
       expect(stdout).toBe('{}\n');
       await vi.waitFor(() => expect(events).toHaveLength(1));
@@ -300,6 +309,29 @@ describe('startAgentHookServer', () => {
       30_000,
     );
   }
+
+  it.skipIf(process.platform === 'win32')(
+    'takes Codex events through its own script and route',
+    async () => {
+      // Only Codex reports an interrupt; the Claude route has no such event.
+      const interrupt = { hook_event_name: 'Interrupt' };
+      expect(await runHookScript(server.hookScriptPath, interrupt)).toBe('{}\n');
+      expect(await runHookScript(server.codexHookScriptPath, interrupt)).toBe('{}\n');
+      await vi.waitFor(() => expect(events).toHaveLength(1));
+      expect(events[0]).toMatchObject({
+        state: 'done',
+        event: 'Interrupt',
+        agentId: 'agent-sh',
+        taskId: 'task-sh',
+        launchId: 'launch-sh',
+      });
+      // Codex events are also handed on by themselves, for what only Codex needs.
+      expect(codexEvents).toEqual(events);
+      await runHookScript(server.hookScriptPath, { hook_event_name: 'UserPromptSubmit' });
+      await vi.waitFor(() => expect(events).toHaveLength(2));
+      expect(codexEvents).toHaveLength(1);
+    },
+  );
 
   async function runStatusLine(input: unknown, userCommand?: string): Promise<string> {
     const { execFile } = await import('child_process');

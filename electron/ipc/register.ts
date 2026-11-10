@@ -27,7 +27,7 @@ import { projectAgentEnv, setProjectAgentEnv } from './project-env.js';
 import { getResourceSnapshot } from './resources.js';
 import { editorLineArgs, spawnDetached, validateEditorCommand } from './open-file.js';
 import { isExecutablePath } from '../shared/executable-path.js';
-import { appendGitInfoExcludeBlock } from './git-exclude.js';
+import { appendGitInfoExcludeBlock, isTrackedByGit } from './git-exclude.js';
 import {
   spawnAgent,
   writeToAgent,
@@ -36,6 +36,7 @@ import {
   resumeAgent,
   killAgent,
   countRunningAgents,
+  listRunningAgentIds,
   killAllAgents,
   getAgentMeta,
   notifyAgentListChanged,
@@ -77,6 +78,13 @@ import { readCoverageSummary } from './coverage.js';
 import { loadEslintQualityFindings } from './eslint-quality-findings.js';
 import { buildVerifyEnv, validateVerifyCommand, verificationRunner } from './verify.js';
 import { createProjectFolder } from '../remote/project-create.js';
+import {
+  buildScriptInvocation,
+  buildWorktreeScriptEnv,
+  describeTeardownFailure,
+  optionalWorktreeScript,
+  runTeardownScript,
+} from './worktree-scripts.js';
 import { scanChange } from './change-scan.js';
 import {
   startRemoteServer,
@@ -138,7 +146,9 @@ import {
   resetBaseToUpstream,
   mergeBaseIntoTask,
   createWorktree,
+  worktreePathFor,
   removeWorktree,
+  removeWorktreeLocked,
   isGitRepo,
   getBranches,
   checkoutBranch,
@@ -210,6 +220,7 @@ import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
 import { toContainerPath } from '../docker-paths.js';
 import { getMCPRemoteServerUrl, detectStaleDockerMCPUrl } from '../mcp/config.js';
 import { redactServerUrl } from '../remote/server.js';
+import { readTailscaleState } from '../remote/tailscale-status.js';
 
 export function selectMcpJsonDir(worktreePath: string | undefined, projectRoot: string): string {
   return worktreePath ?? projectRoot;
@@ -218,6 +229,28 @@ export function selectMcpJsonDir(worktreePath: string | undefined, projectRoot: 
 /** Workspace MCP file the coordinator's agent discovers; agy has no `--mcp-config` flag. */
 export function selectMcpJsonFile(agentCommand: string | undefined): string {
   return agentCommand && isAntigravityCommand(agentCommand) ? ANTIGRAVITY_MCP_CONFIG : '.mcp.json';
+}
+
+/**
+ * Whether to merge the coordinator token into the workspace `.mcp.json`. A tracked file
+ * would carry the token into a commit: skip it when a launch flag already carries the
+ * config, and refuse to start when the agent can only discover the server from the file.
+ */
+export function shouldWriteMcpJson(dir: string, agentNeedsFile: boolean): boolean {
+  if (agentNeedsFile) {
+    if (isTrackedByGit(dir, '.mcp.json'))
+      throw new Error(
+        '.mcp.json is tracked by Git; a commit would publish its MCP token. Untrack it or run the coordinator without Docker.',
+      );
+    return true;
+  }
+  try {
+    if (!isTrackedByGit(dir, '.mcp.json')) return true;
+    logWarn('mcp', '.mcp.json is tracked by Git; passing the MCP config only by launch flag');
+  } catch (err) {
+    logWarn('mcp', `Not writing .mcp.json: ${errMessage(err)}`);
+  }
+  return false;
 }
 
 export interface CoordinatorMCPConfigOpts {
@@ -677,6 +710,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
   // (it depends on reactive terminal/git/steps state), so main just caches it.
   const taskAttention = new Map<string, RemoteAttentionState>();
   const taskContext = new Map<string, RemoteTaskContext>();
+  // Not part of the context: a task that has a process again must not keep the flag.
+  const suspendedTasks = new Set<string>();
 
   // --- MCP coordinator (lazy — only loaded when coordinator mode is enabled) ---
   let coordinatorHandlersRegistered = false;
@@ -701,6 +736,23 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertOptionalString(args.envFile, 'envFile');
     assertOptionalString(args.projectId, 'projectId');
     if (args.cwd) validatePath(args.cwd, 'cwd');
+    // A project setup script runs in a task terminal of its own. The main
+    // process picks the shell and flags, so the renderer never builds a
+    // `-c` command line. A reattach to a running session ignores the command.
+    args = { ...args, windowsVerbatimArgs: undefined };
+    if (args.shellScript !== undefined) {
+      const script = optionalWorktreeScript(args.shellScript, 'shellScript');
+      if (script) {
+        if (!args.isShell) throw new Error('shellScript is only allowed for shell terminals');
+        const invocation = buildScriptInvocation(script, { docker: args.dockerMode === true });
+        args = {
+          ...args,
+          command: invocation.file,
+          args: invocation.args,
+          windowsVerbatimArgs: invocation.windowsVerbatimArguments === true,
+        };
+      }
+    }
     // Restarted Docker sub-tasks need the coordinator's MCP dir too; derive it
     // here so the renderer cannot choose host paths to mount.
     args = {
@@ -940,6 +992,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     return killAgent(args.agentId);
   });
   ipcMain.handle(IPC.CountRunningAgents, () => countRunningAgents());
+  ipcMain.handle(IPC.ListRunningAgentIds, () => listRunningAgentIds());
   ipcMain.handle(IPC.KillAllAgents, () => {
     pendingSpawns.clear();
     return killAllAgents();
@@ -986,6 +1039,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertString(args.name, 'name');
     validatePath(args.projectRoot, 'projectRoot');
     assertStringArray(args.symlinkDirs, 'symlinkDirs');
+    if (args.copyDirs !== undefined) assertStringArray(args.copyDirs, 'copyDirs');
     assertOptionalString(args.branchPrefix, 'branchPrefix');
     assertOptionalString(args.baseBranch, 'baseBranch');
     const baseBranch = args.baseBranch || undefined;
@@ -996,6 +1050,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       args.symlinkDirs,
       args.branchPrefix ?? 'task',
       baseBranch,
+      undefined,
+      args.copyDirs ?? [],
     );
     result
       .then((r: { id: string }) => taskNames.set(r.id, args.name))
@@ -1008,6 +1064,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertString(args.name, 'name');
     validatePath(args.projectRoot, 'projectRoot');
     assertStringArray(args.symlinkDirs, 'symlinkDirs');
+    if (args.copyDirs !== undefined) assertStringArray(args.copyDirs, 'copyDirs');
     assertOptionalString(args.branchPrefix, 'branchPrefix');
     if (!Number.isInteger(args.prNumber) || args.prNumber <= 0) {
       throw new Error('prNumber must be a positive integer');
@@ -1017,6 +1074,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       args.prNumber,
       args.symlinkDirs,
       args.branchPrefix ?? 'task',
+      args.copyDirs ?? [],
     );
     result
       .then((r: { id: string }) => taskNames.set(r.id, args.name))
@@ -1031,6 +1089,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
     validateBranchName(args.branchName, 'branchName');
     assertBoolean(args.deleteBranch, 'deleteBranch');
     assertOptionalString(args.taskId, 'taskId');
+    // Validated before anything is killed or removed.
+    const teardownScript = optionalWorktreeScript(args.teardownScript, 'teardownScript');
     // A verify run still going would keep writing into the worktree being deleted.
     if (args.taskId) {
       verificationRunner.cancel(args.taskId);
@@ -1046,6 +1106,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       deleteBranch: args.deleteBranch,
       projectRoot: args.projectRoot,
       worktreePath: optionalWorktreePath(args),
+      teardownScript,
+      teardownEnv: teardownScript ? projectAgentEnv(args.projectId) : undefined,
     });
     if (args.taskId) delegation.unregister(args.taskId);
     return result;
@@ -1117,20 +1179,58 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertOptionalString(args.message, 'message');
     assertOptionalBoolean(args.cleanup, 'cleanup');
     assertOptionalBoolean(args.allowDirtyTarget, 'allowDirtyTarget');
+    const teardownScript = optionalWorktreeScript(args.teardownScript, 'teardownScript');
+    if (args.agentIds !== undefined) assertStringArray(args.agentIds, 'agentIds');
+    assertOptionalString(args.projectId, 'projectId');
     await delegation.assertDirectMergeAllowed(projectRoot, branchName, args.cleanup ?? false);
     const baseBranch = optionalBaseBranch(args);
     const worktreePath = optionalWorktreePath(args);
-    const result = await mergeTask(
+    const cleanup = args.cleanup ?? false;
+    // With a teardown script the merge keeps the worktree, the script runs
+    // outside the repo lock, and the worktree is removed afterwards, so a
+    // failed merge never tears anything down.
+    const deferCleanup = cleanup && teardownScript !== undefined;
+    let result = await mergeTask(
       projectRoot,
       branchName,
       args.squash,
       args.message ?? null,
-      args.cleanup ?? false,
+      cleanup && !deferCleanup,
       baseBranch,
       worktreePath,
       undefined,
       args.allowDirtyTarget ?? false,
     );
+    if (deferCleanup && teardownScript) {
+      // The branch is merged and about to be deleted: stop the task's agents
+      // and shells first, so nothing commits work that `branch -D` would drop
+      // and teardown never races live processes.
+      for (const agentId of args.agentIds ?? []) {
+        try {
+          killAgent(agentId);
+        } catch {
+          /* already gone */
+        }
+      }
+      const target = worktreePath ?? worktreePathFor(projectRoot, branchName);
+      const teardown = await runTeardownScript({
+        worktreePath: target,
+        projectRoot,
+        script: teardownScript,
+        env: {
+          ...projectAgentEnv(args.projectId),
+          ...buildWorktreeScriptEnv({ projectRoot, worktreePath: target, branchName }),
+        },
+      });
+      await removeWorktreeLocked(projectRoot, branchName, true, worktreePath);
+      const teardownWarning = describeTeardownFailure(teardown);
+      if (teardownWarning) {
+        result = {
+          ...result,
+          warning: result.warning ? `${result.warning} ${teardownWarning}` : teardownWarning,
+        };
+      }
+    }
     // The merge already happened; failing to tell the parent must not report it as failed.
     await delegation
       .recordDirectMerge(projectRoot, branchName)
@@ -1389,7 +1489,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
   });
   ipcMain.handle(IPC.RefreshPrChecksWatcher, (_e, args) => {
     assertString(args.taskId, 'taskId');
-    refreshPrChecksWatcher(args.taskId);
+    assertBoolean(args.pushed, 'pushed');
+    refreshPrChecksWatcher(args.taskId, args.pushed);
   });
 
   // --- Local ESLint quality findings ---
@@ -1743,18 +1844,6 @@ export function registerAllHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC.WindowClose, () => win.close());
   ipcMain.handle(IPC.WindowForceClose, () => win.destroy());
   ipcMain.handle(IPC.WindowHide, () => win.hide());
-  ipcMain.handle(IPC.WindowMaximize, () => win.maximize());
-  ipcMain.handle(IPC.WindowUnmaximize, () => win.unmaximize());
-  ipcMain.handle(IPC.WindowSetSize, (_e, args) => {
-    assertInt(args.width, 'width');
-    assertInt(args.height, 'height');
-    return win.setSize(args.width, args.height);
-  });
-  ipcMain.handle(IPC.WindowSetPosition, (_e, args) => {
-    assertInt(args.x, 'x');
-    assertInt(args.y, 'y');
-    return win.setPosition(args.x, args.y);
-  });
   ipcMain.handle(IPC.WindowGetPosition, () => {
     const [x, y] = win.getPosition();
     return { x, y };
@@ -1945,6 +2034,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       }
       return result;
     },
+    getSuspendedTaskIds: (): string[] => [...suspendedTasks],
   };
 
   const remoteServerOptions = (): Omit<
@@ -1998,6 +2088,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
             lastLine?: unknown;
             taskName?: unknown;
             collapsed?: unknown;
+            suspended?: unknown;
             ci?: unknown;
             lane?: unknown;
             pr?: unknown;
@@ -2009,12 +2100,14 @@ export function registerAllHandlers(win: BrowserWindow): void {
       if (!statuses || typeof statuses !== 'object') return;
       taskAttention.clear();
       taskContext.clear();
+      suspendedTasks.clear();
       if (args.contexts && typeof args.contexts === 'object') {
         for (const [taskId, context] of Object.entries(args.contexts)) {
           if (!context || typeof context !== 'object') continue;
           const taskName =
             typeof context.taskName === 'string' ? context.taskName.slice(0, 200) : undefined;
           if (taskName) taskNames.set(taskId, taskName);
+          if (context.suspended === true) suspendedTasks.add(taskId);
           taskContext.set(taskId, {
             taskName,
             collapsed: Boolean(context.collapsed),
@@ -2073,6 +2166,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
       port: server.port,
     };
   });
+
+  ipcMain.handle(IPC.GetTailscaleState, () => readTailscaleState());
 
   // --- MCP server management ---
 
@@ -2208,6 +2303,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
           reviewRevision?: number;
           signalDoneAt?: string;
           signalDoneConsumed?: boolean;
+          closeSuggestion?: import('../shared/close-suggestion.js').CloseSuggestion;
+          archived?: boolean;
           verification?: import('../mcp/types.js').SubtaskVerification;
           landingState?: import('../mcp/types.js').LandingState;
           landingReason?: string;
@@ -2268,6 +2365,8 @@ export function registerAllHandlers(win: BrowserWindow): void {
           reviewRevision: args.reviewRevision,
           signalDoneAt: args.signalDoneAt,
           signalDoneConsumed: args.signalDoneConsumed,
+          closeSuggestion: args.closeSuggestion,
+          archived: args.archived === true,
           verification: args.verification,
           landingState: args.landingState,
           landingReason: args.landingReason,
@@ -2319,7 +2418,13 @@ export function registerAllHandlers(win: BrowserWindow): void {
       let worktreeMcpPath: string | undefined;
       let mcpFileExistedBefore = false;
       let existingMcpContent: Record<string, unknown> = {};
-      if (mcpJsonDir) {
+      // Outside Docker every agent but agy gets the config by launch flag, and Codex always does.
+      const agentNeedsMcpJson =
+        Boolean(args.dockerContainerName) && !isCodexCommand(args.agentCommand ?? 'claude');
+      if (
+        mcpJsonDir &&
+        (mcpJsonFile !== '.mcp.json' || shouldWriteMcpJson(mcpJsonDir, agentNeedsMcpJson))
+      ) {
         // Before the read: a linked `.agents` would put the token in another checkout.
         if (mcpJsonFile === ANTIGRAVITY_MCP_CONFIG) prepareAntigravityConfigDir(mcpJsonDir);
         worktreeMcpPath = path.join(mcpJsonDir, mcpJsonFile);

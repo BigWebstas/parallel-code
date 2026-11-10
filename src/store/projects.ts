@@ -1,3 +1,4 @@
+import { sanitizeWorktreeIncludes, sanitizeWorktreeScript } from '../lib/worktree-includes';
 import { produce } from 'solid-js/store';
 import { openDialog } from '../lib/dialog';
 import { invoke } from '../lib/ipc';
@@ -177,6 +178,9 @@ export function updateProject(
       | 'verifyAutoRun'
       | 'reviewChecks'
       | 'terminalBookmarks'
+      | 'worktreeSetupScript'
+      | 'worktreeTeardownScript'
+      | 'worktreeIncludes'
       | 'isGitRepo'
       | 'documentMainAgentId'
       | 'documentSessions'
@@ -223,6 +227,14 @@ export function updateProject(
         s.projects[idx].reviewChecks = [...updates.reviewChecks];
       if (updates.terminalBookmarks !== undefined)
         s.projects[idx].terminalBookmarks = updates.terminalBookmarks;
+      if (Object.prototype.hasOwnProperty.call(updates, 'worktreeSetupScript'))
+        s.projects[idx].worktreeSetupScript = sanitizeWorktreeScript(updates.worktreeSetupScript);
+      if (Object.prototype.hasOwnProperty.call(updates, 'worktreeTeardownScript'))
+        s.projects[idx].worktreeTeardownScript = sanitizeWorktreeScript(
+          updates.worktreeTeardownScript,
+        );
+      if (Object.prototype.hasOwnProperty.call(updates, 'worktreeIncludes'))
+        s.projects[idx].worktreeIncludes = sanitizeWorktreeIncludes(updates.worktreeIncludes);
       if (updates.isGitRepo !== undefined) s.projects[idx].isGitRepo = updates.isGitRepo;
       if (updates.documentMainAgentId !== undefined)
         s.projects[idx].documentMainAgentId = updates.documentMainAgentId;

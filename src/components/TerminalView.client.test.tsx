@@ -10,6 +10,18 @@ import type { Task } from '../store/types';
 
 const { terminals } = vi.hoisted(() => ({ terminals: [] as Terminal[] }));
 
+// happy-dom has no WebGL; the real addon would draw to the stub canvas from a
+// timer and throw after a slow test.
+vi.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: class {
+    activate(): void {}
+    dispose(): void {}
+    onContextLoss() {
+      return { dispose() {} };
+    }
+  },
+}));
+
 vi.mock('../lib/terminalFitManager', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/terminalFitManager')>();
   return {
