@@ -6,8 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -78,6 +80,23 @@ class PhoneViewModel internal constructor(application: Application, internal val
 
     /** An agent to open, from a tapped notification. */
     val openAgentRequest = MutableStateFlow<String?>(null)
+
+    private val _localNetworkPermissionMissing = MutableStateFlow(false)
+
+    /** True while Android withholds local network access, so connections over Wi-Fi time out. */
+    val localNetworkPermissionMissing: StateFlow<Boolean> = _localNetworkPermissionMissing.asStateFlow()
+
+    /** Android's prompt opens unasked once per app run; after that only Allow access asks. */
+    var localNetworkPromptShown = false
+
+    /** Reads the grant again: on returning to the app (e.g. from system settings) and after a prompt. */
+    fun refreshLocalNetworkAccess() {
+        val missing = demo == null && lacksLocalNetworkPermission(getApplication())
+        val granted = _localNetworkPermissionMissing.value && !missing
+        _localNetworkPermissionMissing.value = missing
+        // An attempt made while blocked only fails at its timeout; dial again now.
+        if (granted) client.reconnect()
+    }
 
     private val _notifications = MutableStateFlow(readNotificationPrefs())
     val notifications: StateFlow<NotificationPrefs> = _notifications.asStateFlow()
@@ -327,6 +346,7 @@ class MainActivity : ComponentActivity() {
                         onExit = {
                             model.demoSession.value = null
                             (application as PhoneApplication).setDemoActive(false)
+                            model.refreshLocalNetworkAccess()
                             model.client.start("app")
                             model.client.resumeViewSize()
                         },
@@ -361,6 +381,7 @@ class MainActivity : ComponentActivity() {
         // Android hides the Wi-Fi name from apps in the background, so a name read while only the
         // notification service was running is blank. Read it again now that the app is visible.
         (application as PhoneApplication).networkMonitor.setForeground(true)
+        model.refreshLocalNetworkAccess()
         model.client.start(HOLDER)
         model.client.resumeViewSize()
         AgentWatchService.sync(this)
@@ -382,6 +403,9 @@ class MainActivity : ComponentActivity() {
         private const val HOLDER = "app"
     }
 }
+
+/** A permission answer faster than this came from Android itself, without a prompt on screen. */
+private const val PROMPT_SKIPPED_MS = 400L
 
 private sealed interface Screen {
     data object Agents : Screen
@@ -444,6 +468,35 @@ private fun PhoneApp(model: PhoneViewModel, onDemo: () -> Unit) {
         )
         return
     }
+    // Android 17 lets no connection through to the computer's Wi-Fi address until this is granted.
+    val localNetworkPermissionMissing by model.localNetworkPermissionMissing.collectAsState()
+    val localNetworkBlocked = localNetworkPermissionMissing && isLocalNetworkAddress(link.baseUrl)
+    val activity = LocalContext.current as? Activity
+    // When Allow access was tapped; null for the prompt the app opens by itself.
+    var localNetworkAskedAt by remember { mutableStateOf<Long?>(null) }
+    val localNetworkPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val askedAt = localNetworkAskedAt
+        localNetworkAskedAt = null
+        model.refreshLocalNetworkAccess()
+        // After repeated refusals Android answers at once without showing its prompt; only system
+        // settings can grant it then. A prompt the user saw and closed takes longer than this.
+        val unanswered = askedAt != null && SystemClock.elapsedRealtime() - askedAt < PROMPT_SKIPPED_MS
+        if (!granted && unanswered && activity != null) {
+            runCatching {
+                activity.startActivity(
+                    Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", activity.packageName, null),
+                    ),
+                )
+            }
+        }
+    }
+    LaunchedEffect(localNetworkBlocked) {
+        if (!localNetworkBlocked || model.localNetworkPromptShown) return@LaunchedEffect
+        model.localNetworkPromptShown = true
+        localNetworkPermission.launch(LOCAL_NETWORK_PERMISSION)
+    }
     // Predictive back: the screen shrinks and slides with the swipe, and only leaves on release.
     var backProgress by remember { mutableFloatStateOf(0f) }
     if (screen != Screen.Agents) {
@@ -497,6 +550,13 @@ private fun PhoneApp(model: PhoneViewModel, onDemo: () -> Unit) {
                     onSettings = { screenKey = "settings" },
                     computers = computers,
                     onSwitchComputer = { model.client.switchTo(it) },
+                    onSwitchNetwork = { model.client.switchNetwork() },
+                    onAllowLocalNetwork = if (localNetworkBlocked) {
+                        {
+                            localNetworkAskedAt = SystemClock.elapsedRealtime()
+                            localNetworkPermission.launch(LOCAL_NETWORK_PERMISSION)
+                        }
+                    } else null,
                     search = taskSearch,
                     onSearch = { taskSearch = it },
                     filter = TaskFilter.fromKey(taskFilterKey),
