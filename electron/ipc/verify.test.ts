@@ -271,7 +271,7 @@ describe('verification runner', () => {
     expect(r.isRunning('b')).toBe(false);
   });
 
-  it("cancelPrefix stops one task's suite checks and leaves other runs alone", async () => {
+  itPosix("cancelPrefix stops one task's suite checks and leaves other runs alone", async () => {
     const r = runner();
     const unit = r.start({ key: 't1:suite:unit', worktreePath: tmpDir(), command: 'sleep 30' });
     const e2e = r.start({ key: 't1:suite:e2e', worktreePath: tmpDir(), command: 'sleep 30' });

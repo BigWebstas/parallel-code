@@ -130,9 +130,11 @@ it('reports the base checkout changes and those the merge touches', async () => 
   dirty(root);
   fs.writeFileSync(path.join(root, 'README.md'), 'local edit\n');
   const status = await checkMergeStatus(worktree, 'main', root);
-  // Windows temp dirs can come back as 8.3 short names (RUNNER~1), so compare resolved paths.
+  // Git reports forward slashes, and Windows temp dirs may be 8.3 short names (RUNNER~1).
+  const reported = status.target_uncommitted?.path ?? '';
+  expect(fs.realpathSync.native(path.resolve(reported))).toBe(fs.realpathSync.native(root));
   expect(status.target_uncommitted).toEqual({
-    path: fs.realpathSync.native(status.target_uncommitted?.path ?? root),
+    path: reported,
     files: ['README.md', 'notes.txt', 'scratch.txt'],
     overlap: ['README.md'],
   });
