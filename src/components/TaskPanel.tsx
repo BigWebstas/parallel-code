@@ -1,3 +1,4 @@
+import { isWindowsPlatform } from '../lib/keybindings/match';
 import { DelegationPanel } from './DelegationPanel';
 import { DetachFromParentButton } from './DetachFromParentButton';
 import { canUsePeerComposer, usePeerComposer } from '../store/delegation';
@@ -1002,6 +1003,11 @@ export function TaskPanel(props: TaskPanelProps) {
         closingStatus={props.task.closingStatus}
         closingError={props.task.closingError}
         onRetry={() => retryCloseTask(props.task.id)}
+        onKeepFolder={
+          isWindowsPlatform
+            ? () => retryCloseTask(props.task.id, { keepLockedFolder: true })
+            : undefined
+        }
       />
       {/* The title sits above the collaboration banners so they never push it
           to a different height across tasks. */}

@@ -11,6 +11,7 @@ import { ClockIcon } from './icons';
 import { ProjectSwatch } from './ProjectSwatch';
 import { getTaskAttentionState, getTaskOpenQuestion } from '../store/taskStatus';
 import { retryCloseTask } from '../store/tasks';
+import { isWindowsPlatform } from '../lib/keybindings/match';
 import type { Task } from '../store/types';
 import { activityLine, agentName, boardNow, stateLabel } from './board/task-state';
 import { ASK_ACTION, AskRow, TaskGlyph, TaskLine, TaskPr, openBeside } from './board/TaskStatus';
@@ -40,6 +41,16 @@ function CloseFailed(props: { task: Task }) {
       >
         Retry
       </button>
+      <Show when={isWindowsPlatform}>
+        <button
+          type="button"
+          class="task-board-act"
+          title="Close the task now and delete its locked folder later"
+          onClick={() => void retryCloseTask(props.task.id, { keepLockedFolder: true })}
+        >
+          Keep folder
+        </button>
+      </Show>
     </div>
   );
 }

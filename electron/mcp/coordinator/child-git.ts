@@ -1,11 +1,10 @@
 // Git queries the coordinator runs against child worktrees. Stateless: each
 // helper takes the worktree path and shells out to git.
 
-import { execFile } from 'child_process';
-import { promisify } from 'util';
+import { appExecFile } from '../../ipc/git-exec.js';
 import { detectPreambleFiles, buildNormalizedPreambleFileDiff } from '../preamble.js';
 
-export const execAsync = promisify(execFile);
+export const execAsync = appExecFile;
 
 /** Files the app injects into a child worktree; uncommitted edits to them are not the child's work. */
 export const PREAMBLE_ARTIFACT_PATHS = new Set([
@@ -30,8 +29,9 @@ function parsePorcelainPaths(statusOut: string): string[] {
 }
 
 export function execStdout(result: Awaited<ReturnType<typeof execAsync>>): string {
-  const stdout = typeof result === 'string' ? result : result.stdout;
-  return typeof stdout === 'string' ? stdout : stdout.toString('utf8');
+  // Some callers' fakes return the bare string; real runs return { stdout }.
+  const out: unknown = result;
+  return typeof out === 'string' ? out : result.stdout;
 }
 
 /** Whether `worktreePath`'s HEAD already contains every commit of `branch`. */

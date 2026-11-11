@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { debug as logDebug } from '../log.js';
 import { exec, MAX_BUFFER } from './git-exec.js';
+import { readBranchTips, refExists } from './git-refs.js';
 
 // --- TTL Caches ---
 
@@ -24,12 +25,15 @@ interface PickedMergeBase {
 interface DiffBaseCacheEntry {
   value: PickedMergeBase;
   expiresAt: number;
+  /** Branch tips the value was computed from; see `diffBaseSignature`. */
+  signature?: string;
 }
 
 const mainBranchCache = new Map<string, CacheEntry>();
 const diffBaseCache = new Map<string, DiffBaseCacheEntry>();
 const MAIN_BRANCH_TTL = 60_000; // 60s
 const DIFF_BASE_TTL = 30_000; // 30s
+const SIGNED_DIFF_BASE_TTL = 10 * 60_000; // upper bound when the branch tips are tracked
 
 // Sweep expired cache entries periodically so stale entries from repos that
 // are no longer queried don't accumulate (lazy deletion alone isn't enough).
@@ -48,7 +52,7 @@ export function invalidateDiffBaseCache(): void {
   diffBaseCache.clear();
 }
 
-function cacheKey(p: string): string {
+export function cacheKey(p: string): string {
   return p.replace(/\/+$/, '');
 }
 
@@ -81,6 +85,8 @@ async function resolveOriginHead(repoRoot: string): Promise<string | null> {
 
 /** Check whether the remote-tracking ref origin/<branch> exists locally. */
 async function remoteTrackingRefExists(repoRoot: string, branch: string): Promise<boolean> {
+  const direct = await refExists(repoRoot, `refs/remotes/origin/${branch}`);
+  if (direct !== null) return direct;
   try {
     await exec('git', ['rev-parse', '--verify', `refs/remotes/origin/${branch}`], {
       cwd: repoRoot,
@@ -93,6 +99,8 @@ async function remoteTrackingRefExists(repoRoot: string, branch: string): Promis
 
 /** Check whether a local branch ref exists. */
 async function localBranchExists(repoRoot: string, branch: string): Promise<boolean> {
+  const direct = await refExists(repoRoot, `refs/heads/${branch}`);
+  if (direct !== null) return direct;
   try {
     await exec('git', ['rev-parse', '--verify', `refs/heads/${branch}`], {
       cwd: repoRoot,
@@ -600,9 +608,16 @@ export async function detectDiffBase(
   const requestedHead = head ?? 'HEAD';
   const headRef = requestedHead === 'HEAD' ? await pinHead(repoRoot) : requestedHead;
   const key = `${cacheKey(repoRoot)}:${branch}:${headRef}`;
+  const signature = await diffBaseSignature(repoRoot, branch, headRef);
   const cached = diffBaseCache.get(key);
   if (cached) {
-    if (cached.expiresAt > Date.now()) return cached.value;
+    // A signed entry is valid for as long as the branch tips it was computed
+    // from stay put, so it neither re-runs ~10 git commands every TTL nor lags
+    // behind a base that just moved. Unsigned entries keep the plain TTL.
+    const fresh = cached.signature
+      ? cached.signature === signature && cached.expiresAt > Date.now()
+      : cached.expiresAt > Date.now();
+    if (fresh) return cached.value;
     diffBaseCache.delete(key);
   }
 
@@ -685,8 +700,33 @@ export async function detectDiffBase(
     });
     if (folded) refined = { sha: folded, ref: folded };
   }
-  diffBaseCache.set(key, { value: refined, expiresAt: Date.now() + DIFF_BASE_TTL });
+  diffBaseCache.set(key, {
+    value: refined,
+    expiresAt: Date.now() + (signature ? SIGNED_DIFF_BASE_TTL : DIFF_BASE_TTL),
+    signature: signature ?? undefined,
+  });
   return refined;
+}
+
+/**
+ * What a diff base was computed from besides the head: the tips of the base
+ * branch and of the main branch (both feed it), read from files. Null when the
+ * head is not a commit id or the refs cannot be read in-process.
+ */
+async function diffBaseSignature(
+  repoRoot: string,
+  branch: string,
+  headRef: string,
+): Promise<string | null> {
+  if (!/^[0-9a-f]{40}$/.test(headRef)) return null;
+  const main = await detectMainBranch(repoRoot).catch(() => null);
+  if (!main) return null;
+  const [base, mainTips] = await Promise.all([
+    readBranchTips(repoRoot, branch),
+    main === branch ? Promise.resolve(undefined) : readBranchTips(repoRoot, main),
+  ]);
+  if (!base || mainTips === null) return null;
+  return [base.local, base.origin, mainTips?.local ?? '', mainTips?.origin ?? ''].join('\0');
 }
 
 /**

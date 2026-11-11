@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../components/InlineSpinner';
 import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import {
@@ -174,7 +175,7 @@ export function AnnotationMarker(props: AnnotationMarkerProps) {
         {/* A question waiting on its agent spins in the margin, so the wait is
             visible without opening the bubble to read "Answering…". */}
         <Show when={awaiting()} fallback={<CommentAltIcon />}>
-          <span class="inline-spinner" aria-hidden="true" />
+          <InlineSpinner aria-hidden="true" />
         </Show>
         <Show when={props.annotations.length > 1}>
           <span class="docws-marker-count">{props.annotations.length}</span>

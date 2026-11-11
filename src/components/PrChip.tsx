@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { Match, Show, Switch, type JSX } from 'solid-js';
 import { theme } from '../lib/theme';
 import { isMac } from '../lib/platform';
@@ -196,10 +197,7 @@ export function PrChip(props: PrChipProps) {
                 />
               }
             >
-              <span
-                class="inline-spinner"
-                style={{ width: '10px', height: '10px', color: ci().color }}
-              />
+              <InlineSpinner style={{ width: '10px', height: '10px', color: ci().color }} />
             </Show>
           </span>
         )}

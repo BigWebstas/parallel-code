@@ -7,6 +7,9 @@ import type { BrowserWindow } from 'electron';
 import { acceptDocumentCandidate, dispatchDocumentRun, listDocumentRuns } from './runs.js';
 import { writeFakeAgent } from './fake-agent-harness.js';
 
+// Process spawns cost ~0.5 s each on a Windows machine with endpoint security.
+const SLOW = process.platform === 'win32' ? 4 : 1;
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
@@ -17,7 +20,7 @@ function git(root: string, ...args: string[]) {
 }
 
 // Each test runs agents in git worktrees; Windows runners take several times the default 5 s.
-describe('candidate refinement', { timeout: 30_000 }, () => {
+describe('candidate refinement', { timeout: 30_000 * SLOW }, () => {
   it('starts from the proposal, keeps canonical edits untouched, and accepts the complete revision', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-refine-'));
     roots.push(root);
@@ -48,7 +51,9 @@ describe('candidate refinement', { timeout: 30_000 }, () => {
     };
     const first = await dispatchDocumentRun(win, args);
     await expect
-      .poll(async () => (await listDocumentRuns(root)).find((r) => r.id === first.id)?.status)
+      .poll(async () => (await listDocumentRuns(root)).find((r) => r.id === first.id)?.status, {
+        timeout: 8_000 * SLOW,
+      })
       .toBe('finished');
     const original = fs.readFileSync(path.join(root, 'plan.md'), 'utf8');
     fs.writeFileSync(path.join(root, 'plan.md'), original.replace('# Plan', '# Local title'));
@@ -59,7 +64,9 @@ describe('candidate refinement', { timeout: 30_000 }, () => {
       refinement,
     });
     await expect
-      .poll(async () => (await listDocumentRuns(root)).find((r) => r.id === next.id)?.status)
+      .poll(async () => (await listDocumentRuns(root)).find((r) => r.id === next.id)?.status, {
+        timeout: 8_000 * SLOW,
+      })
       .toBe('finished');
     const finished = (await listDocumentRuns(root)).find((r) => r.id === next.id);
     if (!finished) throw new Error('Refinement run not found');

@@ -7,8 +7,11 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./vitest.setup.ts'],
     // Process spawns (git above all) are several times slower on Windows, so
-    // git-heavy tests that finish in ~1 s elsewhere can pass 5 s there.
-    testTimeout: process.platform === 'win32' ? 30_000 : 5_000,
+    // git-heavy tests that finish in ~1 s elsewhere can pass 5 s there. With
+    // endpoint security each spawn costs ~0.5 s, which makes the longest
+    // integration tests take over a minute.
+    testTimeout: process.platform === 'win32' ? 120_000 : 5_000,
+    hookTimeout: process.platform === 'win32' ? 120_000 : 10_000,
     include: ['src/**/*.test.ts', 'electron/**/*.test.ts', 'scripts/**/*.test.mjs'],
     coverage: {
       provider: 'v8',

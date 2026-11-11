@@ -9,8 +9,15 @@ const mocks = vi.hoisted(() => ({
   createWorktree: vi.fn(),
   removeWorktree: vi.fn(),
   killAgent: vi.fn(),
+  getAgentPid: vi.fn((_agentId: string): number | undefined => undefined),
+  snapshotDescendants: vi.fn(async (_pids: number[]) => [] as unknown[]),
+  endLeftovers: vi.fn(async (_rows: unknown[]) => [] as unknown[]),
+  forceKillSurvivingAgent: vi.fn((_agentId: string) => false),
   notifyAgentListChanged: vi.fn(),
-  waitForAgentExit: vi.fn(async () => {}),
+  waitForAgentExit: vi.fn(async (_agentId: string, _timeoutMs?: number) => {}),
+  requestAgentExit: vi.fn(async (_agentId: string) => true),
+  isBeyondReach: vi.fn((_pid: number) => false),
+  findUnreachable: vi.fn(async (_pids: number[], _rows: unknown[]) => [] as unknown[]),
   cancelVerify: vi.fn(),
   stopPlanWatcher: vi.fn(),
   stopPlanWatchersForPath: vi.fn(),
@@ -23,10 +30,22 @@ vi.mock('./git.js', async (importOriginal) => ({
   createWorktree: mocks.createWorktree,
   removeWorktree: mocks.removeWorktree,
 }));
+vi.mock('./agent-descendants.js', () => ({
+  snapshotDescendants: mocks.snapshotDescendants,
+  endLeftovers: mocks.endLeftovers,
+}));
 vi.mock('./pty.js', () => ({
+  getAgentPid: mocks.getAgentPid,
   killAgent: mocks.killAgent,
+  forceKillSurvivingAgent: mocks.forceKillSurvivingAgent,
   notifyAgentListChanged: mocks.notifyAgentListChanged,
   waitForAgentExit: mocks.waitForAgentExit,
+  requestAgentExit: mocks.requestAgentExit,
+}));
+vi.mock('./unreachable-processes.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./unreachable-processes.js')>()),
+  isBeyondReach: mocks.isBeyondReach,
+  findUnreachable: mocks.findUnreachable,
 }));
 vi.mock('./plans.js', () => ({
   stopPlanWatcher: mocks.stopPlanWatcher,
@@ -115,7 +134,100 @@ describe('deleteTask', () => {
       'task/x',
       true,
       undefined,
+      { deferIfLocked: expect.any(Function) },
     );
+  });
+
+  it('ends an agent that outlived the tree kill, and waits again, before removing', async () => {
+    const order: string[] = [];
+    mocks.waitForAgentExit.mockImplementation(async (id: string, ms?: number) => {
+      order.push(`wait ${id}${ms ? ` ${ms}` : ''}`);
+    });
+    mocks.forceKillSurvivingAgent.mockImplementation((id: string) => {
+      order.push(`force ${id}`);
+      return id === 'stuck';
+    });
+    mocks.removeWorktree.mockImplementation(async () => {
+      order.push('remove');
+    });
+
+    await deleteTask({
+      taskId: 't-1',
+      agentIds: ['stuck', 'gone'],
+      branchName: 'task/x',
+      deleteBranch: true,
+      projectRoot: '/nonexistent-root',
+    });
+
+    expect(order).toEqual([
+      'wait stuck',
+      'wait gone',
+      'force stuck',
+      'force gone',
+      'wait stuck 3000',
+      'remove',
+    ]);
+  });
+
+  describe('agents this app cannot end', () => {
+    const base = {
+      taskId: 't-1',
+      agentIds: ['elevated', 'plain'],
+      branchName: 'task/x',
+      deleteBranch: true,
+      projectRoot: '/nonexistent-root',
+    };
+
+    it('asks an agent beyond our reach to exit, before the kill closes its console', async () => {
+      const order: string[] = [];
+      mocks.getAgentPid.mockImplementation((id: string) => (id === 'elevated' ? 111 : 222));
+      mocks.isBeyondReach.mockImplementation((pid: number) => pid === 111);
+      mocks.requestAgentExit.mockImplementation(async (id: string) => {
+        order.push(`exit ${id}`);
+        return true;
+      });
+      mocks.killAgent.mockImplementation((id: string) => {
+        order.push(`kill ${id}`);
+      });
+
+      await deleteTask(base);
+
+      expect(order).toEqual(['exit elevated', 'kill elevated', 'kill plain']);
+    });
+
+    it('does not type into agents it can end normally', async () => {
+      mocks.getAgentPid.mockReturnValue(222);
+      mocks.isBeyondReach.mockReturnValue(false);
+
+      await deleteTask(base);
+
+      expect(mocks.requestAgentExit).not.toHaveBeenCalled();
+    });
+
+    it('names the elevated processes when the worktree cannot be removed', async () => {
+      mocks.getAgentPid.mockReturnValue(111);
+      mocks.removeWorktree.mockRejectedValue(new Error('EBUSY: resource busy or locked'));
+      mocks.findUnreachable.mockResolvedValue([
+        { pid: 111, ppid: 1, name: 'claude.exe', memoryBytes: 0 },
+        { pid: 112, ppid: 111, name: 'node.exe', memoryBytes: 0 },
+      ]);
+
+      const failure = deleteTask(base);
+
+      await expect(failure).rejects.toThrow(
+        /2 processes from this task are running with administrator rights/,
+      );
+      await expect(failure).rejects.toThrow(/taskkill \/F \/T \/PID 111 —/);
+      await expect(failure).rejects.toThrow(/EBUSY: resource busy or locked/);
+    });
+
+    it('passes the original failure on when nothing out of reach is left', async () => {
+      const original = new Error('EBUSY: resource busy or locked');
+      mocks.removeWorktree.mockRejectedValue(original);
+      mocks.findUnreachable.mockResolvedValue([]);
+
+      await expect(deleteTask(base)).rejects.toBe(original);
+    });
   });
 });
 

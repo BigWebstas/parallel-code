@@ -1,9 +1,8 @@
 /** The `git` invocation every document-workspace module shares. */
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { debug as logDebug } from '../log.js';
+import { appExecFile } from '../ipc/git-exec.js';
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = appExecFile;
 /** A document's history can be large; `git log -p` on it must not be truncated. */
 const MAX_BUFFER = 20 * 1024 * 1024;
 

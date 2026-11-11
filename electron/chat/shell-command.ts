@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { resolveUserShell } from '../user-shell.js';
 import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
+import { resolveUserShell, shellSpawnArgs } from '../user-shell.js';
 
 /** Output kept per stream. The CLI cuts its own `!` output near this size, which
  *  is also what goes into the conversation for the model to read. */
@@ -41,24 +41,19 @@ export function runShellCommand(opts: {
   let exited = false;
   let finished = false;
   let closed = false;
-  // Its own process group, so Stop also ends whatever the command started.
-  // Windows has no process groups and no /bin/sh: cmd.exe runs the line, and
-  // Stop ends the tree with taskkill.
-  const windows = process.platform === 'win32';
-  const child = windows
-    ? spawn(resolveUserShell({ env: opts.env }), ['/d', '/s', '/c', opts.command], {
-        cwd: opts.cwd,
-        env: opts.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true,
-        windowsVerbatimArguments: true,
-      })
-    : spawn(opts.env.SHELL || '/bin/sh', ['-c', opts.command], {
-        cwd: opts.cwd,
-        env: opts.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: OWN_PROCESS_GROUP,
-      });
+  // POSIX: its own process group, so Stop also ends whatever the command started.
+  // Windows has no groups and no /bin/sh; run it through cmd.exe and end the tree with taskkill.
+  const shell =
+    process.platform === 'win32'
+      ? resolveUserShell({ env: opts.env })
+      : opts.env.SHELL || '/bin/sh';
+  const child = spawn(shell, shellSpawnArgs(shell, opts.command), {
+    cwd: opts.cwd,
+    env: opts.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: OWN_PROCESS_GROUP,
+    windowsHide: true,
+  });
   for (const stream of ['stdout', 'stderr'] as const) {
     child[stream].setEncoding('utf8');
     child[stream].on('data', (chunk: string) => {

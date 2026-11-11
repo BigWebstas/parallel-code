@@ -4,6 +4,7 @@
 import { Show } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { ContainerIcon, FolderIcon } from './icons';
+import { InlineSpinner } from './InlineSpinner';
 import { store, setDockerImage } from '../store/store';
 import { theme, sectionLabelStyle, bannerStyle } from '../lib/theme';
 import { isMac } from '../lib/platform';
@@ -200,7 +201,7 @@ export function DockerTaskOptions(props: {
                 gap: '6px',
               }}
             >
-              <span class="inline-spinner" aria-hidden="true" />
+              <InlineSpinner aria-hidden="true" />
               Building image... this may take a few minutes.
             </div>
             <Show when={props.dockerBuildOutput}>

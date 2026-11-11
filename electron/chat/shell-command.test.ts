@@ -10,7 +10,6 @@ const run = (command: string) =>
     onOutput: () => undefined,
   });
 
-// The commands are POSIX shell.
 describe.skipIf(process.platform === 'win32')('runShellCommand', () => {
   it('finishes when the shell exits, though a background job holds its output open', async () => {
     const shell = run('(sleep 3 &); echo done');
@@ -39,4 +38,38 @@ describe.skipIf(process.platform === 'win32')('runShellCommand', () => {
     expect(shell.transcript(0)).not.toContain('Stopped by the user.');
     await shell.closed;
   });
+});
+
+describe.runIf(process.platform === 'win32')('runShellCommand on Windows', () => {
+  const runCmd = (command: string) =>
+    runShellCommand({
+      command,
+      cwd: tmpdir(),
+      env: Object.fromEntries(
+        Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+      ),
+      onOutput: () => undefined,
+    });
+
+  it('runs the command through cmd.exe', async () => {
+    const shell = runCmd('echo done');
+    await expect(shell.done).resolves.toBe(0);
+    expect(shell.output().trim()).toBe('done');
+    await shell.closed;
+  });
+
+  it('reports a failing exit code', async () => {
+    const shell = runCmd('exit 3');
+    await expect(shell.done).resolves.toBe(3);
+    expect(shell.transcript(3)).toContain('Exit code 3');
+  });
+
+  it('Stop ends a long-running command and what it started', async () => {
+    const shell = runCmd('ping -n 30 127.0.0.1');
+    await vi.waitFor(() => expect(shell.output()).toContain('Pinging'), { timeout: 10_000 });
+    shell.kill();
+    await shell.done;
+    await shell.closed;
+    expect(shell.transcript(undefined)).toContain('Stopped by the user.');
+  }, 20_000);
 });

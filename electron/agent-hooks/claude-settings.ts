@@ -106,8 +106,12 @@ export function hookCommand(
 export function buildStatusLineSetting(
   scriptPath: string,
   user: StatusLineSetting | null,
+  platform: NodeJS.Platform = process.platform,
 ): StatusLineSetting {
-  const script = `/bin/sh ${shellQuote(scriptPath)}`;
+  // On Windows the command runs in Git Bash, where backslashes in a path only
+  // survive by luck; forward slashes are the form every MSYS tool accepts.
+  const file = platform === 'win32' ? scriptPath.split('\\').join('/') : scriptPath;
+  const script = `/bin/sh ${shellQuote(file)}`;
   if (!user) return { type: 'command', command: script };
   return { ...user, command: `${script} ${shellQuote(user.command)}` };
 }

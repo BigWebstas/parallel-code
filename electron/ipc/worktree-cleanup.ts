@@ -1,10 +1,9 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import fs from 'fs';
 import path from 'path';
 import { unlinkSymlinkCrossPlatform } from './symlink.js';
+import { appExecFile } from './git-exec.js';
 
-const exec = promisify(execFile);
+const exec = appExecFile;
 
 /** Stop scanning once this many foreign-owned entries are known — enough to explain the failure. */
 const MAX_REPORTED = 5;

@@ -4,6 +4,7 @@ import {
   groupProcesses,
   parseProcStat,
   parsePsOutput,
+  parseWindowsProcesses,
   type ProcRow,
 } from './process-stats.js';
 
@@ -31,6 +32,28 @@ describe('parseProcStat', () => {
 
   it('rejects malformed input', () => {
     expect(parseProcStat('garbage')).toBeNull();
+  });
+});
+
+describe('parseWindowsProcesses', () => {
+  const proc = { ProcessId: 9, ParentProcessId: 4, Name: 'node.exe', WorkingSetSize: 2048 };
+
+  it('converts times to cpu seconds and strips the .exe suffix', () => {
+    const json = JSON.stringify([
+      { ...proc, KernelModeTime: 10_000_000, UserModeTime: 20_000_000, CreationTimeMs: 555 },
+    ]);
+    expect(parseWindowsProcesses(json)).toEqual([
+      { pid: 9, ppid: 4, name: 'node', memoryBytes: 2048, cpuSeconds: 3, startTicks: 555 },
+    ]);
+  });
+
+  it('accepts the bare object PowerShell emits for a single process', () => {
+    const json = JSON.stringify({ ...proc, KernelModeTime: 0, UserModeTime: 0 });
+    expect(parseWindowsProcesses(json)).toHaveLength(1);
+  });
+
+  it('returns nothing for malformed output', () => {
+    expect(parseWindowsProcesses('not json')).toEqual([]);
   });
 });
 

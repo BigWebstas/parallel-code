@@ -1,3 +1,4 @@
+import { InlineSpinner } from './components/InlineSpinner';
 import { GitHubIssuesPage } from './components/GitHubIssuesPage';
 import { KanbanPage } from './components/KanbanPage';
 import { TaskBoard } from './components/TaskBoard';
@@ -1160,7 +1161,7 @@ function App() {
               }}
             >
               <Show when={store.notificationBusy}>
-                <span class="inline-spinner" aria-hidden="true" />
+                <InlineSpinner aria-hidden="true" />
               </Show>
               <Show when={store.notificationTone === 'success'}>
                 <span class="app-notice-check" aria-hidden="true">

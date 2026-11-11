@@ -1088,6 +1088,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     validatePath(args.projectRoot, 'projectRoot');
     validateBranchName(args.branchName, 'branchName');
     assertBoolean(args.deleteBranch, 'deleteBranch');
+    assertOptionalBoolean(args.keepLockedFolder, 'keepLockedFolder');
     assertOptionalString(args.taskId, 'taskId');
     // Validated before anything is killed or removed.
     const teardownScript = optionalWorktreeScript(args.teardownScript, 'teardownScript');
@@ -1108,6 +1109,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       worktreePath: optionalWorktreePath(args),
       teardownScript,
       teardownEnv: teardownScript ? projectAgentEnv(args.projectId) : undefined,
+      keepLockedFolder: args.keepLockedFolder,
     });
     if (args.taskId) delegation.unregister(args.taskId);
     return result;

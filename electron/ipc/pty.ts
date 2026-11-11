@@ -47,7 +47,7 @@ import {
 import { HOOK_PTY_ENV_KEYS } from '../agent-hooks/hook-script.js';
 import { isClaudeCommand, withClaudeHookSettings } from '../agent-hooks/launch-args.js';
 import { commandExistsOnPath, isExplicitCommandPath } from './command-path.js';
-import { signalProcessGroup } from '../process-group.js';
+import { signalProcessGroup, terminatePid } from '../process-group.js';
 import { hasCodexHookOverride, isCodexCommand } from '../agent-hooks/codex-hooks.js';
 import { debug as logDebug, warn as logWarn, errMessage } from '../log.js';
 
@@ -815,6 +815,46 @@ export function waitForAgentExit(agentId: string, timeoutMs = 8000): Promise<voi
   });
 }
 
+/**
+ * Keystrokes that make a terminal agent quit by itself, each preceded by the
+ * given pause. Ctrl+C interrupts a turn and a second one exits the CLIs this
+ * app runs; Claude Code also takes `/exit` at its prompt.
+ */
+export function agentExitKeys(command: string): { data: string; afterMs: number }[] {
+  const keys = [
+    { data: '\x03', afterMs: 0 },
+    { data: '\x03', afterMs: 300 },
+  ];
+  if (/(^|[\\/])claude(\.exe)?$/i.test(command)) keys.push({ data: '/exit\r', afterMs: 600 });
+  return keys;
+}
+
+/**
+ * Ask an agent to quit by itself, for one that cannot be killed from here (it
+ * runs with higher rights than this app). Console input is not subject to that
+ * limit, so typing the exit keys works where `taskkill` is refused. It must run
+ * before `killAgent`, which closes the console. Resolves true once the agent has
+ * exited, false when it is still running after `timeoutMs`.
+ */
+export async function requestAgentExit(agentId: string, timeoutMs = 4000): Promise<boolean> {
+  const session = sessions.get(agentId);
+  if (!session || session.killed) return true;
+  logDebug('pty', `requestAgentExit ${agentId}`, { pid: session.proc.pid });
+  for (const key of agentExitKeys(session.command)) {
+    if (key.afterMs > 0) await new Promise((resolve) => setTimeout(resolve, key.afterMs));
+    if (!sessions.has(agentId)) return true;
+    try {
+      // Straight to the PTY: this is not user input and must not look like a draft.
+      session.proc.write(key.data);
+    } catch (err) {
+      logDebug('pty', `requestAgentExit write failed for ${agentId}`, { err: errMessage(err) });
+      break;
+    }
+  }
+  await waitForAgentExit(agentId, timeoutMs);
+  return !sessions.has(agentId);
+}
+
 function attachPtyOutputHandlers(
   notify: Notify,
   session: PtySession,
@@ -1451,6 +1491,25 @@ export function killAgent(agentId: string): void {
 /** Every agent with a live process: PTY sessions, plus chats that run without one. */
 export function listRunningAgentIds(): string[] {
   return [...new Set([...sessions.keys(), ...runningAgentChatIds()])];
+}
+
+/** Process id of a running agent, or undefined when it has none. */
+export function getAgentPid(agentId: string): number | undefined {
+  const pid = sessions.get(agentId)?.proc.pid;
+  return typeof pid === 'number' ? pid : undefined;
+}
+
+/**
+ * Second attempt for an agent that outlived `killAgent` (taskkill was blocked or
+ * failed): end its process directly. Returns false when it has already exited.
+ */
+export function forceKillSurvivingAgent(agentId: string): boolean {
+  const session = sessions.get(agentId);
+  const pid = session?.proc.pid;
+  if (!session || typeof pid !== 'number') return false;
+  logWarn('pty', `agent ${agentId} outlived killAgent, ending pid ${pid} directly`);
+  terminatePid(pid);
+  return true;
 }
 
 export function countRunningAgents(): number {

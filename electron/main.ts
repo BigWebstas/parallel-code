@@ -19,6 +19,8 @@ import {
 } from './log.js';
 import { loadAppState } from './ipc/persistence.js';
 import { reconcileWorktreeIntents } from './ipc/worktree-intents.js';
+import { openDeferredRemovals } from './ipc/deferred-worktree-removals.js';
+import { retryDeferredWorktreeRemoval } from './ipc/git-worktree.js';
 import { getUserDataDir } from './user-data-dir.js';
 import { installIpcTracing } from './ipc/trace.js';
 import { startAgentHookRuntime, stopAgentHookRuntime } from './agent-hooks/runtime.js';
@@ -364,6 +366,10 @@ if (shouldStartApp) {
     await startAgentHookRuntime(() => mainWindow);
     setupApplicationMenu();
     reportOrphanedWorktrees();
+    openDeferredRemovals(
+      path.join(getUserDataDir(), 'deferred-worktree-removals.json'),
+      retryDeferredWorktreeRemoval,
+    );
     createWindow();
     registerParallelCodeProtocol();
     const logFile = getLogFilePath();

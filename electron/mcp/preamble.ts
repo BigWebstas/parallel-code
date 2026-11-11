@@ -1,14 +1,13 @@
 import { randomUUID } from 'crypto';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from 'fs';
 import { readFile as fsReadFile, unlink as fsUnlink, lstat as fsLstat } from 'fs/promises';
 import { atomicWriteFile } from './atomic.js';
 import { info as logInfo, warn as logWarn } from '../log.js';
 import { join } from 'path';
 import os from 'os';
+import { appExecFile } from '../ipc/git-exec.js';
 
-const execAsync = promisify(execFile);
+const execAsync = appExecFile;
 
 const PREAMBLE_MD_FILES = ['AGENTS.md', 'GEMINI.md', '.agent.md'] as const;
 

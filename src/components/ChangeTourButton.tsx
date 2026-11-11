@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { Show, createSignal, createUniqueId, createEffect, onCleanup, type JSX } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import type { ChangeTourController } from '../lib/create-change-tour';
@@ -173,7 +174,7 @@ export function ChangeTourButton(props: {
                   </Show>
                 }
               >
-                <span class="inline-spinner" aria-hidden="true" />
+                <InlineSpinner aria-hidden="true" />
               </Show>
               <span class="change-tour-action-label">
                 {props.tour.loading()

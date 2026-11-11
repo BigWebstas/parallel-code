@@ -173,6 +173,8 @@ export type RemoteBranchState = 'unpushed' | 'differs' | 'pushed';
 export interface DeleteTaskResult {
   /** Set when the project's teardown script did not pass; the worktree was removed anyway. */
   teardownWarning?: string;
+  /** Set when Windows kept the worktree folder locked: the task is closed and the folder is deleted later. */
+  leftoverFolder?: string;
 }
 
 export interface MergeResult {

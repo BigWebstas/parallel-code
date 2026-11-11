@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { For, Show, createMemo, createSignal } from 'solid-js';
 import { Portal } from 'solid-js/web';
 import { store, refreshUsage, USAGE_PROVIDERS } from '../store/store';
@@ -236,8 +237,7 @@ function ProviderUsage(props: { provider: UsageProvider }) {
         >
           {PROVIDER_LABELS[props.provider]}
           <Show when={usage().refreshing}>
-            <span
-              class="inline-spinner"
+            <InlineSpinner
               aria-hidden="true"
               style={{ width: '9px', height: '9px', 'border-width': '1.5px' }}
             />

@@ -131,6 +131,7 @@
   "build": {
     "appId": "com.parallel-code.app",
     "productName": "Parallel Code",
+    "beforePack": "./scripts/before-pack.cjs",
     "afterPack": "./scripts/after-pack.cjs",
     "directories": {
       "buildResources": "build",

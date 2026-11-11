@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../InlineSpinner';
 import { For, Show, createEffect, createSignal, onCleanup } from 'solid-js';
 import type { AgentChatState } from '../../../electron/shared/agent-chat-types';
 
@@ -42,7 +43,7 @@ export function Progress(props: { state: AgentChatState }) {
         <Show when={working() || props.state.interrupted}>
           <span class="chat-progress-indicator" aria-hidden="true">
             <Show when={working() && !props.state.requests.length}>
-              <span class="inline-spinner" />
+              <InlineSpinner />
             </Show>
           </span>
           {/* The clock stays outside the live region, or it is re-announced every second. */}

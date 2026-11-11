@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../InlineSpinner';
 import { For, Show } from 'solid-js';
 import { GO_DEEPER_QUESTION } from '../../lib/understanding-prompt';
 import { questionPoint, type TourNode } from '../../lib/tour-tree';
@@ -44,7 +45,7 @@ export function TourDeeper(props: {
         <Show when={props.pendingQuestion}>
           {(question) => (
             <p class="tour-deeper-pending" aria-busy="true">
-              <span class="inline-spinner" aria-hidden="true" />
+              <InlineSpinner aria-hidden="true" />
               <span>{questionLabel(question(), props.parentTitle)}</span>
             </p>
           )}

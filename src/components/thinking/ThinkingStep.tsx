@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../InlineSpinner';
 import { For, Show, onMount } from 'solid-js';
 import type { CardProposal } from '../../lib/create-card-writer';
 import type { TourNode } from '../../lib/tour-tree';
@@ -68,7 +69,7 @@ export function ThinkingStep(props: {
         </span>
         <Show when={props.writing}>
           <span role="status" class="thinking-status">
-            <span class="inline-spinner" aria-hidden="true" /> Writing card…
+            <InlineSpinner aria-hidden="true" /> Writing card…
           </span>
         </Show>
         <Show when={props.error}>

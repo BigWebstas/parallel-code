@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../InlineSpinner';
 import { Show } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { theme } from '../../lib/theme';
@@ -79,11 +80,7 @@ export function UnderstandButton(props: {
           }}
         >
           <Show when={loading()}>
-            <span
-              class="inline-spinner"
-              aria-hidden="true"
-              style={{ 'vertical-align': 'middle' }}
-            />{' '}
+            <InlineSpinner aria-hidden="true" style={{ 'vertical-align': 'middle' }} />{' '}
           </Show>
           <Show when={!loading() && ready()}>
             <span aria-label="Tour ready" style={{ color: theme.success }}>

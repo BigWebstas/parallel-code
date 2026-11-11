@@ -1,3 +1,4 @@
+import { InlineSpinner } from '../InlineSpinner';
 import { For, Show } from 'solid-js';
 import { TourCard } from './TourCard';
 import type { TourBranch, TourRef } from '../../lib/understanding-tour';
@@ -33,7 +34,7 @@ export function TourThreads(props: {
               ↳ {question()}
             </p>
             <div class="understanding-card understanding-card--message">
-              <span class="inline-spinner" aria-hidden="true" />
+              <InlineSpinner aria-hidden="true" />
               <span class="dialog-sr-only">Thinking…</span>
             </div>
           </section>

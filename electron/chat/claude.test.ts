@@ -583,6 +583,7 @@ describe('Claude chat adapter', () => {
     ]);
   });
 
+  // POSIX shell syntax (pwd, $!, process groups); shell-command.test.ts covers Windows.
   it.skipIf(process.platform === 'win32')(
     'runs a ! command in the worktree and lets Claude answer its output',
     async () => {
@@ -626,6 +627,7 @@ describe('Claude chat adapter', () => {
     },
   );
 
+  // `sleep` is POSIX; shell-command.test.ts covers Stop on Windows.
   it.skipIf(process.platform === 'win32')(
     'stops a running ! command and tells the model it was stopped',
     async () => {

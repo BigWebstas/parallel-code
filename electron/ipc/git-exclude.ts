@@ -1,3 +1,4 @@
+import { resolveGitCommonDirSync } from './git-refs.js';
 import * as childProcess from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -25,6 +26,8 @@ export function resolveGitInfoExcludePath(
   worktreePath: string,
   execFileSyncImpl: ExecFileSync = childProcess.execFileSync,
 ): string | null {
+  const direct = resolveGitCommonDirSync(worktreePath);
+  if (direct) return path.join(direct, 'info', 'exclude');
   try {
     const out = execFileSyncImpl('git', ['rev-parse', '--git-common-dir'], {
       cwd: worktreePath,

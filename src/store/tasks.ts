@@ -537,7 +537,10 @@ export function getCoordinatorCloseWarning(taskId: string): string | null {
   return `This task has ${count} child task(s). Closing it will detach them — they will become standalone tasks and continue running independently.`;
 }
 
-export async function closeTask(taskId: string): Promise<void> {
+export async function closeTask(
+  taskId: string,
+  opts: { keepLockedFolder?: boolean } = {},
+): Promise<void> {
   const task = store.tasks[taskId];
   if (!task || task.closingStatus === 'closing' || task.closingStatus === 'removing') return;
 
@@ -602,12 +605,19 @@ export async function closeTask(taskId: string): Promise<void> {
         branchName,
         deleteBranch,
         projectRoot,
+        keepLockedFolder: opts.keepLockedFolder === true,
         // The folder keeps its original branch-derived name even if the task
         // later adopted the branch the agent switched to — pass the real path.
         worktreePath: task.worktreePath,
         ...teardownScriptFor(task.projectId),
       });
       reportTeardownWarning(task.name, result?.teardownWarning);
+      if (result?.leftoverFolder) {
+        showNotification(
+          `Task closed. Windows is still holding its folder, so it will be deleted later: ${result.leftoverFolder}`,
+          { durationMs: NOTIFICATION_ERROR_MS },
+        );
+      }
     }
 
     // Notify backend to clean up this task from its coordinator's state map.
@@ -629,10 +639,13 @@ export async function closeTask(taskId: string): Promise<void> {
   }
 }
 
-export async function retryCloseTask(taskId: string): Promise<void> {
+export async function retryCloseTask(
+  taskId: string,
+  opts: { keepLockedFolder?: boolean } = {},
+): Promise<void> {
   setStore('tasks', taskId, 'closingStatus', undefined);
   setStore('tasks', taskId, 'closingError', undefined);
-  await closeTask(taskId);
+  await closeTask(taskId, opts);
 }
 
 // Matches the `.task-removing` and `.task-item-removing` animations in styles.css.

@@ -1,3 +1,4 @@
+import { InlineSpinner } from './InlineSpinner';
 import { taskProjectFilter } from '../store/task-project-filter';
 import { TaskProjectFilter } from './TaskProjectFilter';
 import { createProjectFilterTransition } from '../lib/projectFilterTransition';
@@ -173,8 +174,7 @@ function TaskName(props: {
       </Show>
       <Show when={props.reviewing}>
         {/* Muted, not a badge: the review is routine work the user can leave running. */}
-        <span
-          class="inline-spinner"
+        <InlineSpinner
           role="img"
           aria-label="Reviewing"
           title="Reviewing"

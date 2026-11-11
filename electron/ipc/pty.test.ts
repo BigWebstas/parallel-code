@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 
 const {
   mockExecFileSync,
+  mockWhere,
   mockExecFile,
   mockChildProcessSpawn,
   mockPtySpawn,
@@ -71,6 +72,8 @@ const {
   );
 
   const mockLogDebug = vi.fn();
+  // Stands in for the PATH scan that replaced `where.exe`: returns `where`-style text.
+  const mockWhere = vi.fn((_command: string, _env?: unknown): unknown => '');
 
   // Command resolution is hermetic: everything resolves unless a test says
   // otherwise, mirroring the old mocked-`which` behavior. Real PATH/filesystem
@@ -80,6 +83,7 @@ const {
 
   return {
     mockExecFileSync,
+    mockWhere,
     mockExecFile,
     mockChildProcessSpawn,
     mockPtySpawn,
@@ -103,7 +107,21 @@ vi.mock('node-pty', () => ({
   spawn: mockPtySpawn,
 }));
 
-vi.mock('./command-path.js', () => ({
+vi.mock('./command-path.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./command-path.js')>()),
+  findCommandPaths: (command: string, env?: unknown) => {
+    try {
+      const out = mockWhere(command, env);
+      return typeof out === 'string'
+        ? out
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+        : [];
+    } catch {
+      return [];
+    }
+  },
   commandExistsOnPath: mockCommandExists,
   isExplicitCommandPath: mockIsExplicitCommandPath,
 }));
@@ -146,6 +164,8 @@ import {
   subscribeToAgentRendered,
   validateCommand,
   waitForAgentExit,
+  agentExitKeys,
+  requestAgentExit,
   writeToAgent,
   writeAgentPrompt,
   getAgentInputBlocker,
@@ -1806,25 +1826,25 @@ describe('resolveSpawnTarget', () => {
     const exe = path.join(dir, 'claude.exe');
     fs.writeFileSync(exe, '');
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementation(() => `${exe}\r\n`);
+      mockWhere.mockImplementation(() => `${exe}\r\n`);
       expect(resolveSpawnTarget('claude', []).file).toBe(exe);
       expect(resolveSpawnTarget('claude', []).file).toBe(exe);
-      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+      expect(mockWhere).toHaveBeenCalledTimes(1);
       // Once the program is gone, the next launch looks again.
       fs.rmSync(exe);
       resolveSpawnTarget('claude', []);
-      expect(mockExecFileSync).toHaveBeenCalledTimes(2);
+      expect(mockWhere).toHaveBeenCalledTimes(2);
     });
   });
 
   it('remembers missing programs briefly to avoid blocking on every launch', () => {
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementation(() => {
+      mockWhere.mockImplementation(() => {
         throw new Error('not found');
       });
       expect(resolveSpawnTarget('missing-agent', []).file).toBe('missing-agent');
       expect(resolveSpawnTarget('missing-agent', []).file).toBe('missing-agent');
-      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+      expect(mockWhere).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1859,7 +1879,7 @@ describe('resolveSpawnTarget', () => {
     // resolve bare names the way POSIX execvp does, so a name that
     // `validateCommand` accepts still fails to launch unless resolved first.
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementationOnce(() => 'C:\\Users\\me\\.local\\bin\\claude.exe\r\n');
+      mockWhere.mockImplementationOnce(() => 'C:\\Users\\me\\.local\\bin\\claude.exe\r\n');
       expect(resolveSpawnTarget('claude', ['--continue'])).toEqual({
         file: 'C:\\Users\\me\\.local\\bin\\claude.exe',
         args: ['--continue'],
@@ -1870,7 +1890,7 @@ describe('resolveSpawnTarget', () => {
   it('prefers a real executable over the extensionless npm shim', () => {
     // `where` lists the extensionless bash shim npm writes next to the .cmd.
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementationOnce(
+      mockWhere.mockImplementationOnce(
         () =>
           'C:\\Users\\me\\AppData\\Roaming\\npm\\claude\r\n' +
           'C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd\r\n' +
@@ -1891,7 +1911,7 @@ describe('resolveSpawnTarget', () => {
       '@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\r\n',
     );
     withPlatform('win32', () => {
-      mockExecFileSync
+      mockWhere
         .mockImplementationOnce(() => `${shim}\r\n`)
         .mockImplementationOnce(() => 'C:\\Program Files\\nodejs\\node.exe\r\n');
       const prompt = 'line one\nline two with % and ^';
@@ -1910,7 +1930,7 @@ describe('resolveSpawnTarget', () => {
     // CreateProcessW cannot execute a batch file; spawning one directly is the
     // "Cannot create process, error code: 193" (ERROR_BAD_EXE_FORMAT) failure.
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementationOnce(
+      mockWhere.mockImplementationOnce(
         () =>
           'C:\\Users\\me\\AppData\\Roaming\\npm\\claude\r\n' +
           'C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd\r\n',
@@ -1924,7 +1944,7 @@ describe('resolveSpawnTarget', () => {
 
   it('keeps a shim path containing spaces intact', () => {
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementationOnce(() => 'C:\\Program Files\\npm\\claude.cmd\r\n');
+      mockWhere.mockImplementationOnce(() => 'C:\\Program Files\\npm\\claude.cmd\r\n');
       expect(resolveSpawnTarget('claude', ['-p', 'hello world'], WIN_ENV)).toEqual({
         file: 'C:\\Windows\\system32\\cmd.exe',
         args: '/d /s /c ""C:\\Program Files\\npm\\claude.cmd" -p "hello world""',
@@ -1947,7 +1967,7 @@ describe('resolveSpawnTarget', () => {
     // Spawning the bash script is what produced the 193; a plain "not found"
     // is the more honest failure.
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementationOnce(() => 'C:\\Users\\me\\npm\\bin\\claude\r\n');
+      mockWhere.mockImplementationOnce(() => 'C:\\Users\\me\\npm\\bin\\claude\r\n');
       expect(resolveSpawnTarget('claude', ['--continue'])).toEqual({
         file: 'claude',
         args: ['--continue'],
@@ -1957,7 +1977,7 @@ describe('resolveSpawnTarget', () => {
 
   it('falls back to the bare command on Windows when resolution fails', () => {
     withPlatform('win32', () => {
-      mockExecFileSync.mockImplementationOnce(() => {
+      mockWhere.mockImplementationOnce(() => {
         throw new Error('not found');
       });
       expect(resolveSpawnTarget('claude', ['--continue'])).toEqual({
@@ -2139,6 +2159,77 @@ describe('waitForAgentExit', () => {
     } finally {
       killAgent(agentId);
     }
+  });
+});
+
+describe('agentExitKeys', () => {
+  it('presses Ctrl+C twice for any agent', () => {
+    expect(agentExitKeys('codex').map((k) => k.data)).toEqual(['\x03', '\x03']);
+  });
+
+  it('also types /exit for Claude Code, by name or path', () => {
+    for (const command of ['claude', 'C:\\Users\\me\\.local\\bin\\claude.exe', '/usr/bin/claude']) {
+      expect(agentExitKeys(command).map((k) => k.data)).toEqual(['\x03', '\x03', '/exit\r']);
+    }
+    expect(agentExitKeys('claude-wrapper').map((k) => k.data)).toEqual(['\x03', '\x03']);
+  });
+});
+
+describe('requestAgentExit', () => {
+  afterEach(() => vi.useRealTimers());
+
+  type MockProc = {
+    write: Mock;
+    emitExit: (e: { exitCode: number; signal: number | undefined }) => void;
+  };
+  const lastProc = (): MockProc =>
+    mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1].value as MockProc;
+
+  it('is done at once for an agent that is not running', async () => {
+    await expect(requestAgentExit('no-such-agent', 50)).resolves.toBe(true);
+  });
+
+  it('types the exit keys and reports the exit when the agent quits', async () => {
+    vi.useFakeTimers();
+    const agentId = nextAgentId();
+    await spawnAgent(
+      createMockNotify(),
+      buildSpawnArgs({ agentId, command: 'claude', dockerMode: false }),
+    );
+    const proc = lastProc();
+    const done = requestAgentExit(agentId, 5000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(proc.write.mock.calls.map((c) => c[0])).toEqual(['\x03', '\x03', '/exit\r']);
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    await vi.advanceTimersByTimeAsync(200);
+    await expect(done).resolves.toBe(true);
+  });
+
+  it('stops typing as soon as the agent has quit', async () => {
+    vi.useFakeTimers();
+    const agentId = nextAgentId();
+    await spawnAgent(
+      createMockNotify(),
+      buildSpawnArgs({ agentId, command: 'claude', dockerMode: false }),
+    );
+    const proc = lastProc();
+    const done = requestAgentExit(agentId, 5000);
+    await vi.advanceTimersByTimeAsync(50);
+    proc.emitExit({ exitCode: 0, signal: undefined });
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(done).resolves.toBe(true);
+    expect(proc.write.mock.calls.map((c) => c[0])).toEqual(['\x03']);
+  });
+
+  it('reports false when the agent ignores the keys', async () => {
+    vi.useFakeTimers();
+    const agentId = nextAgentId();
+    await spawnAgent(createMockNotify(), buildSpawnArgs({ agentId, dockerMode: false }));
+    const done = requestAgentExit(agentId, 1500);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(done).resolves.toBe(false);
+    vi.useRealTimers();
+    killAgent(agentId);
   });
 });
 

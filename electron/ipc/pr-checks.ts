@@ -1,5 +1,3 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { Notification, type BrowserWindow } from 'electron';
 import { stat } from 'fs/promises';
 import { IPC } from './channels.js';
@@ -12,6 +10,7 @@ import type {
   PrMergeable,
   PrReviewDecision,
 } from './shared-types.js';
+import { appExecFile } from './git-exec.js';
 
 export type {
   PrCheckBucket,
@@ -21,7 +20,7 @@ export type {
   PrReviewDecision,
 } from './shared-types.js';
 
-const exec = promisify(execFile);
+const exec = appExecFile;
 
 const TICK_MS = 30_000;
 const SETTLED_REFRESH_MS = 5 * 60_000;

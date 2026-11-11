@@ -1,8 +1,7 @@
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { errMessage, warn as logWarn } from '../log.js';
+import { appExecFile } from './git-exec.js';
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = appExecFile;
 const MAX_NAMED = 3;
 
 /**

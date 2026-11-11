@@ -12,6 +12,8 @@ import {
   getCurrentBranchName,
 } from './git-diff-base.js';
 import { debug as logDebug, warn as logWarn } from '../log.js';
+import { deferWorktreeRemoval } from './deferred-worktree-removals.js';
+import { resolveGitCommonDirSync } from './git-refs.js';
 import { appendGitInfoExcludeBlockAtPath, normalizeExcludeLine } from './git-exclude.js';
 import {
   findForeignOwnedEntries,
@@ -297,7 +299,9 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
     // On Windows, if fs.rmSync failed, try native Windows rmdir fallback
     if (process.platform === 'win32' && fs.existsSync(dirPath)) {
       try {
-        await exec('cmd.exe', ['/d', '/s', '/c', `rmdir /s /q "${dirPath}"`]);
+        // Separate args: execFile escapes embedded quotes as \", which cmd.exe
+        // rejects ("syntax is incorrect") and so made this fallback never work.
+        await exec('cmd.exe', ['/d', '/c', 'rmdir', '/s', '/q', dirPath]);
         if (!fs.existsSync(dirPath)) {
           logDebug(
             'git',
@@ -328,6 +332,12 @@ async function removeDirWithRetries(dirPath: string): Promise<unknown> {
  */
 async function removeLockedWorktreeDir(worktreePath: string, rmError: unknown): Promise<void> {
   const { killable, kept } = partitionLockers(await findWorktreeLockers(worktreePath));
+  logWarn('git', 'Worktree removal blocked', {
+    worktreePath,
+    err: rmError instanceof Error ? rmError.message : String(rmError),
+    killable,
+    kept,
+  });
   if (killable.length === 0) throw lockedRemovalError(worktreePath, rmError, kept);
 
   await killWorktreeLockers(killable);
@@ -713,6 +723,11 @@ const commonDirs = new Map<string, string>();
 function gitCommonDir(worktreePath: string): string | null {
   const known = commonDirs.get(worktreePath);
   if (known !== undefined) return known;
+  const direct = resolveGitCommonDirSync(worktreePath);
+  if (direct) {
+    commonDirs.set(worktreePath, direct);
+    return direct;
+  }
   try {
     const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
       cwd: worktreePath,
@@ -785,11 +800,120 @@ export function refreshWorktreeNodeModules(worktreePath: string, repoRoot?: stri
   linkNestedNodeModules(root, worktreePath);
 }
 
+export interface RemoveWorktreeOptions {
+  /**
+   * Windows only. Asked when the folder could not be deleted; answering true
+   * closes the task anyway and leaves the folder to a background retry.
+   */
+  deferIfLocked?: (err: unknown) => Promise<boolean>;
+  /** Windows: stop waiting for the folder after this long (default 25 s). Tests only. */
+  budgetMs?: number;
+}
+
+/**
+ * The delete ladder (retries, holder scans, kills) can run for minutes, and the
+ * task shows "Closing..." the whole time. Past this budget the close gives up
+ * waiting; the ladder keeps going in the background and may still succeed.
+ */
+const REMOVAL_BUDGET_MS = 25_000;
+
+async function withRemovalBudget(
+  removal: Promise<void>,
+  worktreePath: string,
+  budgetMs: number,
+): Promise<void> {
+  if (process.platform !== 'win32' || budgetMs <= 0) return removal;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new Error(
+          `EBUSY: resource busy or locked, still waiting after ${Math.round(budgetMs / 1000)} s: '${worktreePath}'`,
+        ),
+      );
+    }, budgetMs);
+  });
+  // The ladder may fail after we stopped listening; that must not be unhandled.
+  removal.catch(() => undefined);
+  try {
+    await Promise.race([removal, expired]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * Let a close succeed although Windows keeps the worktree folder locked: take it
+ * out of git's list (so the branch can go), queue the folder for deletion in the
+ * background, and report whether that happened.
+ */
+async function deferLockedRemoval(
+  target: { repoRoot: string; worktreePath: string; branchName?: string; err: unknown },
+  opts: RemoveWorktreeOptions | undefined,
+): Promise<boolean> {
+  if (process.platform !== 'win32' || !opts?.deferIfLocked) return false;
+  if (!(await opts.deferIfLocked(target.err))) return false;
+  const queued = deferWorktreeRemoval({
+    worktreePath: target.worktreePath,
+    projectRoot: target.repoRoot,
+    branchName: target.branchName,
+    reason: target.err instanceof Error ? target.err.message : String(target.err),
+  });
+  if (!queued) return false;
+  logWarn('git', 'Worktree folder is locked; task closed, folder queued for removal', {
+    worktreePath: target.worktreePath,
+    err: target.err instanceof Error ? target.err.message : String(target.err),
+  });
+  // Without its `.git` pointer file the folder is no longer a worktree, so
+  // `git worktree prune` drops it. Only ever a file: a `.git` directory is a repository.
+  const dotGit = path.join(target.worktreePath, '.git');
+  try {
+    if (fs.lstatSync(dotGit).isFile()) await fs.promises.rm(dotGit, { force: true });
+  } catch {
+    /* already gone, or locked too; the retry handles it */
+  }
+  return true;
+}
+
+/**
+ * One light attempt at a queued folder: no holder scan and no killing, since it
+ * runs unattended. True once the folder, its worktree entry and its branch are gone.
+ */
+export async function retryDeferredWorktreeRemoval(entry: {
+  worktreePath: string;
+  projectRoot: string;
+  branchName?: string;
+}): Promise<boolean> {
+  if (!fs.existsSync(entry.projectRoot)) return true;
+  if (fs.existsSync(entry.worktreePath)) {
+    try {
+      await prepareTreeForRemoval(entry.worktreePath);
+      await fs.promises.rm(entry.worktreePath, {
+        recursive: true,
+        force: true,
+        maxRetries: 2,
+        retryDelay: 100,
+      });
+    } catch {
+      /* still locked */
+    }
+    if (fs.existsSync(entry.worktreePath)) return false;
+  }
+  await exec('git', ['worktree', 'prune'], { cwd: entry.projectRoot }).catch(() => undefined);
+  if (entry.branchName) {
+    await exec('git', ['branch', '-D', '--', entry.branchName], { cwd: entry.projectRoot }).catch(
+      () => undefined,
+    );
+  }
+  return true;
+}
+
 export async function removeWorktree(
   repoRoot: string,
   branchName: string,
   deleteBranch: boolean,
   explicitWorktreePath?: string,
+  opts?: RemoveWorktreeOptions,
 ): Promise<void> {
   // After the user adopts a branch the agent switched the worktree to, the
   // folder keeps its original branch-derived name — callers that know the real
@@ -804,8 +928,21 @@ export async function removeWorktree(
     return;
   }
 
+  let deferred = false;
   if (fs.existsSync(worktreePath)) {
-    await forceRemoveWorktreeDir(repoRoot, worktreePath);
+    try {
+      await withRemovalBudget(
+        forceRemoveWorktreeDir(repoRoot, worktreePath),
+        worktreePath,
+        opts?.deferIfLocked ? (opts.budgetMs ?? REMOVAL_BUDGET_MS) : 0,
+      );
+    } catch (err) {
+      deferred = await deferLockedRemoval(
+        { repoRoot, worktreePath, branchName: deleteBranch ? branchName : undefined, err },
+        opts,
+      );
+      if (!deferred) throw err;
+    }
     nodeModulesLastSync.delete(path.join(worktreePath, 'node_modules'));
   }
 
@@ -857,6 +994,12 @@ export async function removeWorktree(
             return;
           }
         }
+      }
+      if (deferred) {
+        // The folder is still registered with git until it can be deleted; the
+        // background retry deletes the branch once it is gone.
+        logWarn('git', 'Kept task branch while its worktree folder is locked', { branchName });
+        return;
       }
       throw e;
     }
