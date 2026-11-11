@@ -68,35 +68,43 @@ describe('startAgentHookServer', () => {
     const settingsPath = server.claudeSettingsPath(dir, { CLAUDE_CONFIG_DIR: dir });
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
     expect(settings.hooks.Stop[0].hooks[0].command).toContain(server.hookScriptPath);
-    expect(settings.statusLine.command).toBe(`/bin/sh '${server.statusLineScriptPath}'`);
+    // The status line script is /bin/sh only, so Windows launches get hooks alone.
+    if (process.platform !== 'win32') {
+      expect(settings.statusLine.command).toBe(`/bin/sh '${server.statusLineScriptPath}'`);
+    } else {
+      expect(settings.statusLine).toBeUndefined();
+    }
   });
 
-  it("wraps the user's own status line, and leaves an unreadable one alone", () => {
-    const configDir = path.join(dir, 'config');
-    const cwd = path.join(dir, 'work');
-    fs.mkdirSync(configDir);
-    fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
-    const env = { CLAUDE_CONFIG_DIR: configDir };
-    fs.writeFileSync(
-      path.join(configDir, 'settings.json'),
-      JSON.stringify({ statusLine: { type: 'command', command: 'echo user', padding: 2 } }),
-    );
-    const read = (): { statusLine?: { command: string; padding?: number } } =>
-      JSON.parse(fs.readFileSync(server.claudeSettingsPath(cwd, env), 'utf8'));
-    expect(read().statusLine).toEqual({
-      type: 'command',
-      command: `/bin/sh '${server.statusLineScriptPath}' 'echo user'`,
-      padding: 2,
-    });
-    fs.writeFileSync(
-      path.join(cwd, '.claude', 'settings.local.json'),
-      JSON.stringify({ statusLine: { type: 'command', command: 'echo local' } }),
-    );
-    expect(read().statusLine?.command).toContain("'echo local'");
-    fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), '{ broken');
-    expect(read().statusLine).toBeUndefined();
-    expect(read()).toHaveProperty('hooks.Stop');
-  });
+  it.skipIf(process.platform === 'win32')(
+    "wraps the user's own status line, and leaves an unreadable one alone",
+    () => {
+      const configDir = path.join(dir, 'config');
+      const cwd = path.join(dir, 'work');
+      fs.mkdirSync(configDir);
+      fs.mkdirSync(path.join(cwd, '.claude'), { recursive: true });
+      const env = { CLAUDE_CONFIG_DIR: configDir };
+      fs.writeFileSync(
+        path.join(configDir, 'settings.json'),
+        JSON.stringify({ statusLine: { type: 'command', command: 'echo user', padding: 2 } }),
+      );
+      const read = (): { statusLine?: { command: string; padding?: number } } =>
+        JSON.parse(fs.readFileSync(server.claudeSettingsPath(cwd, env), 'utf8'));
+      expect(read().statusLine).toEqual({
+        type: 'command',
+        command: `/bin/sh '${server.statusLineScriptPath}' 'echo user'`,
+        padding: 2,
+      });
+      fs.writeFileSync(
+        path.join(cwd, '.claude', 'settings.local.json'),
+        JSON.stringify({ statusLine: { type: 'command', command: 'echo local' } }),
+      );
+      expect(read().statusLine?.command).toContain("'echo local'");
+      fs.writeFileSync(path.join(cwd, '.claude', 'settings.json'), '{ broken');
+      expect(read().statusLine).toBeUndefined();
+      expect(read()).toHaveProperty('hooks.Stop');
+    },
+  );
 
   it('hands authenticated status line payloads to onUsage without an agent identity', async () => {
     const body = JSON.stringify({ rate_limits: { five_hour: { used_percentage: 5 } } });

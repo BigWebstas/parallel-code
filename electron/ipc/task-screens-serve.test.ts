@@ -45,7 +45,8 @@ describe('freePorts', () => {
   });
 });
 
-describe('startServer', () => {
+// The served commands are POSIX shell.
+describe.skipIf(process.platform === 'win32')('startServer', () => {
   it('starts the command on the port, with the run tag, and resolves once it answers', async () => {
     await expect(serve(SERVER)).resolves.toBeUndefined();
     expect(findTagged(tag).length).toBeGreaterThan(0);

@@ -38,6 +38,11 @@ const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
  * Text that is not valid UTF-8 is refused: saving it back would replace bytes.
  */
 function readBoardFile(target: string): string | null {
+  // Windows has no O_NOFOLLOW (the flag is 0 there), so open would follow a
+  // symlink; refuse one up front. POSIX keeps the race-free check on the descriptor.
+  if (process.platform === 'win32' && entryAt(target) === 'other') {
+    throw new Error(`${KANBAN_FILE} is not a regular file`);
+  }
   let fd: number;
   try {
     fd = fs.openSync(

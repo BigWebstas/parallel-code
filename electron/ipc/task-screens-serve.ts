@@ -3,6 +3,8 @@ import { closeSync, openSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { request } from 'http';
 import { createServer, type Server } from 'net';
+import { resolveUserShell } from '../user-shell.js';
+import { OWN_PROCESS_GROUP } from '../process-group.js';
 
 /** A dev server compiles on its first start; past this it counts as not starting. */
 const SERVE_TIMEOUT_MS = 90_000;
@@ -70,12 +72,19 @@ function spawnServer(opts: ServeOptions): () => string | undefined {
   const log = openSync(opts.logFile, 'a');
   try {
     // Its own process group, away from the app's; the run tag finds it to stop it.
-    const child = spawn('/bin/sh', ['-c', opts.command], {
-      cwd: opts.cwd,
-      env: { ...opts.env, PORT: String(opts.port) },
-      detached: true,
-      stdio: ['ignore', log, log],
-    });
+    const windows = process.platform === 'win32';
+    const child = spawn(
+      windows ? resolveUserShell({ env: opts.env }) : '/bin/sh',
+      windows ? ['/d', '/s', '/c', opts.command] : ['-c', opts.command],
+      {
+        cwd: opts.cwd,
+        env: { ...opts.env, PORT: String(opts.port) },
+        detached: OWN_PROCESS_GROUP,
+        stdio: ['ignore', log, log],
+        windowsHide: true,
+        windowsVerbatimArguments: windows,
+      },
+    );
     child.on('error', (error) => (ended = error.message));
     // Exit 0 may be a launcher that put the server in the background: keep waiting.
     child.on('exit', (code, signal) => {

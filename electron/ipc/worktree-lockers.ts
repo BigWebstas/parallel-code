@@ -42,6 +42,15 @@ public static class PcCwd {
   [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(int a, bool inherit, int pid);
   [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr b, byte[] buf, int n, out IntPtr read);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern int GetLongPathName(string s, StringBuilder b, int n);
+  // 8.3 short names (RUNNER~1) and long names are the same folder; compare long forms.
+  public static string Long(string p) {
+    try {
+      var b = new StringBuilder(1024);
+      int n = GetLongPathName(p, b, b.Capacity);
+      return n > 0 && n < b.Capacity ? b.ToString() : p;
+    } catch { return p; }
+  }
   static byte[] Read(IntPtr h, long addr, int n) {
     var buf = new byte[n]; IntPtr got;
     return ReadProcessMemory(h, new IntPtr(addr), buf, n, out got) && got.ToInt64() == n ? buf : null;
@@ -67,11 +76,11 @@ $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 ${CWD_READER}
 '@
-$root = [IO.Path]::GetFullPath($env:PC_LOCK_ROOT).TrimEnd('\\')
+$root = [PcCwd]::Long([IO.Path]::GetFullPath($env:PC_LOCK_ROOT)).TrimEnd('\\')
 foreach ($p in [Diagnostics.Process]::GetProcesses()) {
   try { $cwd = [PcCwd]::Get($p.Id) } catch { continue }
   if (-not $cwd) { continue }
-  $cwd = $cwd.TrimEnd('\\')
+  $cwd = [PcCwd]::Long($cwd).TrimEnd('\\')
   if ($cwd -eq $root -or $cwd.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) {
     "$($p.Id)\`t$($p.ProcessName)"
   }

@@ -10,7 +10,8 @@ const run = (command: string) =>
     onOutput: () => undefined,
   });
 
-describe('runShellCommand', () => {
+// The commands are POSIX shell.
+describe.skipIf(process.platform === 'win32')('runShellCommand', () => {
   it('finishes when the shell exits, though a background job holds its output open', async () => {
     const shell = run('(sleep 3 &); echo done');
     const started = Date.now();

@@ -24,7 +24,7 @@ beforeEach(() => {
   mockGetMainBranch.mockResolvedValue('main');
   mockFindNestedRepos.mockResolvedValue([]);
   mockListOpenPrUrls.mockImplementation((repoPath: string, branch: string) => {
-    const result = prsByRepo.get(`${repoPath}@${branch}`) ?? [];
+    const result = prsByRepo.get(`${repoPath.replace(/\\/g, '/')}@${branch}`) ?? [];
     return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
   });
 });

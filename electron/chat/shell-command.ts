@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { resolveUserShell } from '../user-shell.js';
+import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
 
 /** Output kept per stream. The CLI cuts its own `!` output near this size, which
  *  is also what goes into the conversation for the model to read. */
@@ -40,12 +42,23 @@ export function runShellCommand(opts: {
   let finished = false;
   let closed = false;
   // Its own process group, so Stop also ends whatever the command started.
-  const child = spawn(opts.env.SHELL || '/bin/sh', ['-c', opts.command], {
-    cwd: opts.cwd,
-    env: opts.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    detached: true,
-  });
+  // Windows has no process groups and no /bin/sh: cmd.exe runs the line, and
+  // Stop ends the tree with taskkill.
+  const windows = process.platform === 'win32';
+  const child = windows
+    ? spawn(resolveUserShell({ env: opts.env }), ['/d', '/s', '/c', opts.command], {
+        cwd: opts.cwd,
+        env: opts.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+      })
+    : spawn(opts.env.SHELL || '/bin/sh', ['-c', opts.command], {
+        cwd: opts.cwd,
+        env: opts.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        detached: OWN_PROCESS_GROUP,
+      });
   for (const stream of ['stdout', 'stderr'] as const) {
     child[stream].setEncoding('utf8');
     child[stream].on('data', (chunk: string) => {
@@ -81,7 +94,7 @@ export function runShellCommand(opts: {
   );
   const signal = (name: NodeJS.Signals) => {
     try {
-      if (child.pid) process.kill(-child.pid, name);
+      signalProcessGroup(child, name);
     } catch (error) {
       // The group is already gone when the command finished first.
       if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;

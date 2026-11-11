@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'child_process';
 import { randomUUID } from 'crypto';
+import { OWN_PROCESS_GROUP, signalProcessGroup } from '../process-group.js';
 import { askCodeEnv } from './ask-code.js';
 import { RUN_TAG_ENV, signalTagged } from './process-tag.js';
 import { validateCommand } from './pty.js';
@@ -33,7 +34,7 @@ const liveRuns = new Map<string, () => void>();
 
 function signalGroup(pid: number, signal: NodeJS.Signals): void {
   try {
-    process.kill(-pid, signal);
+    signalProcessGroup({ pid, kill: () => undefined }, signal);
   } catch {
     // ESRCH: every process of the group has exited.
     return;
@@ -82,7 +83,7 @@ function spawnClaude(opts: {
   return spawn('claude', args, {
     cwd: opts.cwd,
     env: opts.env,
-    detached: true,
+    detached: OWN_PROCESS_GROUP,
     stdio: 'pipe',
   });
 }

@@ -50,7 +50,8 @@ afterAll(() => {
   rmSync(bin, { recursive: true, force: true });
 });
 
-describe('startCapture', () => {
+// The fake CLI and the servers it leaves behind are POSIX shell scripts.
+describe.skipIf(process.platform === 'win32')('startCapture', () => {
   it('returns the answer and reports each step as it happens', async () => {
     steps.length = 0;
     fakeClaude(`cat >/dev/null; ${TOOL_CALL}; ${RESULT}`);
