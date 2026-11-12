@@ -11,9 +11,9 @@ describe('createSpinnerAngle', () => {
     createRoot((dispose) => {
       const angle = createSpinnerAngle(4);
       expect(angle()).toBe(0);
-      vi.advanceTimersByTime(75);
+      vi.advanceTimersByTime(100);
       expect(angle()).toBe(90);
-      vi.advanceTimersByTime(75 * 3);
+      vi.advanceTimersByTime(100 * 3);
       expect(angle()).toBe(0);
       dispose();
     });

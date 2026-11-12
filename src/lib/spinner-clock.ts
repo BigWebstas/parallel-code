@@ -4,7 +4,7 @@ import { isWindowVisible } from './windowVisibility';
 // A CSS animation keeps the renderer producing a frame — style recalc and
 // repaint — on every vsync for as long as it runs, even when stepped. One slow
 // timer that turns only the visible spinners costs a few small updates a second.
-const TICK_MS = 75;
+const TICK_MS = 100;
 
 const [tick, setTick] = createSignal(0);
 let users = 0;
@@ -25,7 +25,7 @@ function release(): void {
 
 /**
  * Rotation in degrees for a spinner that completes a turn every `ticks` ticks
- * (75 ms each). The timer runs only while at least one caller's owner is alive.
+ * (100 ms each). The timer runs only while at least one caller's owner is alive.
  */
 export function createSpinnerAngle(ticks: number): () => number {
   acquire();

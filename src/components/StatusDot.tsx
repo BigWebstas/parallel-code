@@ -130,7 +130,7 @@ export function getStatusGlyph(
   return 'dot';
 }
 
-/** Ticks (75 ms each) per full turn: the agent ring and the slower CI ring. */
+/** Ticks (100 ms each) per full turn: the agent ring and the slower CI ring. */
 const RING_TICKS = 12;
 const CI_RING_TICKS = 32;
 
