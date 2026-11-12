@@ -1,4 +1,3 @@
-import { spawn, type ChildProcess } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
@@ -6,6 +5,7 @@ import type { BrowserWindow } from 'electron';
 import { validateCommand, ENV_BLOCK_LIST } from './pty.js';
 import { loadEnvFile } from './env-file.js';
 import { resolveWindowsLaunch } from '../windows-launch.js';
+import { spawnStreamed, type StreamedProcess } from './off-thread-spawn.js';
 import { projectAgentEnv } from './project-env.js';
 import { warn as logWarn } from '../log.js';
 import { defaultCodexEffort, defaultCodexModel, listCodexModels } from './codex-models.js';
@@ -51,7 +51,7 @@ interface AskCodeRequest {
   projectId?: string;
 }
 
-const activeRequests = new RequestRegistry<ChildProcess>({
+const activeRequests = new RequestRegistry<StreamedProcess>({
   maxConcurrent: ASK_CODE_MAX_CONCURRENT,
   timeoutMs: ASK_CODE_TIMEOUT_MS,
 });
@@ -185,11 +185,7 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
     ],
     login.env,
   );
-  const proc = spawn(launch.file, launch.args, {
-    cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  const proc = spawnStreamed(launch.file, launch.args, { cwd, env });
 
   const send = sendToChannel;
 
@@ -322,11 +318,7 @@ function askAboutCodeCodex(args: AskCodeRequest, send: (msg: unknown) => void): 
     ],
     env,
   );
-  const proc = spawn(launch.file, launch.args, {
-    cwd: args.cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  const proc = spawnStreamed(launch.file, launch.args, { cwd: args.cwd, env });
 
   const session = AskCodeSession.start(
     activeRequests,
