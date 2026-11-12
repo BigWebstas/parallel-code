@@ -3962,6 +3962,10 @@ html:is(
   border-top-color: currentColor;
   /* Turned by the shared spinner clock (src/lib/spinner-clock.ts), not by CSS. */
   transform: rotate(var(--spin, 0deg));
+  /* Its own compositor layer, so each turn redraws just this layer instead of the
+     window surface (measured: about half the GPU load with six running tasks). */
+  will-change: transform;
+  contain: layout paint style;
 }
 
 /* CI progress: a wedge that fills from 12 o'clock as checks finish, inside a
@@ -4030,6 +4034,9 @@ html:is(
   border: 2px solid color-mix(in srgb, currentColor 32%, transparent);
   border-top-color: currentColor;
   flex-shrink: 0;
+  /* Own compositor layer; see .status-glyph-spinner. */
+  will-change: transform;
+  contain: layout paint style;
 }
 
 @keyframes slideUp {
