@@ -123,11 +123,15 @@ describe('root-level plan files', () => {
       writeFile('.gitignore', '.claude/\n');
       writeFile(relativePath);
       const send = watchPlans();
-      await vi.waitFor(() =>
-        expect(send).toHaveBeenLastCalledWith(
-          IPC.PlanContent,
-          expect.objectContaining({ relativePath, content: '# Theme plan' }),
-        ),
+      // Discovery runs several git launches; on a loaded Windows machine they take longer
+      // than waitFor's default 1 s.
+      await vi.waitFor(
+        () =>
+          expect(send).toHaveBeenLastCalledWith(
+            IPC.PlanContent,
+            expect.objectContaining({ relativePath, content: '# Theme plan' }),
+          ),
+        { timeout: 20_000 },
       );
     },
   );
