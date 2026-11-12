@@ -356,10 +356,11 @@ describe('guided tour', () => {
     vi.useFakeTimers();
     const { host, setRaw } = mount(largeDiff);
     host.querySelector('button')?.click();
-    expect(vi.getTimerCount()).toBe(2);
+    // Two part timers, plus the one shared clock that turns the visible spinner.
+    expect(vi.getTimerCount()).toBe(3);
     complete();
     expect(channels).toHaveLength(2);
-    expect(vi.getTimerCount()).toBe(2);
+    expect(vi.getTimerCount()).toBe(3);
     setRaw(diff);
     expect(vi.getTimerCount()).toBe(0);
     expect(host.querySelector('.inline-spinner')).toBeNull();
