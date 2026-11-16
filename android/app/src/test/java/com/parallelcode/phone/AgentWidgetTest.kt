@@ -1,6 +1,7 @@
 package com.parallelcode.phone
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -178,5 +179,49 @@ class AgentWidgetTest {
                     assertTrue("$name on ${palette.label} is only ${"%.1f".format(contrast)}:1", contrast >= 4.5)
                 }
         }
+    }
+
+    @Test
+    fun keepsTheLastSummaryWhenTheAppStopsOrIsStillConnecting() {
+        val link = ConnectionLink("http://192.168.1.20:7777", "token")
+        assertFalse(shouldPublishWidget(started = false, ConnectionState(link, ConnectionStatus.DISCONNECTED), othersCount = 0))
+        assertFalse(shouldPublishWidget(started = false, ConnectionState(link, ConnectionStatus.DISCONNECTED), othersCount = 1))
+        assertFalse(shouldPublishWidget(started = true, ConnectionState(link, ConnectionStatus.CONNECTING), othersCount = 0))
+        assertTrue(shouldPublishWidget(started = true, ConnectionState(link, ConnectionStatus.CONNECTING), othersCount = 1))
+        assertTrue(shouldPublishWidget(started = true, ConnectionState(link, ConnectionStatus.CONNECTED), othersCount = 0))
+        assertTrue(shouldPublishWidget(started = true, ConnectionState(link, ConnectionStatus.DISCONNECTED), othersCount = 0))
+        assertTrue(shouldPublishWidget(started = false, ConnectionState(link = null, ConnectionStatus.DISCONNECTED), othersCount = 0))
+    }
+
+    @Test
+    fun advancesTheUpdatedTimeOnLivePollsAndKeepsOfflineUsage() {
+        val prefs = FakeSharedPreferences()
+        val usage = listOf(UsageSection(null, listOf("Claude      5h 78%")))
+        val working = WidgetSummary("1 working", usage, WidgetTone.WORKING)
+
+        assertTrue(storeWidgetSummary(prefs, working, now = "10:00"))
+        assertEquals("1 working", prefs.getString(AgentWidget.KEY_HEADLINE, null))
+        assertEquals("10:00", prefs.getString(AgentWidget.KEY_UPDATED, null))
+        assertEquals(usage, decodeUsage(prefs.getString(AgentWidget.KEY_USAGE, null)))
+
+        // Same minute and same reading: no redundant redraw.
+        assertFalse(storeWidgetSummary(prefs, working, now = "10:00"))
+        // Next minute while connected: timestamp advances even when the summary text is unchanged.
+        assertTrue(storeWidgetSummary(prefs, working, now = "10:01"))
+        assertEquals("10:01", prefs.getString(AgentWidget.KEY_UPDATED, null))
+
+        // Offline after a process restart (in-memory usage empty) keeps the stored usage snapshot.
+        val offline = WidgetSummary("Not connected", emptyList(), WidgetTone.OFFLINE)
+        assertTrue(storeWidgetSummary(prefs, offline, now = "10:05", keepOfflineUsage = true))
+        assertEquals("Not connected", prefs.getString(AgentWidget.KEY_HEADLINE, null))
+        assertEquals("10:05", prefs.getString(AgentWidget.KEY_UPDATED, null))
+        assertEquals(usage, decodeUsage(prefs.getString(AgentWidget.KEY_USAGE, null)))
+        // Repeated offline checks do not advance the timestamp past when the connection dropped.
+        assertFalse(storeWidgetSummary(prefs, offline, now = "10:06", keepOfflineUsage = true))
+        assertEquals("10:05", prefs.getString(AgentWidget.KEY_UPDATED, null))
+
+        // Forgetting the computer clears the stored usage snapshot too.
+        assertTrue(storeWidgetSummary(prefs, offline, now = "10:07", keepOfflineUsage = false))
+        assertEquals(emptyList<UsageSection>(), decodeUsage(prefs.getString(AgentWidget.KEY_USAGE, null)))
     }
 }

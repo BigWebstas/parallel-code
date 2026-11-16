@@ -159,7 +159,16 @@ class RemoteClient(
     // OkHttp queues sends before the socket opens, which would put them ahead of the auth message.
     private var socketOpen = false
     private var authKind = TokenKind.MOBILE
-    private var started = false
+    private val _started = MutableStateFlow(false)
+    val isStarted: StateFlow<Boolean> = _started.asStateFlow()
+    private var started: Boolean
+        get() = _started.value
+        set(value) {
+            _started.value = value
+        }
+    private val _lastSync = MutableStateFlow(0L)
+    /** Monotonic timestamp of the latest agent or usage reading, so unchanged polls still advance the widget clock. */
+    val lastSync: StateFlow<Long> = _lastSync.asStateFlow()
     @Volatile private var suspended = false
     @Volatile private var transportGeneration = 0
     private var reconnectJob: Job? = null
@@ -227,13 +236,17 @@ class RemoteClient(
     }
 
     /**
-     * While a holder keeps the app connected, ask every other saved computer for its agents and usage
-     * each [OTHER_COMPUTERS_POLL_MS] over plain HTTP, rather than holding a socket open to each.
+     * While a holder keeps the app connected, refresh the active computer's usage and ask every
+     * other saved computer for its agents and usage each [OTHER_COMPUTERS_POLL_MS] over plain HTTP,
+     * rather than holding a socket open to each.
      */
     private fun pollOtherComputers() {
         pollJob?.cancel()
         pollJob = scope.launch {
             while (true) {
+                if (_state.value.status == ConnectionStatus.CONNECTED) {
+                    runCatching { fetchUsage() }
+                }
                 val active = credentials.link?.baseUrl
                 val others = credentials.computers.filter { it.baseUrl != active }
                 _otherComputers.value = if (others.isEmpty() || mustWaitForVpn()) {
@@ -241,9 +254,53 @@ class RemoteClient(
                 } else {
                     others.mapNotNull { c -> fetchSnapshotFrom(c)?.let { c.baseUrl to it } }.toMap()
                 }
+                if (_state.value.status == ConnectionStatus.CONNECTED || _otherComputers.value.isNotEmpty()) {
+                    _lastSync.value = System.currentTimeMillis()
+                }
                 delay(OTHER_COMPUTERS_POLL_MS)
             }
         }
+    }
+
+    /** Reconnect a dropped socket and refresh usage and other computers immediately (e.g. on screen wake). */
+    fun refreshNow() {
+        if (!started || suspended) return
+        if (_state.value.status != ConnectionStatus.CONNECTED) {
+            closeSocket()
+            connect()
+        }
+        pollOtherComputers()
+    }
+
+    /**
+     * Poll every saved computer over HTTP for a background widget refresh. Returns null while
+     * paused or waiting for VPN so the widget keeps its last reading.
+     */
+    suspend fun pollWidget(): WidgetSummary? {
+        if (suspended || mustWaitForVpn()) return null
+        val activeUrl = credentials.link?.baseUrl
+            ?: return WidgetSummary("Not connected", emptyList(), WidgetTone.OFFLINE)
+        val all = credentials.computers
+        val activeComputer = all.firstOrNull { it.baseUrl == activeUrl }
+            ?: SavedComputer(activeUrl, credentials.link?.token.orEmpty(), pairedToken = credentials.pairedToken)
+        val activeSnapshot = fetchSnapshotFrom(activeComputer)
+        if (activeSnapshot != null) {
+            _agents.value = activeSnapshot.agents
+            if (activeSnapshot.usage.isNotEmpty()) _usage.value = activeSnapshot.usage
+        }
+        val others = all.filter { it.baseUrl != activeUrl }
+            .mapNotNull { c -> fetchSnapshotFrom(c)?.let { c.baseUrl to it } }
+            .toMap()
+        _otherComputers.value = others
+        if (activeSnapshot != null || others.isNotEmpty()) {
+            _lastSync.value = System.currentTimeMillis()
+        }
+        val activeForSummary = activeSnapshot ?: ComputerSnapshot(activeComputer.label, _agents.value, _usage.value)
+        return widgetSummary(
+            active = activeForSummary,
+            connected = activeSnapshot != null,
+            others = others.values.toList(),
+        )
     }
 
     /**
@@ -469,6 +526,7 @@ class RemoteClient(
             emptyList()
         }
         _usage.value = usage
+        _lastSync.value = System.currentTimeMillis()
         return usage
     }
 
@@ -880,12 +938,17 @@ class RemoteClient(
     private fun handle(msg: ServerMessage) {
         when (msg) {
             is ServerMessage.Agents -> {
+                val wasConnected = _state.value.status == ConnectionStatus.CONNECTED
                 handshakeJob?.cancel()
                 _state.update {
                     it.copy(status = ConnectionStatus.CONNECTED, canControl = authKind == TokenKind.PAIRED)
                 }
                 _agents.value = msg.list
+                _lastSync.value = System.currentTimeMillis()
                 sendViewSize()
+                if (!wasConnected) {
+                    scope.launch { runCatching { fetchUsage() } }
+                }
 
                 // Clean up deleted agents that no longer exist on the desktop
                 val activeIds = msg.list.map { it.agentId }.toSet()
@@ -903,6 +966,7 @@ class RemoteClient(
                 _agents.update { list ->
                     list.map { if (it.agentId == msg.agentId) it.copy(running = msg.running, exitCode = msg.exitCode) else it }
                 }
+                _lastSync.value = System.currentTimeMillis()
                 if (msg.running) {
                     streamTerminal(msg.agentId)
                 }

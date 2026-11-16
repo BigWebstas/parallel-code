@@ -1,15 +1,25 @@
 package com.parallelcode.phone
 
 import android.app.PendingIntent
+import android.app.job.JobInfo
+import android.app.job.JobParameters
+import android.app.job.JobScheduler
+import android.app.job.JobService
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.widget.RemoteViews
 import androidx.core.content.edit
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -196,35 +206,121 @@ fun decodeUsage(json: String?): List<UsageSection> = try {
 }
 
 /**
- * Home-screen widget: agents that need you and the usage meters. The app pushes updates while its
- * connection is open (on screen, or in the background with notifications on); in between, the
- * widget shows the last update and its time.
+ * Whether the live client state should overwrite the widget. Closing the socket because the app
+ * left the screen (`!started`) or dialing (`CONNECTING`) keeps the last summary on screen.
+ */
+fun shouldPublishWidget(started: Boolean, state: ConnectionState, othersCount: Int): Boolean = when {
+    state.link == null -> true
+    !started -> false
+    state.status == ConnectionStatus.CONNECTED || othersCount > 0 -> true
+    state.status == ConnectionStatus.CONNECTING -> false
+    else -> true
+}
+
+/**
+ * Write [summary] into the widget's [prefs] at [now] ("HH:mm"), returning true when anything on
+ * the card changed. While connected (`tone != OFFLINE`), a new minute also updates the timestamp
+ * so the reader sees the widget is still live; while offline with a computer linked, an empty
+ * in-memory usage list keeps the last stored usage snapshot on the card.
+ */
+fun storeWidgetSummary(
+    prefs: SharedPreferences,
+    summary: WidgetSummary,
+    now: String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")),
+    keepOfflineUsage: Boolean = true,
+): Boolean {
+    val encodedUsage = if (summary.tone == WidgetTone.OFFLINE && summary.usage.isEmpty() && keepOfflineUsage) {
+        prefs.getString(AgentWidget.KEY_USAGE, null) ?: encodeUsage(emptyList())
+    } else {
+        encodeUsage(summary.usage)
+    }
+    val sameContent = prefs.getString(AgentWidget.KEY_HEADLINE, null) == summary.headline &&
+        prefs.getString(AgentWidget.KEY_USAGE, null) == encodedUsage &&
+        prefs.getString(AgentWidget.KEY_TONE, null) == summary.tone.name
+    if (sameContent && (summary.tone == WidgetTone.OFFLINE || prefs.getString(AgentWidget.KEY_UPDATED, null) == now)) {
+        return false
+    }
+    prefs.edit {
+        putString(AgentWidget.KEY_HEADLINE, summary.headline)
+        putString(AgentWidget.KEY_USAGE, encodedUsage)
+        putString(AgentWidget.KEY_TONE, summary.tone.name)
+        putString(AgentWidget.KEY_UPDATED, now)
+    }
+    return true
+}
+
+/**
+ * Home-screen widget: agents that need you and the usage meters. While a widget is placed on the
+ * home screen, it keeps the connection open while the app process is alive and polls every saved
+ * computer in the background on a schedule; in between, it shows the last update and its time.
  */
 class AgentWidget : AppWidgetProvider() {
-    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) = render(context, manager, ids)
+    override fun onEnabled(context: Context) {
+        super.onEnabled(context)
+        sync(context)
+    }
+
+    override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
+        render(context, manager, ids)
+        sync(context)
+        val app = context.applicationContext as? PhoneApplication ?: return
+        if (app.demoActive) return
+        val pending = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+            try {
+                app.client.pollWidget()?.let {
+                    publish(context, it, keepOfflineUsage = app.client.state.value.link != null)
+                }
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        sync(context)
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        sync(context)
+    }
 
     companion object {
-        private const val PREFS = "widget"
-        private const val KEY_HEADLINE = "headline"
+        private const val HOLDER = "widget"
+        internal const val PREFS = "widget"
+        internal const val KEY_HEADLINE = "headline"
         // Holds JSON sections; earlier builds kept plain text under "usage".
-        private const val KEY_USAGE = "usage_sections"
-        private const val KEY_UPDATED = "updated"
-        private const val KEY_TONE = "tone"
+        internal const val KEY_USAGE = "usage_sections"
+        internal const val KEY_UPDATED = "updated"
+        internal const val KEY_TONE = "tone"
+
+        /** True when at least one widget is placed on the home screen. */
+        fun hasWidgets(context: Context): Boolean = runCatching {
+            val manager = AppWidgetManager.getInstance(context) ?: return false
+            manager.getAppWidgetIds(ComponentName(context, AgentWidget::class.java)).isNotEmpty()
+        }.getOrDefault(false)
+
+        /**
+         * Keep the live connection and periodic background poll running while a widget is placed and
+         * a computer is linked, and stop both once the last widget is removed.
+         */
+        fun sync(context: Context) {
+            val app = context.applicationContext as? PhoneApplication ?: return
+            if (!app.demoActive && hasWidgets(context) && app.client.state.value.link != null) {
+                app.client.start(HOLDER)
+                WidgetJobService.schedule(context)
+            } else {
+                app.client.stop(HOLDER)
+                WidgetJobService.cancel(context)
+            }
+        }
 
         /** Store [summary] and redraw every placed widget. */
-        fun publish(context: Context, summary: WidgetSummary) {
+        fun publish(context: Context, summary: WidgetSummary, keepOfflineUsage: Boolean = true) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            if (
-                prefs.getString(KEY_HEADLINE, null) == summary.headline &&
-                prefs.getString(KEY_USAGE, null) == encodeUsage(summary.usage) &&
-                prefs.getString(KEY_TONE, null) == summary.tone.name
-            ) return
-            prefs.edit {
-                putString(KEY_HEADLINE, summary.headline)
-                putString(KEY_USAGE, encodeUsage(summary.usage))
-                putString(KEY_TONE, summary.tone.name)
-                putString(KEY_UPDATED, LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm")))
-            }
+            if (!storeWidgetSummary(prefs, summary, keepOfflineUsage = keepOfflineUsage)) return
             refresh(context)
         }
 
@@ -289,5 +385,59 @@ class AgentWidget : AppWidgetProvider() {
 
         /** The faint rule color for [palette]'s card, shared by the headline divider and section rules. */
         private fun ruleColor(palette: WidgetPalette) = (palette.updated and 0x00FFFFFF) or 0x40000000
+    }
+}
+
+/**
+ * Periodically polls every saved computer in the background while a widget is on the home screen,
+ * so the widget stays fresh even after Android suspends or restarts the cached app process.
+ */
+class WidgetJobService : JobService() {
+    private var job: Job? = null
+
+    override fun onStartJob(params: JobParameters): Boolean {
+        val app = applicationContext as? PhoneApplication ?: return false
+        AgentWidget.sync(this)
+        if (app.demoActive || !AgentWidget.hasWidgets(this)) return false
+        job = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
+            try {
+                app.client.pollWidget()?.let {
+                    AgentWidget.publish(this@WidgetJobService, it, keepOfflineUsage = app.client.state.value.link != null)
+                }
+            } finally {
+                jobFinished(params, false)
+            }
+        }
+        return true
+    }
+
+    override fun onStopJob(params: JobParameters): Boolean {
+        job?.cancel()
+        job = null
+        return true
+    }
+
+    companion object {
+        private const val JOB_ID = 4202
+        private const val INTERVAL_MS = 15 * 60_000L
+
+        fun schedule(context: Context) {
+            runCatching {
+                val scheduler = context.getSystemService(JobScheduler::class.java) ?: return
+                if (scheduler.getPendingJob(JOB_ID) != null) return
+                val info = JobInfo.Builder(JOB_ID, ComponentName(context, WidgetJobService::class.java))
+                    .setPeriodic(INTERVAL_MS)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .build()
+                scheduler.schedule(info)
+            }
+        }
+
+        fun cancel(context: Context) {
+            runCatching {
+                context.getSystemService(JobScheduler::class.java)?.cancel(JOB_ID)
+            }
+        }
     }
 }

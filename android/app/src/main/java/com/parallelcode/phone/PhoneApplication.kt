@@ -1,7 +1,10 @@
 package com.parallelcode.phone
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -49,6 +52,7 @@ class PhoneApplication : Application() {
         // Android 12+ refuses foreground-service starts from the background (e.g. the task was swiped
         // away during the demo); MainActivity.onStart syncs again once the app is visible.
         if (active || inForeground || Build.VERSION.SDK_INT < 31) AgentWatchService.sync(this)
+        AgentWidget.sync(this)
     }
 
     override fun onCreate() {
@@ -65,17 +69,53 @@ class PhoneApplication : Application() {
         )
         promptHistory = PromptHistoryStore(getSharedPreferences(PromptHistoryStore.PREFS_NAME, Context.MODE_PRIVATE))
         updates = AppUpdates(this)
-        // Keep the home-screen widget current whenever the connection is open.
-        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-            combine(client.agents, client.usage, client.state, client.otherComputers, client.computers) {
-                    agents, usage, state, others, computers ->
-                val label = computers.firstOrNull { it.baseUrl == state.link?.baseUrl }?.label.orEmpty()
-                widgetSummary(
-                    ComputerSnapshot(label, agents, usage),
-                    state.status == ConnectionStatus.CONNECTED,
-                    others.values.toList(),
-                )
-            }.collect { if (!demoActive) AgentWidget.publish(this@PhoneApplication, it) }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        scope.launch {
+            var lastLink = client.state.value.link
+            client.state.collect { state ->
+                if (state.link != lastLink) {
+                    lastLink = state.link
+                    AgentWidget.sync(this@PhoneApplication)
+                }
+            }
         }
+        // Keep the home-screen widget current whenever the connection is open.
+        scope.launch {
+            combine(
+                combine(client.agents, client.usage, client.state, client.otherComputers, client.computers) {
+                        agents, usage, state, others, computers ->
+                    val label = computers.firstOrNull { it.baseUrl == state.link?.baseUrl }?.label.orEmpty()
+                    Triple(
+                        widgetSummary(
+                            ComputerSnapshot(label, agents, usage),
+                            state.status == ConnectionStatus.CONNECTED,
+                            others.values.toList(),
+                        ),
+                        state,
+                        others.size,
+                    )
+                },
+                client.isStarted,
+                client.lastSync,
+            ) { (summary, state, othersCount), started, _ ->
+                if (shouldPublishWidget(started, state, othersCount)) summary to (state.link != null) else null
+            }.collect { update ->
+                if (!demoActive && update != null) {
+                    AgentWidget.publish(this@PhoneApplication, update.first, keepOfflineUsage = update.second)
+                }
+            }
+        }
+        AgentWidget.sync(this)
+        registerReceiver(
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (!demoActive) {
+                        AgentWidget.sync(this@PhoneApplication)
+                        client.refreshNow()
+                    }
+                }
+            },
+            IntentFilter(Intent.ACTION_SCREEN_ON),
+        )
     }
 }

@@ -385,6 +385,7 @@ class MainActivity : ComponentActivity() {
         model.client.start(HOLDER)
         model.client.resumeViewSize()
         AgentWatchService.sync(this)
+        AgentWidget.sync(this)
         (application as PhoneApplication).updates.checkIfDue()
     }
 
